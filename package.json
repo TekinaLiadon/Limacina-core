@@ -1,0 +1,23 @@
+{
+  "name": "Limacina",
+  "version": "1.0.50",
+  "scripts": {
+    "dev": "bun run --watch 01-app/index.ts",
+    "start": "NODE_ENV=production bun 01-app/index.ts",
+    "test": "bun test",
+    "migrate": "node-pg-migrate"
+  },
+  "dependencies": {
+    "@elysiajs/swagger": "^0.8.5",
+    "elysia": "latest",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^6.9.11",
+    "pg": "^8.11.5",
+    "redis": "^4.6.13"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "node-pg-migrate": "^7.5.2"
+  },
+  "module": true
+}
