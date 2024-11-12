@@ -6,7 +6,7 @@ export default async function* (ctx)  {
     const file = await readStream.stream()
     ctx.set.headers['Connection'] = 'keep-alive'
     for await (const chunk of file) {
-        yield `data: ${chunk.toString('base64')}\n\n`
+        yield `${chunk.toString('base64')}\n\n`
     }
 
     /*for (let i = 0; i < 10; i++) {
