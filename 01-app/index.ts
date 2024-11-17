@@ -4,12 +4,14 @@ import {swagger} from "@elysiajs/swagger";
 import {routerList} from "../02-routes/index.js";
 import redis from "./redis";
 import jwt from './jwt'
+import chokidar from './chokidar';
 
 const startServe = async () => {
     await routerList();
     const app = new Elysia()
         /*.use(redis)*/
         .use(router)
+        .use(chokidar)
         .use(jwt)
         .onError(({error, set}) => {
             set.status = error?.code || 500;
@@ -30,12 +32,11 @@ const startServe = async () => {
             })
         )
         .listen(3005);
-    console.log(
-        `🦊 Elysia is running at ${app.server?.hostname}:${app.server?.port}`
-    );
+    console.log(`🦊 Сервер запущен на ${app.server?.hostname}:${app.server?.port}, файлы индексируются`);
 };
 
 startServe();
+
 
 
 
