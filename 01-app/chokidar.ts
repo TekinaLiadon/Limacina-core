@@ -13,7 +13,9 @@ export default (app: Elysia) => {
         if(event === 'add') filesHash[namePath] = await getHash(path)
         else if (event === 'change') filesHash[namePath] = await getHash(path)
         else if (event === 'unlink') delete filesHash[namePath]
-    }).on('ready', () => console.log('🦊 Индексакция файлов завершена', filesHash))
-    console.log(filesHash)
+    }).on('ready', () => {
+        console.log('🦊 Индексакция файлов завершена', filesHash)
+        app.state("chokidar", filesHash)
+    })
     return app.state("chokidar", filesHash);
 };
