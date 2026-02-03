@@ -31,7 +31,7 @@ const startServe = async () => {
                 },
             })
         )
-        .listen(3005);
+        .listen(1337);
     console.log(`🦊 Сервер запущен на ${app.server?.hostname}:${app.server?.port}, файлы индексируются`);
 };
 
