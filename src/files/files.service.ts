@@ -45,6 +45,6 @@ export class FilesService {
   }
 
   postFile(fileInfo: FileDto): Response {
-    return new Response(Bun.file("public/index.html"));
+    return new Response(Bun.file(`public/${fileInfo.url}`));
   }
 }
