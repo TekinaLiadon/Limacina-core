@@ -1,7 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import chokidar from "chokidar";
 import { FileDto } from "./dto/dto";
-import { Logger } from "nestjs-pino";
 
 @Injectable()
 export class FilesService {

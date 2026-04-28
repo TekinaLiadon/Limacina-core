@@ -13,7 +13,7 @@
     "check-types": "tsgo --noemit",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "check-all": "bun check-types; bun run fmt:check; bun test"
+    "check-all": "bun check-types; bun run fmt:check; bun test; bun lint"
   },
   "dependencies": {
     "@fastify/static": "^9.1.3",
