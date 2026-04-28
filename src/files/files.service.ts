@@ -1,14 +1,17 @@
 import { Injectable, Logger } from "@nestjs/common";
 import chokidar from "chokidar";
 import { FileDto } from "./dto/dto";
+import { ConfigService } from "@nestjs/config";
 
 @Injectable()
 export class FilesService {
   filesHash: Map<string, string> = new Map();
   private readonly logger = new Logger(FilesService.name);
+  private configService: ConfigService = new ConfigService();
+  private watcherFiles: any;
 
-  constructor() {
-    chokidar
+  onApplicationBootstrap() {
+    this.watcherFiles = chokidar
       .watch("public", {
         interval: 10000,
         binaryInterval: 10000,
@@ -26,7 +29,8 @@ export class FilesService {
         }
       })
       .on("ready", () => {
-        this.logger.log("Индексация файлов завершена"); // TODO { filesIndexed: 123 }, "Индексация файлов завершена"
+        this.logger.log({ filesIndexed: this.filesHash.size }, "Файлы проиндексированы");
+        console.log(this.configService.get<string>("NODE_ENV"));
       });
   }
 
