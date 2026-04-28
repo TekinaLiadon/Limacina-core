@@ -1,10 +1,12 @@
 import { Injectable } from "@nestjs/common";
 import chokidar from "chokidar";
 import { FileDto } from "./dto/dto";
+import { Logger } from "@nestjs/common";
 
 @Injectable()
 export class FilesService {
   filesHash: Map<string, string> = new Map();
+  private readonly logger = new Logger(FilesService.name);
 
   constructor() {
     chokidar
@@ -25,7 +27,7 @@ export class FilesService {
         }
       })
       .on("ready", () => {
-        //this.logger.log("Индексакция файлов завершена", 'Chokidar'); Блокирует остальные логи
+        this.logger.log({ filesIndexed: 123 }, "Индексация файлов завершена");
       });
   }
 

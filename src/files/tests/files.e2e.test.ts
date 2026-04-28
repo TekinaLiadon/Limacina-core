@@ -22,7 +22,7 @@ describe("Тесты эндпоинтов на получение файлов",
     await app.close();
   });
 
-  it("Игра создается", () => {
+  it("Получение списка файлов", () => {
     return supertest(app.getHttpServer())
       .get("/files/list")
       .expect(201)
