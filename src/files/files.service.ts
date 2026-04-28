@@ -1,16 +1,16 @@
 import { Injectable, Logger } from "@nestjs/common";
-import chokidar from "chokidar";
+import chokidar, { FSWatcher } from "chokidar";
 import { FileDto } from "./dto/dto";
 
 @Injectable()
 export class FilesService {
   readonly logger: Logger = new Logger(FilesService.name);
-  readonly watcherFiles = chokidar;
+  watcherFiles!: FSWatcher;
 
   readonly filesHash: Map<string, string> = new Map();
 
   onApplicationBootstrap() {
-    this.watcherFiles
+    this.watcherFiles = chokidar
       .watch("public", {
         interval: 10000,
         binaryInterval: 10000,
