@@ -1,7 +1,6 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import chokidar from "chokidar";
 import { FileDto } from "./dto/dto";
-import { Logger } from "@nestjs/common";
 
 @Injectable()
 export class FilesService {
@@ -27,7 +26,7 @@ export class FilesService {
         }
       })
       .on("ready", () => {
-        this.logger.log({ filesIndexed: 123 }, "Индексация файлов завершена");
+        this.logger.log("Индексация файлов завершена"); // TODO { filesIndexed: 123 }, "Индексация файлов завершена"
       });
   }
 
