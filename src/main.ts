@@ -1,13 +1,18 @@
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
-import { logger } from "./logger/logger.middleware";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import { Logger, LoggerErrorInterceptor } from "nestjs-pino";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, new FastifyAdapter());
+  const app = await NestFactory.create(AppModule, new FastifyAdapter(), {
+    bufferLogs: true,
+  });
 
-  app.use(logger);
+  const logger = app.get(Logger);
+  app.useLogger(logger);
+  app.useGlobalInterceptors(new LoggerErrorInterceptor());
+  logger.log("Идет запуск...", "App");
 
   const config = new DocumentBuilder()
     .setTitle("Example")
