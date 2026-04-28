@@ -4,12 +4,13 @@ import { FileDto } from "./dto/dto";
 
 @Injectable()
 export class FilesService {
-  filesHash: Map<string, string> = new Map();
-  private readonly logger = new Logger(FilesService.name);
-  private watcherFiles: any;
+  readonly logger: Logger = new Logger(FilesService.name);
+  readonly watcherFiles = chokidar;
+
+  readonly filesHash: Map<string, string> = new Map();
 
   onApplicationBootstrap() {
-    this.watcherFiles = chokidar
+    this.watcherFiles
       .watch("public", {
         interval: 10000,
         binaryInterval: 10000,
