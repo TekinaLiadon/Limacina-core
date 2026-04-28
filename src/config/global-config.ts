@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { ZodEnvConfig } from "./zodEnv";
+import { ZodEnvConfig } from "./zod-env";
 
 const configSchema = z.object({
   NODE_ENV: z.string().default("development"),
