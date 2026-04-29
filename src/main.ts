@@ -3,6 +3,7 @@ import { AppModule } from "./app.module";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { Logger, LoggerErrorInterceptor } from "nestjs-pino";
+import GlobalConfig from "./config/global-config";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, new FastifyAdapter(), {
@@ -23,6 +24,6 @@ async function bootstrap() {
   const documentFactory = () => SwaggerModule.createDocument(app, config);
   SwaggerModule.setup("api", app, documentFactory);
 
-  await app.listen(process.env["PORT"] ?? 3000, "0.0.0.0");
+  await app.listen(GlobalConfig.parseEnvOrExit().PORT, "0.0.0.0");
 }
 bootstrap();
