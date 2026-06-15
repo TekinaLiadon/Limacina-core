@@ -16,10 +16,10 @@ async function bootstrap() {
   logger.log("Идет запуск...", "App");
 
   const config = new DocumentBuilder()
-    .setTitle("Example")
-    .setDescription("The API description")
+    .setTitle("Limacina Core")
+    .setDescription("API documentation for Limacina Core")
     .setVersion("1.0")
-    .addTag("example")
+    .addTag("auth", "Аутентификация и управление токенами")
     .build();
   const documentFactory = () => SwaggerModule.createDocument(app, config);
   SwaggerModule.setup("api", app, documentFactory);
