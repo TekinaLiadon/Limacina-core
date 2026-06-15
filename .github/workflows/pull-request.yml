@@ -40,3 +40,7 @@ jobs:
 
       - name: Tests
         run: bun test
+        env:
+          JWT_ACCESS: ${{ secrets.JWT_ACCESS }}
+          JWT_REFRESH: ${{ secrets.JWT_REFRESH }}
+          DB_DRIVER: ${{ secrets.DB_DRIVER }}
