@@ -15,8 +15,14 @@ type BunSqlFn = {
   }>;
 };
 
-// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const bunSql: BunSqlFn = ((await import("bun")) as unknown as { sql: BunSqlFn }).sql;
+
+export const TABLES = {
+  users: "users",
+  refresh_tokens: "refresh_tokens",
+} as const;
+
+export type TableName = (typeof TABLES)[keyof typeof TABLES];
 
 export type SqlValue = string | number | boolean | null | Date;
 
@@ -39,18 +45,29 @@ interface WithReturning {
   build: () => BuiltQuery;
 }
 
+interface InsertFrom {
+  values: (...vals: SqlValue[]) => InsertAfterValues;
+}
+
 interface InsertAfterValues {
   returning: (...ret: string[]) => WithBuild;
   build: () => BuiltQuery;
 }
 
 interface WhereAndNext {
-  and: (condition: string, ...args: SqlValue[]) => WithBuild;
+  and: (condition: string, ...args: SqlValue[]) => WithLimit;
+  limit: (n: number) => WithBuild;
   build: () => BuiltQuery;
 }
 
 interface SelectFrom {
   where: (condition: string, ...args: SqlValue[]) => WhereAndNext;
+  limit: (n: number) => WithBuild;
+  build: () => BuiltQuery;
+}
+
+interface WithLimit {
+  limit: (n: number) => WithBuild;
   build: () => BuiltQuery;
 }
 
@@ -61,7 +78,8 @@ interface UpdateSet {
 }
 
 interface DeleteBuilder {
-  where: (condition: string, ...args: SqlValue[]) => WithBuild;
+  where: (condition: string, ...args: SqlValue[]) => WithLimit;
+  limit: (n: number) => WithBuild;
   build: () => BuiltQuery;
 }
 
@@ -94,15 +112,57 @@ function buildWhereClause(state: { parts: string[]; values: SqlValue[] }): strin
   return state.parts.length > 0 ? ` WHERE ${state.parts.join(" ")}` : "";
 }
 
+function createLimitMethod(
+  setLimit: (n: number) => void,
+  buildFn: () => BuiltQuery,
+): (n: number) => WithBuild {
+  return (n) => {
+    setLimit(n);
+    return { build: buildFn };
+  };
+}
+
+function buildWithWhere(
+  baseSql: string,
+  state: { parts: string[]; values: SqlValue[] },
+  limit?: number,
+): BuiltQuery {
+  const whereClause = buildWhereClause(state);
+  const limitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
+  return {
+    sql: `${baseSql}${whereClause}${limitClause}`,
+    values: state.values,
+  };
+}
+
+function buildInsert(
+  table: TableName,
+  columns: string[],
+  allValues: SqlValue[][],
+  returning?: string[],
+): BuiltQuery {
+  const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
+  const rows = allValues.map(() => `(${placeholders})`).join(", ");
+  const base = `INSERT INTO ${table} (${columns.join(", ")}) VALUES ${rows}`;
+  const sqlStr = returning ? `${base} RETURNING ${returning.join(", ")}` : base;
+  return { sql: sqlStr, values: allValues.flat() };
+}
+
 export function selectQuery(...columns: string[]): {
-  from: (table: string) => SelectFrom;
+  from: (table: TableName) => SelectFrom;
 } {
   const cols = columns.length > 0 ? columns.join(", ") : "*";
 
   return {
-    from: (table: string) => {
+    from: (table: TableName) => {
       const state = createQueryBuilder();
-      state.parts.push(`SELECT ${cols} FROM ${table}`);
+      const baseSql = `SELECT ${cols} FROM ${table}`;
+      let limitValue: number | undefined;
+
+      const buildSelect = (): BuiltQuery => buildWithWhere(baseSql, state, limitValue);
+      const limitMethod = createLimitMethod((n) => {
+        limitValue = n;
+      }, buildSelect);
 
       return {
         where: (condition: string, ...args: SqlValue[]) => {
@@ -113,129 +173,119 @@ export function selectQuery(...columns: string[]): {
               addAnd(state, condition, ...args);
 
               return {
-                build: () => {
-                  const whereClause = buildWhereClause(state);
-                  const baseSql = state.parts[0]!;
-                  return {
-                    sql: `${baseSql}${whereClause}`,
-                    values: state.values,
-                  };
-                },
+                limit: limitMethod,
+                build: buildSelect,
               };
             },
-            build: () => {
-              const whereClause = buildWhereClause(state);
-              const baseSql = state.parts[0]!;
-              return {
-                sql: `${baseSql}${whereClause}`,
-                values: state.values,
-              };
-            },
+            limit: limitMethod,
+            build: buildSelect,
           };
         },
-        build: () => ({
-          sql: state.parts[0]!,
-          values: [],
-        }),
+        limit: limitMethod,
+        build: buildSelect,
       };
     },
   };
 }
 
-export function insertQuery(
-  table: string,
-  ...columns: string[]
-): {
-  values: (...vals: SqlValue[]) => InsertAfterValues;
+export function insertQuery(...columns: string[]): {
+  from: (table: TableName) => InsertFrom;
 } {
-  const allValues: SqlValue[][] = [];
-
   return {
-    values: (...vals: SqlValue[]) => {
-      allValues.push(vals);
+    from: (table: TableName) => {
+      const allValues: SqlValue[][] = [];
 
       return {
-        returning: (...ret: string[]) => {
+        values: (...vals: SqlValue[]) => {
+          allValues.push(vals);
+
           return {
-            build: () => {
-              const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
-              const rows = allValues.map(() => `(${placeholders})`).join(", ");
-              const sqlStr = `INSERT INTO ${table} (${columns.join(", ")}) VALUES ${rows} RETURNING ${ret.join(", ")}`;
-              return { sql: sqlStr, values: allValues.flat() };
-            },
+            returning: (...ret: string[]) => ({
+              build: () => buildInsert(table, columns, allValues, ret),
+            }),
+            build: () => buildInsert(table, columns, allValues),
           };
-        },
-        build: () => {
-          const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
-          const rows = allValues.map(() => `(${placeholders})`).join(", ");
-          const sqlStr = `INSERT INTO ${table} (${columns.join(", ")}) VALUES ${rows}`;
-          return { sql: sqlStr, values: allValues.flat() };
         },
       };
     },
   };
 }
 
-export function updateQuery(table: string): {
-  set: (column: string, value: SqlValue) => UpdateSet;
+export function updateQuery(): {
+  from: (table: TableName) => { set: (column: string, value: SqlValue) => UpdateSet };
 } {
-  const setClauses: string[] = [];
-  const values: SqlValue[] = [];
-  const whereState = createQueryBuilder();
+  return {
+    from: (table: TableName) => {
+      const setClauses: string[] = [];
+      const values: SqlValue[] = [];
+      const whereState = createQueryBuilder();
 
-  const buildUpdate = (): BuiltQuery => {
-    const whereClause = buildWhereClause(whereState);
-    const sqlStr = `UPDATE ${table} SET ${setClauses.join(", ")}${whereClause}`;
-    return { sql: sqlStr, values };
-  };
+      const buildUpdate = (): BuiltQuery => {
+        const whereClause = buildWhereClause(whereState);
+        const sqlStr = `UPDATE ${table} SET ${setClauses.join(", ")}${whereClause}`;
+        return { sql: sqlStr, values: [...values, ...whereState.values] };
+      };
 
-  const addSet = (column: string, value: SqlValue): UpdateSet => {
-    setClauses.push(`${column} = $${values.length + 1}`);
-    values.push(value);
-
-    return {
-      set: addSet,
-      where: (condition: string, ...args: SqlValue[]) => {
-        addWhere(whereState, condition, ...args);
+      const addSet = (column: string, value: SqlValue): UpdateSet => {
+        setClauses.push(`${column} = $${values.length + 1}`);
+        values.push(value);
 
         return {
-          returning: (...ret: string[]) => ({
-            build: () => ({
-              sql: `${buildUpdate().sql} RETURNING ${ret.join(", ")}`,
-              values,
-            }),
-          }),
+          set: addSet,
+          where: (condition: string, ...args: SqlValue[]) => {
+            const offset = values.length;
+            const renumbered = condition.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + offset}`);
+            addWhere(whereState, renumbered, ...args);
+
+            return {
+              returning: (...ret: string[]) => ({
+                build: () => {
+                  const built = buildUpdate();
+                  return {
+                    sql: `${built.sql} RETURNING ${ret.join(", ")}`,
+                    values: built.values,
+                  };
+                },
+              }),
+              build: buildUpdate,
+            };
+          },
           build: buildUpdate,
         };
-      },
-      build: buildUpdate,
-    };
-  };
+      };
 
-  return { set: addSet };
+      return { set: addSet };
+    },
+  };
 }
 
-export function deleteQuery(table: string): DeleteBuilder {
-  const state = createQueryBuilder();
-
+export function deleteQuery(): {
+  from: (table: TableName) => DeleteBuilder;
+} {
   return {
-    where: (condition: string, ...args: SqlValue[]) => {
-      addWhere(state, condition, ...args);
+    from: (table: TableName) => {
+      const state = createQueryBuilder();
+      let limitValue: number | undefined;
+
+      const buildDelete = (): BuiltQuery =>
+        buildWithWhere(`DELETE FROM ${table}`, state, limitValue);
+      const limitMethod = createLimitMethod((n) => {
+        limitValue = n;
+      }, buildDelete);
 
       return {
-        build: () => {
-          const whereClause = buildWhereClause(state);
+        where: (condition: string, ...args: SqlValue[]) => {
+          addWhere(state, condition, ...args);
+
           return {
-            sql: `DELETE FROM ${table}${whereClause}`,
-            values: state.values,
+            limit: limitMethod,
+            build: buildDelete,
           };
         },
+        limit: limitMethod,
+        build: buildDelete,
       };
     },
-    build: () => ({
-      sql: `DELETE FROM ${table}`,
-      values: [],
-    }),
   };
 }
 
