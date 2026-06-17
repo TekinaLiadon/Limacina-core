@@ -13,7 +13,7 @@ export async function createMigration(options: CreateOptions): Promise<string> {
   const date = new Date();
   const pad = (value: number) => (value <= 9 ? `0${value}` : `${value}`);
   const MAX_TIME = 9999999999999;
-  const invertedTime = (MAX_TIME - date.getTime()).toString().padStart(13, '0');
+  const invertedTime = (MAX_TIME - date.getTime()).toString().padStart(13, "0");
   const timestamp = [
     invertedTime,
     date.getUTCFullYear(),
