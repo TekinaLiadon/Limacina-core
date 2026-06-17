@@ -11,10 +11,10 @@ import {AuthPostgresStore} from "./auth_postgres.service";
 
 const config = GlobalConfig.parseEnvOrExit();
 
-export const useFactory = () => {
+export const useFactory = (db: string) => {
   return {
     "postgres": new AuthPostgresStore(),
-  }[config.DB_DRIVER] ?? new AuthMapStore()
+  }[db] ?? new AuthMapStore()
 }
 @Injectable()
 export class AuthService {

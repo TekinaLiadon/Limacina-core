@@ -23,7 +23,7 @@ const config = GlobalConfig.parseEnvOrExit();
     JwtStrategy,
     {
       provide: AuthMapStoreToken,
-      useFactory,
+      useFactory: () => useFactory(config.DB_DRIVER),
     }
   ],
   exports: [AuthService, JwtModule],
