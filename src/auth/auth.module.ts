@@ -2,8 +2,8 @@ import { Module } from "@nestjs/common";
 import { JwtModule } from "@nestjs/jwt";
 import { PassportModule } from "@nestjs/passport";
 import { AuthController } from "./auth.controller";
-import { AuthService } from "./auth.service";
-import { AuthMapStore } from "./auth_store.service";
+import {AuthService, useFactory} from "./service/auth.service";
+import { AuthMapStoreToken } from "./service/auth_store.service";
 import { JwtStrategy } from "./jwt.strategy";
 import GlobalConfig from "../config/global-config";
 
@@ -18,7 +18,14 @@ const config = GlobalConfig.parseEnvOrExit();
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, AuthMapStore],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    {
+      provide: AuthMapStoreToken,
+      useFactory,
+    }
+  ],
   exports: [AuthService, JwtModule],
 })
 export class AuthModule {}

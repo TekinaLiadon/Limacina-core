@@ -2,28 +2,34 @@ import { Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { v4 } from "uuid";
 import type { IAuthStore } from "./auth_store.service";
-import { AuthMapStore } from "./auth_store.service";
-import GlobalConfig from "../config/global-config";
-import type { ProfileInfo, UserTokens } from "./dto/dto";
+import {AuthMapStore, AuthMapStoreToken} from "./auth_store.service";
+import GlobalConfig from "../../config/global-config";
+import type { ProfileInfo, UserTokens } from "../dto/dto";
 import type { StoredUser } from "./auth_store.service";
 import type { RefreshEntry } from "./auth_store.service";
+import {AuthPostgresStore} from "./auth_postgres.service";
 
 const config = GlobalConfig.parseEnvOrExit();
 
+export const useFactory = () => {
+  return {
+    "postgres": new AuthPostgresStore(),
+  }[config.DB_DRIVER] ?? new AuthMapStore()
+}
 @Injectable()
 export class AuthService {
   constructor(
     private readonly jwtService: JwtService,
-    @Inject(AuthMapStore) private readonly authStore: IAuthStore,
+    @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
   ) {}
 
   async register(username: string, password: string): Promise<ProfileInfo> {
-    this.validateUsernameAvailable(username);
+    await this.validateUsernameAvailable(username);
 
     const uuid = this.generateUuid();
     const passwordHash = await Bun.password.hash(password);
 
-    this.authStore.saveUser({ uuid, username, passwordHash });
+    await this.authStore.saveUser({ uuid, username, passwordHash });
 
     const tokens = await this.createTokens(uuid, username);
     return { tokens, profile: { uuid, username } };
@@ -36,8 +42,8 @@ export class AuthService {
   }
 
   async refresh(refreshToken: string): Promise<ProfileInfo> {
-    const entry = this.validateRefreshToken(refreshToken);
-    this.authStore.deleteRefresh(entry.jti);
+    const entry = await this.validateRefreshToken(refreshToken);
+    await this.authStore.deleteRefresh(entry.jti);
     const tokens = await this.createTokens(entry.userId, entry.username);
     return {
       tokens,
@@ -47,17 +53,17 @@ export class AuthService {
 
   async invalidate(refreshToken: string): Promise<void> {
     const payload = this.verifyRefreshPayload(refreshToken);
-    this.authStore.deleteRefresh(payload.jti);
+    await this.authStore.deleteRefresh(payload.jti);
   }
 
-  private validateUsernameAvailable(username: string): void {
-    if (this.authStore.userExists(username)) {
+  private async validateUsernameAvailable(username: string): Promise<void> {
+    if (await this.authStore.userExists(username)) {
       throw new UnauthorizedException("Юзернейм уже занят");
     }
   }
 
   private async validateUserCredentials(username: string, password: string): Promise<StoredUser> {
-    const user = this.authStore.findByUsername(username);
+    const user = await this.authStore.findByUsername(username);
     if (!user) {
       throw new UnauthorizedException("Неверное имя пользователя или пароль");
     }
@@ -80,9 +86,11 @@ export class AuthService {
     }
   }
 
-  private validateRefreshToken(refreshToken: string): RefreshEntry & { jti: string } {
+  private async validateRefreshToken(
+    refreshToken: string,
+  ): Promise<RefreshEntry & { jti: string }> {
     const payload = this.verifyRefreshPayload(refreshToken);
-    const entry = this.authStore.findRefresh(payload.jti);
+    const entry = await this.authStore.findRefresh(payload.jti);
     if (!entry) {
       throw new UnauthorizedException("Refresh токен инвалидирован");
     }
@@ -104,7 +112,7 @@ export class AuthService {
       },
     );
 
-    this.authStore.saveRefresh(jti, { userId: uuid, username });
+    await this.authStore.saveRefresh(jti, { userId: uuid, username });
 
     return { access_token, refresh_token };
   }

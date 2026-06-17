@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { AuthController } from "../auth.controller";
-import { AuthService } from "../auth.service";
-import { AuthMapStore } from "../auth_store.service";
+import { AuthService } from "../service/auth.service";
+import { AuthMapStore, AuthMapStoreToken } from "../service/auth_store.service";
 import { INestApplication } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtModule } from "@nestjs/jwt";
@@ -20,7 +20,13 @@ describe("Auth эндпоинты", (): void => {
         }),
       ],
       controllers: [AuthController],
-      providers: [AuthService, AuthMapStore],
+      providers: [
+        AuthService,
+        {
+          provide: AuthMapStoreToken,
+          useClass: AuthMapStore,
+        },
+      ],
     }).compile();
 
     app = moduleFixture.createNestApplication();
