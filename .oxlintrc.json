@@ -3,5 +3,5 @@
   "categories": {
     "correctness": "error"
   },
-  "ignorePatterns": ["dist/", "node_modules/", "public/"]
+  "ignorePatterns": ["dist/", "node_modules/", "public/", "migration/"]
 }
