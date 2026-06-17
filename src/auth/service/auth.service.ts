@@ -2,20 +2,22 @@ import { Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { v4 } from "uuid";
 import type { IAuthStore } from "./auth_store.service";
-import {AuthMapStore, AuthMapStoreToken} from "./auth_store.service";
+import { AuthMapStore, AuthMapStoreToken } from "./auth_store.service";
 import GlobalConfig from "../../config/global-config";
 import type { ProfileInfo, UserTokens } from "../dto/dto";
 import type { StoredUser } from "./auth_store.service";
 import type { RefreshEntry } from "./auth_store.service";
-import {AuthPostgresStore} from "./auth_postgres.service";
+import { AuthPostgresStore } from "./auth_postgres.service";
 
 const config = GlobalConfig.parseEnvOrExit();
 
 export const useFactory = (db: string) => {
-  return {
-    "postgres": new AuthPostgresStore(),
-  }[db] ?? new AuthMapStore()
-}
+  return (
+    {
+      postgres: new AuthPostgresStore(),
+    }[db] ?? new AuthMapStore()
+  );
+};
 @Injectable()
 export class AuthService {
   constructor(
