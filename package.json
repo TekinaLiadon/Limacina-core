@@ -11,6 +11,7 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "check-types": "tsgo --noemit",
+    "check-types:migrate": "tsgo --noemit --project migration/tsconfig.json",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "check-all": "bun check-types; bun run fmt:check; bun test; bun lint",

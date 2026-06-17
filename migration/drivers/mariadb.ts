@@ -1,4 +1,4 @@
-// @ts-expect-error — Bun SQL not in bun-types yet
+// @ts-expect-error
 import { sql } from "bun";
 import type { MigrationDriver } from "../core/driver.js";
 
