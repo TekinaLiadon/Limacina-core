@@ -20,6 +20,7 @@ const bunSql: BunSqlFn = ((await import("bun")) as unknown as { sql: BunSqlFn })
 export const TABLES = {
   users: "users",
   refresh_tokens: "refresh_tokens",
+  user_textures: "user_textures",
 } as const;
 
 export type TableName = (typeof TABLES)[keyof typeof TABLES];
@@ -61,6 +62,7 @@ interface WhereAndNext {
 }
 
 interface SelectFrom {
+  join: (type: string, table: TableName, alias: string, on: string) => SelectFrom;
   where: (condition: string, ...args: SqlValue[]) => WhereAndNext;
   limit: (n: number) => WithBuild;
   build: () => BuiltQuery;
@@ -149,41 +151,56 @@ function buildInsert(
 }
 
 export function selectQuery(...columns: string[]): {
-  from: (table: TableName) => SelectFrom;
+  from: (table: TableName, alias?: string) => SelectFrom;
 } {
   const cols = columns.length > 0 ? columns.join(", ") : "*";
 
   return {
-    from: (table: TableName) => {
+    from: (table: TableName, alias?: string) => {
       const state = createQueryBuilder();
-      const baseSql = `SELECT ${cols} FROM ${table}`;
+      const tableRef = alias ? `${table} ${alias}` : table;
+      let fromClause = `SELECT ${cols} FROM ${tableRef}`;
       let limitValue: number | undefined;
 
-      const buildSelect = (): BuiltQuery => buildWithWhere(baseSql, state, limitValue);
-      const limitMethod = createLimitMethod((n) => {
-        limitValue = n;
-      }, buildSelect);
+      const buildSelect = (): BuiltQuery => {
+        const whereClause = buildWhereClause(state);
+        const limitClause = limitValue !== undefined ? ` LIMIT ${limitValue}` : "";
+        return {
+          sql: `${fromClause}${whereClause}${limitClause}`,
+          values: state.values,
+        };
+      };
 
-      return {
-        where: (condition: string, ...args: SqlValue[]) => {
-          addWhere(state, condition, ...args);
-
+      const buildWhereChain = () => ({
+        and: (condition: string, ...args: SqlValue[]) => {
+          addAnd(state, condition, ...args);
           return {
-            and: (condition: string, ...args: SqlValue[]) => {
-              addAnd(state, condition, ...args);
-
-              return {
-                limit: limitMethod,
-                build: buildSelect,
-              };
-            },
             limit: limitMethod,
             build: buildSelect,
           };
         },
         limit: limitMethod,
         build: buildSelect,
+      });
+
+      const limitMethod = createLimitMethod((n) => {
+        limitValue = n;
+      }, buildSelect);
+
+      const selectFromMethods: SelectFrom = {
+        join: (type: string, joinTable: TableName, joinAlias: string, on: string) => {
+          fromClause += ` ${type} ${joinTable} ${joinAlias} ON ${on}`;
+          return selectFromMethods;
+        },
+        where: (condition: string, ...args: SqlValue[]) => {
+          addWhere(state, condition, ...args);
+          return buildWhereChain();
+        },
+        limit: limitMethod,
+        build: buildSelect,
       };
+
+      return selectFromMethods;
     },
   };
 }

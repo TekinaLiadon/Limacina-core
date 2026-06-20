@@ -59,6 +59,71 @@ describe("selectQuery", () => {
     expect(q.sql).toBe("SELECT user_id, username FROM refresh_tokens WHERE jti = $1");
     expect(q.values).toEqual(["token123"]);
   });
+
+  it("select with table alias", () => {
+    const q = selectQuery("u.uuid", "u.username").from(TABLES.users, "u").build();
+    expect(q.sql).toBe("SELECT u.uuid, u.username FROM users u");
+    expect(q.values).toEqual([]);
+  });
+
+  it("select with left join", () => {
+    const q = selectQuery("u.uuid", "t.skin_url")
+      .from(TABLES.users, "u")
+      .join("LEFT JOIN", TABLES.user_textures, "t", "t.uuid = u.uuid")
+      .build();
+    expect(q.sql).toBe(
+      `SELECT u.uuid, t.skin_url FROM users u LEFT JOIN user_textures t ON t.uuid = u.uuid`,
+    );
+    expect(q.values).toEqual([]);
+  });
+
+  it("select with left join and where", () => {
+    const q = selectQuery("u.uuid", "t.skin_url")
+      .from(TABLES.users, "u")
+      .join("LEFT JOIN", TABLES.user_textures, "t", "t.uuid = u.uuid")
+      .where("u.uuid = $1", "abc")
+      .build();
+    expect(q.sql).toBe(
+      `SELECT u.uuid, t.skin_url FROM users u LEFT JOIN user_textures t ON t.uuid = u.uuid WHERE u.uuid = $1`,
+    );
+    expect(q.values).toEqual(["abc"]);
+  });
+
+  it("select with left join, where and limit", () => {
+    const q = selectQuery("u.uuid", "t.skin_url")
+      .from(TABLES.users, "u")
+      .join("LEFT JOIN", TABLES.user_textures, "t", "t.uuid = u.uuid")
+      .where("u.username = $1", "john")
+      .limit(10)
+      .build();
+    expect(q.sql).toBe(
+      `SELECT u.uuid, t.skin_url FROM users u LEFT JOIN user_textures t ON t.uuid = u.uuid WHERE u.username = $1 LIMIT 10`,
+    );
+    expect(q.values).toEqual(["john"]);
+  });
+
+  it("select with join and where+and", () => {
+    const q = selectQuery("u.uuid")
+      .from(TABLES.users, "u")
+      .join("LEFT JOIN", TABLES.user_textures, "t", "t.uuid = u.uuid")
+      .where("u.username = $1", "john")
+      .and("t.skin_url IS NOT NULL")
+      .build();
+    expect(q.sql).toBe(
+      `SELECT u.uuid FROM users u LEFT JOIN user_textures t ON t.uuid = u.uuid WHERE u.username = $1 AND t.skin_url IS NOT NULL`,
+    );
+    expect(q.values).toEqual(["john"]);
+  });
+
+  it("select with inner join", () => {
+    const q = selectQuery("u.uuid", "t.skin_url")
+      .from(TABLES.users, "u")
+      .join("INNER JOIN", TABLES.user_textures, "t", "t.uuid = u.uuid")
+      .build();
+    expect(q.sql).toBe(
+      `SELECT u.uuid, t.skin_url FROM users u INNER JOIN user_textures t ON t.uuid = u.uuid`,
+    );
+  });
 });
 
 describe("insertQuery", () => {
