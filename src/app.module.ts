@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { FilesModule } from "./files/files.module";
 import { AuthModule } from "./auth/auth.module";
+import { YggdrasilModule } from "./yggdrasil/yggdrasil.module";
 import { LoggerModule } from "nestjs-pino";
 import GlobalConfig from "./config/global-config";
 import LogConfig from "./config/log-config";
@@ -24,6 +25,7 @@ import { createLogStream } from "./config/log-stream";
     }),
     FilesModule,
     AuthModule,
+    YggdrasilModule,
   ],
 })
 export class AppModule {}

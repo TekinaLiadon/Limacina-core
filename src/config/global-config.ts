@@ -7,6 +7,7 @@ const configSchema = z.object({
   JWT_ACCESS: z.string().min(1),
   JWT_REFRESH: z.string().min(1),
   DB_DRIVER: z.enum(["map", "postgres", "sqlite"]).default("map"),
+  YGGDRASIL_PROXY_URL: z.string().url().optional(),
 });
 
 const AppConfig = new ZodEnvConfig("app", configSchema);

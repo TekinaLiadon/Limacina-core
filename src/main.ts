@@ -20,6 +20,7 @@ async function bootstrap() {
     .setDescription("API documentation for Limacina Core")
     .setVersion("1.0")
     .addTag("auth", "Аутентификация и управление токенами")
+    .addTag("yggdrasil", "Minecraft Yggdrasil authentication")
     .build();
   const documentFactory = () => SwaggerModule.createDocument(app, config);
   SwaggerModule.setup("api", app, documentFactory);
