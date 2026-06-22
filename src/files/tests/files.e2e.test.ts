@@ -1,10 +1,10 @@
-import { afterAll, beforeAll, describe, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { FilesController } from "../files.controller";
 import { FilesService } from "../files.service";
 import { INestApplication } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
-import { FastifyAdapter } from "@nestjs/platform-fastify";
+
 describe("Тесты эндпоинтов на получение файлов", (): void => {
   let app: INestApplication;
 
@@ -14,7 +14,7 @@ describe("Тесты эндпоинтов на получение файлов",
       providers: [FilesService],
     }).compile();
 
-    app = moduleFixture.createNestApplication(new FastifyAdapter());
+    app = moduleFixture.createNestApplication();
     await app.init();
   });
 
@@ -22,10 +22,15 @@ describe("Тесты эндпоинтов на получение файлов",
     await app.close();
   });
 
-  it("Получение списка файлов", () => {
-    return supertest(app.getHttpServer())
-      .get("/files/list")
-      .expect(201)
-      .expect("Текущий список файлов");
+  it("Получение списка файлов лаунчера", async () => {
+    const res = await supertest(app.getHttpServer()).get("/files/list").expect(200);
+
+    expect(typeof res.body).toBe("object");
+  });
+
+  it("Получение списка модов", async () => {
+    const res = await supertest(app.getHttpServer()).get("/files/mods").expect(200);
+
+    expect(typeof res.body).toBe("object");
   });
 });
