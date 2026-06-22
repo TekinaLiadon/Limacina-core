@@ -1,7 +1,8 @@
 import { watch, type FSWatcher } from "node:fs";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import type { FastifyReply } from "fastify";
 import { FileDto } from "./dto/dto";
 
 const LAUNCHER_DIR = "public/launcher";
@@ -107,7 +108,17 @@ export class FilesService {
     return Object.fromEntries(this.modsHash);
   }
 
-  postFile(fileInfo: FileDto): Response {
-    return new Response(Bun.file(`public/${fileInfo.url}`));
+  async postFile(fileInfo: FileDto, reply: FastifyReply): Promise<void> {
+    const filePath = join("public", fileInfo.url);
+
+    if (!existsSync(filePath)) {
+      throw new NotFoundException(`Файл не найден: ${fileInfo.url}`);
+    }
+
+    const file = Bun.file(filePath);
+    reply.header("Content-Type", "application/octet-stream");
+    reply.header("Content-Disposition", `attachment; filename="${fileInfo.url}"`);
+    reply.header("Content-Length", (await file.size).toString());
+    reply.send(file.stream());
   }
 }

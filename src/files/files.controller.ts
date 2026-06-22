@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Post } from "@nestjs/common";
+import { Body, Controller, Get, Post, Res } from "@nestjs/common";
+import type { FastifyReply } from "fastify";
 import { FileDto } from "./dto/dto";
 import { ApiOkResponse, ApiResponse } from "@nestjs/swagger";
 import { FilesService } from "./files.service";
@@ -23,7 +24,7 @@ export class FilesController {
   @ApiOkResponse({
     description: "Файл по указаному урлу",
   })
-  postFile(@Body() fileInfo: FileDto): Response {
-    return this.filesService.postFile(fileInfo);
+  async postFile(@Body() fileInfo: FileDto, @Res() reply: FastifyReply): Promise<void> {
+    return this.filesService.postFile(fileInfo, reply);
   }
 }
