@@ -49,6 +49,7 @@ export class FilesService {
       entries.map(async (entry) => {
         const fullPath = join(dir, String(entry));
         if (!statSync(fullPath).isFile()) return;
+        if (String(entry).endsWith(".filepart")) return;
 
         const namePath = fullPath.replace(`${dir}/`, "");
         const hash = await this.getHash(fullPath);
@@ -60,6 +61,7 @@ export class FilesService {
   private createWatcher(dir: string, map: Map<string, string>): FSWatcher {
     return watch(dir, { recursive: true }, async (event, filename) => {
       if (!filename) return;
+      if (filename.endsWith(".filepart")) return;
 
       if (event === "change") {
         const fullPath = join(dir, filename);
@@ -85,7 +87,14 @@ export class FilesService {
 
   async getHash(url: string): Promise<string> {
     const hasher = new Bun.CryptoHasher("md5");
-    const buffer = await Bun.file(url).arrayBuffer();
+    const file = Bun.file(url);
+
+    if (!(await file.exists())) {
+      this.logger.warn({ url }, "Файл не найден при хэшировании");
+      return "";
+    }
+
+    const buffer = await file.arrayBuffer();
     hasher.update(buffer);
     return hasher.digest("hex");
   }
