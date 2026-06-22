@@ -1,50 +1,100 @@
+import { watch, type FSWatcher } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { Injectable, Logger } from "@nestjs/common";
-import chokidar, { FSWatcher } from "chokidar";
 import { FileDto } from "./dto/dto";
+
+const LAUNCHER_DIR = "public/launcher";
+const MODS_DIR = "public/mods";
 
 @Injectable()
 export class FilesService {
   readonly logger: Logger = new Logger(FilesService.name);
-  watcherFiles!: FSWatcher;
+  watcherLauncher!: FSWatcher;
+  watcherMods!: FSWatcher;
 
-  readonly filesHash: Map<string, string> = new Map();
+  readonly launcherHash: Map<string, string> = new Map();
+  readonly modsHash: Map<string, string> = new Map();
 
-  onApplicationBootstrap() {
-    this.watcherFiles = chokidar
-      .watch("public", {
-        interval: 10000,
-        binaryInterval: 10000,
-      })
-      .on("all", async (event, path) => {
-        const namePath = path.replace("public/", "");
+  async onApplicationBootstrap() {
+    this.ensureDir(LAUNCHER_DIR);
 
-        if (event === "add" || event === "change") {
-          const hash: string = await this.getHash(path);
-          this.filesHash.set(namePath, hash);
+    await Promise.all([
+      this.indexDir(LAUNCHER_DIR, this.launcherHash),
+      this.indexDir(MODS_DIR, this.modsHash),
+    ]);
+
+    this.watcherLauncher = this.createWatcher(LAUNCHER_DIR, this.launcherHash);
+    this.watcherMods = this.createWatcher(MODS_DIR, this.modsHash);
+
+    this.logger.log(
+      { launcher: this.launcherHash.size, mods: this.modsHash.size },
+      "Файлы проиндексированы",
+    );
+  }
+
+  private ensureDir(dir: string): void {
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+      this.logger.log({ dir }, "Папка создана");
+    }
+  }
+
+  private async indexDir(dir: string, map: Map<string, string>): Promise<void> {
+    if (!existsSync(dir)) return;
+
+    const entries = readdirSync(dir, { recursive: true });
+    await Promise.all(
+      entries.map(async (entry) => {
+        const fullPath = join(dir, String(entry));
+        if (!statSync(fullPath).isFile()) return;
+
+        const namePath = fullPath.replace(`${dir}/`, "");
+        const hash = await this.getHash(fullPath);
+        map.set(namePath, hash);
+      }),
+    );
+  }
+
+  private createWatcher(dir: string, map: Map<string, string>): FSWatcher {
+    return watch(dir, { recursive: true }, async (event, filename) => {
+      if (!filename) return;
+
+      if (event === "change") {
+        const fullPath = join(dir, filename);
+        if (!existsSync(fullPath)) return;
+        const hash: string = await this.getHash(fullPath);
+        map.set(filename, hash);
+        return;
+      }
+
+      if (event === "rename") {
+        const fullPath = join(dir, filename);
+
+        if (existsSync(fullPath)) {
+          if (!statSync(fullPath).isFile()) return;
+          const hash: string = await this.getHash(fullPath);
+          map.set(filename, hash);
+        } else {
+          map.delete(filename);
         }
-
-        if (event === "unlink") {
-          this.filesHash.delete(namePath);
-        }
-      })
-      .on("ready", () => {
-        this.logger.log({ filesIndexed: this.filesHash.size }, "Файлы проиндексированы");
-      });
+      }
+    });
   }
 
   async getHash(url: string): Promise<string> {
     const hasher = new Bun.CryptoHasher("md5");
-    const readStream = Bun.file(url);
-    const file = await readStream.stream();
-
-    for await (const chunk of file) {
-      hasher.update(chunk);
-    }
+    const buffer = await Bun.file(url).arrayBuffer();
+    hasher.update(buffer);
     return hasher.digest("hex");
   }
 
   getList(): Record<string, string> {
-    return Object.fromEntries(this.filesHash);
+    return Object.fromEntries(this.launcherHash);
+  }
+
+  getModsList(): Record<string, string> {
+    return Object.fromEntries(this.modsHash);
   }
 
   postFile(fileInfo: FileDto): Response {

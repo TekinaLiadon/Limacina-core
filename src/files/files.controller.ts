@@ -8,9 +8,15 @@ export class FilesController {
   constructor(private readonly filesService: FilesService) {}
 
   @Get("list")
-  @ApiResponse({ status: 201, description: "Текущий список файлов" })
+  @ApiResponse({ status: 201, description: "Текущий список файлов лаунчера" })
   getList(): Record<string, string> {
     return this.filesService.getList();
+  }
+
+  @Get("mods")
+  @ApiResponse({ status: 201, description: "Текущий список модов" })
+  getModsList(): Record<string, string> {
+    return this.filesService.getModsList();
   }
 
   @Post("files")
