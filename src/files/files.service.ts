@@ -18,6 +18,7 @@ export class FilesService {
 
   async onApplicationBootstrap() {
     this.ensureDir(LAUNCHER_DIR);
+    this.ensureDir(MODS_DIR);
 
     await Promise.all([
       this.indexDir(LAUNCHER_DIR, this.launcherHash),
