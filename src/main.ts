@@ -1,14 +1,19 @@
+import { join } from "path";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { Logger, LoggerErrorInterceptor } from "nestjs-pino";
 import GlobalConfig from "./config/global-config";
+import fastifyStatic from "@fastify/static";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, new FastifyAdapter(), {
     bufferLogs: true,
   });
+
+  const instance = app.getHttpAdapter().getInstance();
+  await instance.register(fastifyStatic, { root: join(process.cwd(), "public") });
 
   const logger = app.get(Logger);
   app.useLogger(logger);

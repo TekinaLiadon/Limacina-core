@@ -22,6 +22,10 @@ import {
   YggdrasilTokenStoreToken,
   YggdrasilSessionStoreToken,
 } from "./yggdrasil_store";
+import GlobalConfig from "../../config/global-config";
+
+const config = GlobalConfig.parseEnvOrExit();
+const DEFAULT_SKIN_URL = `${config.BASE_URL}/textures/default.png`;
 
 type Textures = {
   skinUrl?: string | null;
@@ -318,7 +322,7 @@ export class YggdrasilService {
     hasher.update(new Uint8Array(file));
     const hash = hasher.digest("hex");
     const filename = `${hash}.png`;
-    const url = `/textures/${filename}`;
+    const url = `${config.BASE_URL}/textures/${filename}`;
     await Bun.write(`public/textures/${filename}`, new Uint8Array(file));
     return url;
   }
@@ -422,6 +426,14 @@ export class YggdrasilService {
       properties.push({
         name: "textures",
         value: this.encodeTextures(profile.uuid, profile.username, profile),
+      });
+    } else {
+      properties.push({
+        name: "textures",
+        value: this.encodeTextures(profile.uuid, profile.username, {
+          ...profile,
+          skinUrl: DEFAULT_SKIN_URL,
+        }),
       });
     }
     return properties;

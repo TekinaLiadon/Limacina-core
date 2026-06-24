@@ -34,13 +34,13 @@ export class AuthService {
     await this.authStore.saveUser({ uuid, username, passwordHash, skin: null });
 
     const tokens = await this.createTokens(uuid, username);
-    return { tokens, profile: { uuid, username, skin: null } };
+    return { tokens, profile: { uuid, username } };
   }
 
   async login(username: string, password: string): Promise<ProfileInfo> {
     const user = await this.validateUserCredentials(username, password);
     const tokens = await this.createTokens(user.uuid, user.username);
-    return { tokens, profile: { uuid: user.uuid, username: user.username, skin: user.skin } };
+    return { tokens, profile: { uuid: user.uuid, username: user.username } };
   }
 
   async refresh(refreshToken: string): Promise<ProfileInfo> {
@@ -50,7 +50,7 @@ export class AuthService {
     const tokens = await this.createTokens(entry.userId, entry.username);
     return {
       tokens,
-      profile: { uuid: entry.userId, username: entry.username, skin: user?.skin ?? null },
+      profile: { uuid: entry.userId, username: entry.username },
     };
   }
 
