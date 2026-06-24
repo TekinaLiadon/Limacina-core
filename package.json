@@ -25,7 +25,8 @@
     "migrate:create": "bun run migration/cli/create.ts",
     "migrate:up": "bun run migration/cli/up.ts",
     "migrate:down": "bun run migration/cli/down.ts",
-    "migrate:install": "bun run migration/cli/install.ts"
+    "migrate:install": "bun run migration/cli/install.ts",
+    "download:authlib": "bun run scripts/download-authlib.ts"
   },
   "dependencies": {
     "@fastify/static": "^9.1.3",

@@ -31,25 +31,26 @@ export class AuthService {
     const uuid = this.generateUuid();
     const passwordHash = await Bun.password.hash(password);
 
-    await this.authStore.saveUser({ uuid, username, passwordHash });
+    await this.authStore.saveUser({ uuid, username, passwordHash, skin: null });
 
     const tokens = await this.createTokens(uuid, username);
-    return { tokens, profile: { uuid, username } };
+    return { tokens, profile: { uuid, username, skin: null } };
   }
 
   async login(username: string, password: string): Promise<ProfileInfo> {
     const user = await this.validateUserCredentials(username, password);
     const tokens = await this.createTokens(user.uuid, user.username);
-    return { tokens, profile: { uuid: user.uuid, username: user.username } };
+    return { tokens, profile: { uuid: user.uuid, username: user.username, skin: user.skin } };
   }
 
   async refresh(refreshToken: string): Promise<ProfileInfo> {
     const entry = await this.validateRefreshToken(refreshToken);
     await this.authStore.deleteRefresh(entry.jti);
+    const user = await this.authStore.findByUsername(entry.username);
     const tokens = await this.createTokens(entry.userId, entry.username);
     return {
       tokens,
-      profile: { uuid: entry.userId, username: entry.username },
+      profile: { uuid: entry.userId, username: entry.username, skin: user?.skin ?? null },
     };
   }
 

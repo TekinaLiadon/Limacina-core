@@ -52,6 +52,7 @@ describe("Auth эндпоинты", (): void => {
       expect(res.body.profile).toHaveProperty("uuid");
       expect(typeof res.body.profile.uuid).toBe("string");
       expect(res.body.profile.uuid.length).toBeGreaterThan(0);
+      expect(res.body.profile.skin).toBeNull();
       registeredUuid = res.body.profile.uuid;
     });
 
@@ -74,6 +75,7 @@ describe("Auth эндпоинты", (): void => {
       expect(res.body).toHaveProperty("profile");
       expect(res.body.profile.username).toBe("testuser");
       expect(res.body.profile.uuid).toBe(registeredUuid);
+      expect(res.body.profile).toHaveProperty("skin");
     });
 
     it("ошибка при неверном пароле", async () => {
@@ -110,6 +112,7 @@ describe("Auth эндпоинты", (): void => {
       expect(res.body.tokens.access_token).toBeTruthy();
       expect(res.body.tokens.refresh_token).not.toBe(refresh_token);
       expect(res.body.profile.uuid).toBe(registeredUuid);
+      expect(res.body.profile).toHaveProperty("skin");
     });
 
     it("ошибка при повторном использовании токена", async () => {

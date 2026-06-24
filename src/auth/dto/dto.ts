@@ -27,6 +27,9 @@ export class UserProfile {
 
   @ApiProperty({ example: "john" })
   username!: string;
+
+  @ApiProperty({ example: "/textures/abc123.png", nullable: true })
+  skin!: string | null;
 }
 
 export class ProfileInfo {

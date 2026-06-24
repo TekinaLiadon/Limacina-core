@@ -4,6 +4,7 @@ export interface StoredUser {
   uuid: string;
   username: string;
   passwordHash: string;
+  skin: string | null;
 }
 
 export interface RefreshEntry {
@@ -17,6 +18,7 @@ export interface IAuthStore {
   findByUsername(username: string): Promise<StoredUser | undefined>;
   saveUser(user: StoredUser): Promise<void>;
   userExists(username: string): Promise<boolean>;
+  updateSkin(uuid: string, skin: string): Promise<void>;
   saveRefresh(jti: string, entry: RefreshEntry): Promise<void>;
   findRefresh(jti: string): Promise<RefreshEntry | undefined>;
   deleteRefresh(jti: string): Promise<void>;
@@ -38,6 +40,15 @@ export class AuthMapStore implements IAuthStore {
 
   async userExists(username: string): Promise<boolean> {
     return this.users.has(username);
+  }
+
+  async updateSkin(uuid: string, skin: string): Promise<void> {
+    for (const user of this.users.values()) {
+      if (user.uuid === uuid) {
+        user.skin = skin;
+        return;
+      }
+    }
   }
 
   async saveRefresh(jti: string, entry: RefreshEntry): Promise<void> {

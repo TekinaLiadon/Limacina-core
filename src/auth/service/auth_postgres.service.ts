@@ -1,11 +1,19 @@
 import { Injectable } from "@nestjs/common";
-import { insertQuery, selectQuery, deleteQuery, execute, TABLES } from "../../utils/sql";
+import {
+  insertQuery,
+  selectQuery,
+  updateQuery,
+  deleteQuery,
+  execute,
+  TABLES,
+} from "../../utils/sql";
 import type { IAuthStore, StoredUser, RefreshEntry } from "./auth_store.service";
 
 interface UserRow extends Record<string, unknown> {
   uuid: string;
   username: string;
   password_hash: string;
+  skin_url: string | null;
 }
 
 interface RefreshRow extends Record<string, unknown> {
@@ -17,9 +25,10 @@ interface RefreshRow extends Record<string, unknown> {
 @Injectable()
 export class AuthPostgresStore implements IAuthStore {
   async findByUsername(username: string): Promise<StoredUser | undefined> {
-    const query = selectQuery("uuid", "username", "password_hash")
-      .from(TABLES.users)
-      .where("username = $1", username)
+    const query = selectQuery("u.uuid", "u.username", "u.password_hash", "t.skin_url")
+      .from(TABLES.users, "u")
+      .join("LEFT JOIN", TABLES.user_textures, "t", "u.uuid = t.uuid")
+      .where("u.username = $1", username)
       .build();
 
     const { rows } = await execute<UserRow>(query.sql, query.values);
@@ -30,6 +39,7 @@ export class AuthPostgresStore implements IAuthStore {
       uuid: row.uuid,
       username: row.username,
       passwordHash: row.password_hash,
+      skin: row.skin_url,
     };
   }
 
@@ -45,6 +55,31 @@ export class AuthPostgresStore implements IAuthStore {
   async userExists(username: string): Promise<boolean> {
     const query = selectQuery("1").from(TABLES.users).where("username = $1", username).build();
 
+    const { rows } = await execute<UserRow>(query.sql, query.values);
+    return rows.length > 0;
+  }
+
+  async updateSkin(uuid: string, skin: string): Promise<void> {
+    const existing = await this.findSkinByUuid(uuid);
+
+    if (existing) {
+      const query = updateQuery()
+        .from(TABLES.user_textures)
+        .set("skin_url", skin)
+        .where("uuid = $1", uuid)
+        .build();
+      await execute(query.sql, query.values);
+    } else {
+      const query = insertQuery("uuid", "skin_url")
+        .from(TABLES.user_textures)
+        .values(uuid, skin)
+        .build();
+      await execute(query.sql, query.values);
+    }
+  }
+
+  private async findSkinByUuid(uuid: string): Promise<boolean> {
+    const query = selectQuery("1").from(TABLES.user_textures).where("uuid = $1", uuid).build();
     const { rows } = await execute<UserRow>(query.sql, query.values);
     return rows.length > 0;
   }
