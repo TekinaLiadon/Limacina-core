@@ -14,6 +14,8 @@ interface UserRow extends Record<string, unknown> {
   username: string;
   password_hash: string;
   skin_url: string | null;
+  role: string;
+  approved: boolean;
 }
 
 interface RefreshRow extends Record<string, unknown> {
@@ -25,7 +27,14 @@ interface RefreshRow extends Record<string, unknown> {
 @Injectable()
 export class AuthPostgresStore implements IAuthStore {
   async findByUsername(username: string): Promise<StoredUser | undefined> {
-    const query = selectQuery("u.uuid", "u.username", "u.password_hash", "t.skin_url")
+    const query = selectQuery(
+      "u.uuid",
+      "u.username",
+      "u.password_hash",
+      "t.skin_url",
+      "u.role",
+      "u.approved",
+    )
       .from(TABLES.users, "u")
       .join("LEFT JOIN", TABLES.user_textures, "t", "u.uuid = t.uuid")
       .where("u.username = $1", username)
@@ -40,6 +49,8 @@ export class AuthPostgresStore implements IAuthStore {
       username: row.username,
       passwordHash: row.password_hash,
       skin: row.skin_url,
+      role: row.role,
+      approved: row.approved,
     };
   }
 

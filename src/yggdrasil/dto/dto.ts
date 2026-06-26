@@ -1,95 +1,139 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import {
+  IsBoolean,
+  IsNumber,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from "class-validator";
+import { Type } from "class-transformer";
 
 export class AgentDto {
   @ApiProperty({ example: "Minecraft" })
+  @IsString()
   name!: string;
 
   @ApiProperty({ example: 1 })
+  @IsNumber()
   version!: number;
 }
 
 export class ProfilePropertyDto {
   @ApiProperty({ example: "textures" })
+  @IsString()
   name!: string;
 
   @ApiProperty()
+  @IsString()
   value!: string;
 }
 
 export class GameProfileDto {
   @ApiProperty({ example: "a1b2c3d4e5f67890abcdef1234567890" })
+  @IsString()
   id!: string;
 
   @ApiProperty({ example: "player1" })
+  @IsString()
   name!: string;
 
   @ApiProperty({ type: [ProfilePropertyDto] })
+  @ValidateNested({ each: true })
+  @Type(() => ProfilePropertyDto)
   properties!: ProfilePropertyDto[];
 }
 
 export class AuthenticateDto {
   @ApiPropertyOptional({ type: AgentDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AgentDto)
   agent?: AgentDto;
 
   @ApiProperty({ example: "player1" })
+  @IsString()
   username!: string;
 
   @ApiProperty({ example: "secret123" })
+  @IsString()
   password!: string;
 
   @ApiPropertyOptional({ example: "client-token-123" })
+  @IsOptional()
+  @IsString()
   clientToken?: string;
 
   @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
   requestUser?: boolean;
 }
 
 export class RefreshDto {
   @ApiProperty()
+  @IsString()
   accessToken!: string;
 
   @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   clientToken?: string;
 
   @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
   requestUser?: boolean;
 
   @ApiPropertyOptional({ type: GameProfileDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => GameProfileDto)
   selectedProfile?: GameProfileDto;
 }
 
 export class ValidateDto {
   @ApiProperty()
+  @IsString()
   accessToken!: string;
 
   @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   clientToken?: string;
 }
 
 export class InvalidateDto {
   @ApiProperty()
+  @IsString()
   accessToken!: string;
 
   @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   clientToken?: string;
 }
 
 export class SignoutDto {
   @ApiProperty({ example: "player1" })
+  @IsString()
   username!: string;
 
   @ApiProperty({ example: "secret123" })
+  @IsString()
   password!: string;
 }
 
 export class JoinDto {
   @ApiProperty()
+  @IsString()
   accessToken!: string;
 
   @ApiProperty()
+  @IsString()
   selectedProfile!: string;
 
   @ApiProperty()
+  @IsString()
   serverId!: string;
 }
 

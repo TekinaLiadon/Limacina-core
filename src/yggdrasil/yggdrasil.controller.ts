@@ -12,6 +12,8 @@ import {
   Query,
 } from "@nestjs/common";
 import { ApiBody, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
+import { IsOptional, IsString } from "class-validator";
+import { Public } from "../common/public.decorator";
 import { YggdrasilService } from "./service/yggdrasil.service";
 import {
   AuthenticateDto,
@@ -29,11 +31,16 @@ import {
 } from "./dto/dto";
 
 class UploadTextureDto {
+  @IsOptional()
+  @IsString()
   model?: string;
+
+  @IsString()
   file!: string;
 }
 
 @ApiTags("yggdrasil")
+@Public()
 @Controller("")
 export class YggdrasilController {
   constructor(private readonly yggdrasilService: YggdrasilService) {}

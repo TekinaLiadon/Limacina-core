@@ -5,6 +5,8 @@ export interface StoredUser {
   username: string;
   passwordHash: string;
   skin: string | null;
+  role: string;
+  approved: boolean;
 }
 
 export interface RefreshEntry {

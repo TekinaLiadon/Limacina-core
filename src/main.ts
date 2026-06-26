@@ -3,6 +3,7 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import { ValidationPipe } from "@nestjs/common";
 import { Logger, LoggerErrorInterceptor } from "nestjs-pino";
 import GlobalConfig from "./config/global-config";
 import fastifyStatic from "@fastify/static";
@@ -18,6 +19,7 @@ async function bootstrap() {
   const logger = app.get(Logger);
   app.useLogger(logger);
   app.useGlobalInterceptors(new LoggerErrorInterceptor());
+  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
   logger.log("Идет запуск...", "App");
 
   const config = new DocumentBuilder()
@@ -26,6 +28,7 @@ async function bootstrap() {
     .setVersion("1.0")
     .addTag("auth", "Аутентификация и управление токенами")
     .addTag("yggdrasil", "Minecraft Yggdrasil authentication")
+    .addTag("admin", "Администрирование пользователей")
     .build();
   const documentFactory = () => SwaggerModule.createDocument(app, config);
   SwaggerModule.setup("api", app, documentFactory);

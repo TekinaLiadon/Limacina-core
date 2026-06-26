@@ -311,10 +311,9 @@ export async function execute<T extends Record<string, unknown>>(
   values: SqlValue[],
 ): Promise<QueryResult<T>> {
   const result = await bunSql.unsafe(querySql, values as unknown[]);
-  return {
-    rows: result.rows as T[],
-    count: result.count,
-  };
+  const rows = (Array.isArray(result) ? result : result?.rows ?? []) as T[];
+  const count = Array.isArray(result) ? result.length : (result?.count ?? 0);
+  return { rows, count };
 }
 
 export async function executeTemplate<T extends Record<string, unknown>>(
@@ -323,7 +322,7 @@ export async function executeTemplate<T extends Record<string, unknown>>(
 ): Promise<QueryResult<T>> {
   const result = await bunSql(strings, ...values);
   return {
-    rows: result.rows as T[],
-    count: result.count,
+    rows: (result.rows ?? []) as T[],
+    count: result.count ?? 0,
   };
 }

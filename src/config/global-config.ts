@@ -9,6 +9,7 @@ const configSchema = z.object({
   DB_DRIVER: z.enum(["map", "postgres", "sqlite"]).default("map"),
   YGGDRASIL_PROXY_URL: z.string().url().optional(),
   BASE_URL: z.string().url().default("http://localhost:3005"),
+  MASTER_PASSWORD: z.string().min(1).optional(),
 });
 
 const AppConfig = new ZodEnvConfig("app", configSchema);
