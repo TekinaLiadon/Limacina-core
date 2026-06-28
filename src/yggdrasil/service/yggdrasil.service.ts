@@ -1,4 +1,6 @@
 import { HttpException, HttpStatus, Inject, Injectable, Logger } from "@nestjs/common";
+import { readFileSync, existsSync } from "node:fs";
+import { sign } from "node:crypto";
 import type {
   AuthenticateDto,
   AuthenticateResponseDto,
@@ -26,6 +28,18 @@ import GlobalConfig from "../../config/global-config";
 
 const config = GlobalConfig.parseEnvOrExit();
 const DEFAULT_SKIN_URL = `${config.BASE_URL}/textures/default.png`;
+
+const KEYS_DIR = `${import.meta.dir}/../../../keys`;
+const privateKeyPath = `${KEYS_DIR}/private.pem`;
+const publicKeyPath = `${KEYS_DIR}/public.pem`;
+
+let privateKey = "";
+let publicKeyPem = "";
+
+if (existsSync(privateKeyPath) && existsSync(publicKeyPath)) {
+  privateKey = readFileSync(privateKeyPath, "utf-8");
+  publicKeyPem = readFileSync(publicKeyPath, "utf-8");
+}
 
 type Textures = {
   skinUrl?: string | null;
@@ -366,7 +380,7 @@ export class YggdrasilService {
         "feature.non_email_login": true,
       },
       skinDomains: [".limacina.example.com"],
-      signaturePublickey: "",
+      signaturePublickey: publicKeyPem,
     };
   }
 
@@ -422,20 +436,25 @@ export class YggdrasilService {
     profile: YggdrasilProfile,
   ): Array<{ name: string; value: string }> {
     const properties: Array<{ name: string; value: string }> = [];
+    let texturesValue: string;
     if (profile.skinUrl || profile.capeUrl) {
-      properties.push({
-        name: "textures",
-        value: this.encodeTextures(profile.uuid, profile.username, profile),
-      });
+      texturesValue = this.encodeTextures(profile.uuid, profile.username, profile);
     } else {
-      properties.push({
-        name: "textures",
-        value: this.encodeTextures(profile.uuid, profile.username, {
-          ...profile,
-          skinUrl: DEFAULT_SKIN_URL,
-        }),
+      texturesValue = this.encodeTextures(profile.uuid, profile.username, {
+        ...profile,
+        skinUrl: DEFAULT_SKIN_URL,
       });
     }
+
+    if (privateKey) {
+      const sig = sign("sha1", new Uint8Array(Buffer.from(texturesValue)), privateKey);
+      texturesValue += ";" + sig.toString("base64");
+    }
+
+    properties.push({
+      name: "textures",
+      value: texturesValue,
+    });
     return properties;
   }
 
