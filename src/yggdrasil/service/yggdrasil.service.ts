@@ -1,6 +1,6 @@
 import { HttpException, HttpStatus, Inject, Injectable, Logger } from "@nestjs/common";
 import { readFileSync, existsSync } from "node:fs";
-import { sign } from "node:crypto";
+import { sign, createHmac } from "node:crypto";
 import type {
   AuthenticateDto,
   AuthenticateResponseDto,
@@ -28,6 +28,7 @@ import GlobalConfig from "../../config/global-config";
 
 const config = GlobalConfig.parseEnvOrExit();
 const DEFAULT_SKIN_URL = `${config.BASE_URL}/textures/default.png`;
+const JWT_SECRET: string = config.JWT_ACCESS;
 
 const KEYS_DIR = `${import.meta.dir}/../../../keys`;
 const privateKeyPath = `${KEYS_DIR}/private.pem`;
@@ -263,7 +264,22 @@ export class YggdrasilService {
 
   async join(dto: JoinDto): Promise<void> {
     const entry = await this.tokenStore.findToken(dto.accessToken);
-    if (!entry || entry?.profileId !== dto.selectedProfile)
+
+    if (!entry) {
+      const jwtPayload = this.verifyJwt(dto.accessToken);
+      if (!jwtPayload) {
+        throw this.createError({ info: dto.accessToken }, "invalid token", "Invalid token.");
+      }
+
+      await this.sessionStore.saveSession(dto.serverId, {
+        profileId: dto.selectedProfile,
+        username: jwtPayload.username,
+        ip: "",
+      });
+      return;
+    }
+
+    if (entry.profileId !== dto.selectedProfile)
       throw this.createError({ info: dto.accessToken }, "invalid token", "Invalid token.");
 
     await this.sessionStore.saveSession(dto.serverId, {
@@ -271,6 +287,35 @@ export class YggdrasilService {
       username: entry.username,
       ip: "",
     });
+  }
+
+  private verifyJwt(token: string): { sub: string; username: string } | null {
+    try {
+      const parts = token.split(".");
+      if (parts.length !== 3) return null;
+
+      const headerB64 = parts[0];
+      const payloadB64 = parts[1];
+      const sigB64 = parts[2];
+      if (!headerB64 || !payloadB64 || !sigB64) return null;
+      const expectedSig = createHmac("sha256", JWT_SECRET)
+        .update(`${headerB64}.${payloadB64}`)
+        .digest("base64url");
+
+      if (sigB64 !== expectedSig) return null;
+
+      const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString()) as {
+        sub: string;
+        username: string;
+        exp: number;
+      };
+
+      if (payload.exp * 1000 < Date.now()) return null;
+
+      return { sub: payload.sub, username: payload.username };
+    } catch {
+      return null;
+    }
   }
 
   async hasJoined(
