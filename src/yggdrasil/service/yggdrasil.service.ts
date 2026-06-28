@@ -490,8 +490,8 @@ export class YggdrasilService {
 
   private buildTextureProperties(
     profile: YggdrasilProfile,
-  ): Array<{ name: string; value: string }> {
-    const properties: Array<{ name: string; value: string }> = [];
+  ): Array<{ name: string; value: string; signature?: string }> {
+    const properties: Array<{ name: string; value: string; signature?: string }> = [];
     let texturesValue: string;
     if (profile.skinUrl || profile.capeUrl) {
       texturesValue = this.encodeTextures(profile.uuid, profile.username, profile);
@@ -502,15 +502,17 @@ export class YggdrasilService {
       });
     }
 
-    if (privateKey) {
-      const sig = sign("sha1", new Uint8Array(Buffer.from(texturesValue)), privateKey);
-      texturesValue += ";" + sig.toString("base64");
-    }
-
-    properties.push({
+    const property: { name: string; value: string; signature?: string } = {
       name: "textures",
       value: texturesValue,
-    });
+    };
+
+    if (privateKey) {
+      const sig = sign("sha1", new Uint8Array(Buffer.from(texturesValue)), privateKey);
+      property.signature = sig.toString("base64");
+    }
+
+    properties.push(property);
     return properties;
   }
 
