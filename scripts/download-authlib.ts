@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-const MODS_DIR = join(import.meta.dir, "..", "public", "mods");
+const LAUNCHER_DIR = join(import.meta.dir, "..", "public", "launcher");
 const GITHUB_API = "https://api.github.com/repos/yushijinhun/authlib-injector/releases";
 
 async function getLatestVersion(): Promise<string> {
@@ -46,11 +46,11 @@ async function main() {
   console.log(`authlib-injector v${version} for MC ${mcVersion}`);
 
   const url = await getDownloadUrl(version);
-  const filename = `authlib-injector-${version}-${mcVersion}.jar`;
-  const dest = join(MODS_DIR, filename);
+  const filename = "authlib-injector.jar";
+  const dest = join(LAUNCHER_DIR, filename);
 
-  if (!existsSync(MODS_DIR)) {
-    await mkdir(MODS_DIR, { recursive: true });
+  if (!existsSync(LAUNCHER_DIR)) {
+    await mkdir(LAUNCHER_DIR, { recursive: true });
   }
 
   if (existsSync(dest)) {

@@ -6,31 +6,44 @@ import type { FastifyReply } from "fastify";
 import { FileDto } from "./dto/dto";
 
 const LAUNCHER_DIR = "public/launcher";
-const MODS_DIR = "public/mods";
+const EXTRA_DIRS = ["mods"];
 
 @Injectable()
 export class FilesService {
   readonly logger: Logger = new Logger(FilesService.name);
   watcherLauncher!: FSWatcher;
-  watcherMods!: FSWatcher;
+  readonly extraWatchers: FSWatcher[] = [];
 
   readonly launcherHash: Map<string, string> = new Map();
-  readonly modsHash: Map<string, string> = new Map();
+  readonly extraHashes: Map<string, Map<string, string>> = new Map();
 
   async onApplicationBootstrap() {
     this.ensureDir(LAUNCHER_DIR);
-    this.ensureDir(MODS_DIR);
 
-    await Promise.all([
-      this.indexDir(LAUNCHER_DIR, this.launcherHash),
-      this.indexDir(MODS_DIR, this.modsHash),
-    ]);
+    for (const dir of EXTRA_DIRS) {
+      this.ensureDir(`public/${dir}`);
+      this.extraHashes.set(dir, new Map());
+    }
+
+    await this.indexDir(LAUNCHER_DIR, this.launcherHash);
+
+    for (const dir of EXTRA_DIRS) {
+      const map = this.extraHashes.get(dir)!;
+      await this.indexDir(`public/${dir}`, map);
+    }
 
     this.watcherLauncher = this.createWatcher(LAUNCHER_DIR, this.launcherHash);
-    this.watcherMods = this.createWatcher(MODS_DIR, this.modsHash);
+
+    for (const dir of EXTRA_DIRS) {
+      const map = this.extraHashes.get(dir)!;
+      this.extraWatchers.push(this.createWatcher(`public/${dir}`, map));
+    }
 
     this.logger.log(
-      { launcher: this.launcherHash.size, mods: this.modsHash.size },
+      {
+        launcher: this.launcherHash.size,
+        extra: Object.fromEntries(EXTRA_DIRS.map((d) => [d, this.extraHashes.get(d)?.size ?? 0])),
+      },
       "Файлы проиндексированы",
     );
   }
@@ -104,8 +117,13 @@ export class FilesService {
     return Object.fromEntries(this.launcherHash);
   }
 
-  getModsList(): Record<string, string> {
-    return Object.fromEntries(this.modsHash);
+  getExtraList(folder: string): Record<string, string> {
+    const map = this.extraHashes.get(folder);
+    if (!map) {
+      this.logger.warn({ folder }, "Дополнительная папка не найдена");
+      return {};
+    }
+    return Object.fromEntries(map);
   }
 
   async postFile(fileInfo: FileDto, reply: FastifyReply): Promise<void> {

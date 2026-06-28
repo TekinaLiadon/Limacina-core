@@ -19,7 +19,7 @@ export class FilesController {
   @Get("mods")
   @ApiResponse({ status: 201, description: "Текущий список модов" })
   getModsList(): Record<string, string> {
-    return this.filesService.getModsList();
+    return this.filesService.getExtraList("mods");
   }
 
   @Post("files")
