@@ -414,6 +414,17 @@ export class YggdrasilService {
   }
 
   getMetadata() {
+    const skinDomains: string[] = [];
+    try {
+      const url = new URL(config.BASE_URL);
+      const host = url.hostname;
+      skinDomains.push(host);
+      if (host.includes(".")) {
+        const dotIndex = host.indexOf(".");
+        skinDomains.push(host.slice(dotIndex));
+      }
+    } catch {}
+
     return {
       meta: {
         serverName: "Limacina",
@@ -424,7 +435,7 @@ export class YggdrasilService {
         },
         "feature.non_email_login": true,
       },
-      skinDomains: [".limacina.example.com"],
+      skinDomains,
       signaturePublickey: publicKeyPem,
     };
   }
