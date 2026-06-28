@@ -1,0 +1,32 @@
+import { Controller, Get, Param, Res } from "@nestjs/common";
+import type { FastifyReply } from "fastify";
+import { ApiOkResponse, ApiOperation, ApiParam, ApiTags } from "@nestjs/swagger";
+import { Public } from "../common/public.decorator";
+import { LauncherService } from "./launcher.service";
+import { LauncherVersionDto } from "./dto/dto";
+
+@ApiTags("launcher")
+@Public()
+@Controller("launcher")
+export class LauncherController {
+  constructor(private readonly launcherService: LauncherService) {}
+
+  @Get("version")
+  @ApiOperation({ summary: "Получить текущую версию лаунчера" })
+  @ApiOkResponse({ type: LauncherVersionDto })
+  getVersion(): LauncherVersionDto {
+    return this.launcherService.getVersion();
+  }
+
+  @Get(":os/:arch/download")
+  @ApiOperation({ summary: "Скачать лаунчер" })
+  @ApiParam({ name: "os", enum: ["linux", "windows"] })
+  @ApiParam({ name: "arch", enum: ["x86_64", "aarch64"] })
+  async download(
+    @Param("os") os: string,
+    @Param("arch") arch: string,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    return this.launcherService.download(os, arch, reply);
+  }
+}
