@@ -65,9 +65,9 @@ export class FilesService {
         if (!statSync(fullPath).isFile()) return;
         if (String(entry).endsWith(".filepart")) return;
 
-        const publicPath = fullPath.replace(/^public\//, "");
+        const namePath = fullPath.replace(`${dir}/`, "");
         const hash = await this.getHash(fullPath);
-        map.set(publicPath, hash);
+        map.set(namePath, hash);
       }),
     );
   }
@@ -77,23 +77,23 @@ export class FilesService {
       if (!filename) return;
       if (filename.endsWith(".filepart")) return;
 
-      const fullPath = join(dir, filename);
-      const publicPath = fullPath.replace(/^public\//, "");
-
       if (event === "change") {
+        const fullPath = join(dir, filename);
         if (!existsSync(fullPath)) return;
         const hash: string = await this.getHash(fullPath);
-        map.set(publicPath, hash);
+        map.set(filename, hash);
         return;
       }
 
       if (event === "rename") {
+        const fullPath = join(dir, filename);
+
         if (existsSync(fullPath)) {
           if (!statSync(fullPath).isFile()) return;
           const hash: string = await this.getHash(fullPath);
-          map.set(publicPath, hash);
+          map.set(filename, hash);
         } else {
-          map.delete(publicPath);
+          map.delete(filename);
         }
       }
     });
@@ -127,8 +127,7 @@ export class FilesService {
   }
 
   async postFile(fileInfo: FileDto, reply: FastifyReply): Promise<void> {
-    const filePath = join("public", fileInfo.url);
-
+    const filePath = join("public", "launcher", fileInfo.url);
     if (!existsSync(filePath)) {
       throw new NotFoundException(`Файл не найден: ${fileInfo.url}`);
     }
