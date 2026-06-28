@@ -65,9 +65,9 @@ export class FilesService {
         if (!statSync(fullPath).isFile()) return;
         if (String(entry).endsWith(".filepart")) return;
 
-        const namePath = fullPath.replace(`${dir}/`, "");
+        const publicPath = fullPath.replace(/^public\//, "");
         const hash = await this.getHash(fullPath);
-        map.set(namePath, hash);
+        map.set(publicPath, hash);
       }),
     );
   }
@@ -77,23 +77,23 @@ export class FilesService {
       if (!filename) return;
       if (filename.endsWith(".filepart")) return;
 
+      const fullPath = join(dir, filename);
+      const publicPath = fullPath.replace(/^public\//, "");
+
       if (event === "change") {
-        const fullPath = join(dir, filename);
         if (!existsSync(fullPath)) return;
         const hash: string = await this.getHash(fullPath);
-        map.set(filename, hash);
+        map.set(publicPath, hash);
         return;
       }
 
       if (event === "rename") {
-        const fullPath = join(dir, filename);
-
         if (existsSync(fullPath)) {
           if (!statSync(fullPath).isFile()) return;
           const hash: string = await this.getHash(fullPath);
-          map.set(filename, hash);
+          map.set(publicPath, hash);
         } else {
-          map.delete(filename);
+          map.delete(publicPath);
         }
       }
     });
