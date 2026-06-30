@@ -56,7 +56,8 @@ export class LauncherService implements OnModuleDestroy {
   }
 
   private watchVersion(): void {
-    this.versionWatcher = watch(VERSION_FILE, () => {
+    this.versionWatcher = watch(PUBLIC_DIR, (event, filename) => {
+      if (filename !== "version.json") return;
       this.loadVersion();
       this.logger.log({ version: this.version }, "Версия лаунчера обновлена");
     });
