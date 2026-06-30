@@ -1,6 +1,12 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
-import { Injectable, BadRequestException, Logger } from "@nestjs/common";
+import {
+  Injectable,
+  BadRequestException,
+  Logger,
+  NotFoundException,
+  OnModuleDestroy,
+} from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 
 const PUBLIC_DIR = "public";
@@ -21,14 +27,16 @@ interface PlatformInfo {
 }
 
 @Injectable()
-export class LauncherService {
+export class LauncherService implements OnModuleDestroy {
   private readonly logger = new Logger(LauncherService.name);
 
-  private version: string = "";
+  private version = "0.0.0";
   private platforms: PlatformInfo[] = [];
+  private versionWatcher?: FSWatcher;
 
   async onApplicationBootstrap() {
     this.loadVersion();
+    this.watchVersion();
     this.scanPlatforms();
 
     this.logger.log(
@@ -41,11 +49,17 @@ export class LauncherService {
     try {
       const data: VersionData = JSON.parse(readFileSync(VERSION_FILE, "utf-8"));
       this.version = data.version;
-      this.logger.log({ version: this.version }, "Версия лаунчера загружена");
     } catch {
-      this.logger.error("Ошибка чтения version.json");
+      this.logger.warn("Ошибка чтения version.json, используется 0.0.0");
       this.version = "0.0.0";
     }
+  }
+
+  private watchVersion(): void {
+    this.versionWatcher = watch(VERSION_FILE, () => {
+      this.loadVersion();
+      this.logger.log({ version: this.version }, "Версия лаунчера обновлена");
+    });
   }
 
   private scanPlatforms(): void {
@@ -70,6 +84,10 @@ export class LauncherService {
     return { version: this.version, platforms: this.platforms };
   }
 
+  onModuleDestroy(): void {
+    this.versionWatcher?.close();
+  }
+
   async download(os: string, arch: string, reply: FastifyReply): Promise<void> {
     const platform = SUPPORTED_PLATFORMS[os];
     if (!platform || !platform.includes(arch)) {
@@ -78,22 +96,26 @@ export class LauncherService {
 
     const dir = join(PUBLIC_DIR, os, arch);
     if (!existsSync(dir)) {
-      throw new BadRequestException(`Платформа не найдена: ${os}/${arch}`);
+      throw new NotFoundException(`Платформа не найдена: ${os}/${arch}`);
     }
 
     const files = readdirSync(dir);
     const zipFile = files.find((f) => f.endsWith(".zip"));
 
     if (!zipFile) {
-      throw new BadRequestException(`Файл лаунчера не найден для ${os}/${arch}`);
+      throw new NotFoundException(`Файл лаунчера не найден для ${os}/${arch}`);
     }
 
     const filePath = join(dir, zipFile);
     const file = Bun.file(filePath);
 
-    reply.header("Content-Type", "application/zip");
-    reply.header("Content-Disposition", `attachment; filename="${zipFile}"`);
-    reply.header("Content-Length", (await file.size).toString());
-    reply.send(file.stream());
+    reply.raw.writeHead(200, {
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="${zipFile}"`,
+      "Content-Length": (await file.size).toString(),
+    });
+
+    const buffer = await file.arrayBuffer();
+    reply.raw.end(Buffer.from(buffer));
   }
 }

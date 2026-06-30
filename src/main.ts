@@ -14,7 +14,10 @@ async function bootstrap() {
   });
 
   const instance = app.getHttpAdapter().getInstance();
-  await instance.register(fastifyStatic, { root: join(process.cwd(), "public") });
+  await instance.register(fastifyStatic, {
+    root: join(process.cwd(), "public"),
+    wildcard: false,
+  });
 
   const logger = app.get(Logger);
   app.useLogger(logger);
