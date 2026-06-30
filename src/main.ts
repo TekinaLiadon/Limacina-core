@@ -29,6 +29,7 @@ async function bootstrap() {
     .addTag("auth", "Аутентификация и управление токенами")
     .addTag("yggdrasil", "Minecraft Yggdrasil authentication")
     .addTag("admin", "Администрирование пользователей")
+    .addTag("launcher", "Обновление лаунчера")
     .build();
   const documentFactory = () => SwaggerModule.createDocument(app, config);
   SwaggerModule.setup("api", app, documentFactory);
