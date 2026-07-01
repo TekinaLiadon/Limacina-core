@@ -1,4 +1,11 @@
-import { existsSync, readdirSync, readFileSync, watch, type FSWatcher } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  watchFile,
+  unwatchFile,
+  type StatWatcher,
+} from "node:fs";
 import { join } from "node:path";
 import {
   Injectable,
@@ -32,7 +39,7 @@ export class LauncherService implements OnModuleDestroy {
 
   private version = "0.0.0";
   private platforms: PlatformInfo[] = [];
-  private versionWatcher?: FSWatcher;
+  private versionWatcher?: StatWatcher;
 
   async onApplicationBootstrap() {
     this.loadVersion();
@@ -56,8 +63,7 @@ export class LauncherService implements OnModuleDestroy {
   }
 
   private watchVersion(): void {
-    this.versionWatcher = watch(PUBLIC_DIR, (event, filename) => {
-      if (filename !== "version.json") return;
+    this.versionWatcher = watchFile(VERSION_FILE, { interval: 500 }, () => {
       this.loadVersion();
       this.logger.log({ version: this.version }, "Версия лаунчера обновлена");
     });
@@ -86,7 +92,9 @@ export class LauncherService implements OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
-    this.versionWatcher?.close();
+    if (this.versionWatcher) {
+      unwatchFile(VERSION_FILE);
+    }
   }
 
   async download(os: string, arch: string, reply: FastifyReply): Promise<void> {
