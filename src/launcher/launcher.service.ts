@@ -14,6 +14,8 @@ import {
   NotFoundException,
   OnModuleDestroy,
 } from "@nestjs/common";
+import { parse as parseToml } from "smol-toml";
+import type { LauncherConfigDto } from "./dto/dto";
 import type { FastifyReply } from "fastify";
 
 const PUBLIC_DIR = "public";
@@ -92,12 +94,15 @@ export class LauncherService implements OnModuleDestroy {
     return { version: this.version, platforms: this.platforms };
   }
 
-  getConfig(): string {
+  getConfig(): LauncherConfigDto {
     if (!existsSync(CONFIG_FILE)) {
       throw new NotFoundException("Конфиг не настроен: файл config.toml не найден");
     }
 
-    return readFileSync(CONFIG_FILE, "utf-8");
+    const content = readFileSync(CONFIG_FILE, "utf-8");
+    const parsed = parseToml(content) as unknown as LauncherConfigDto;
+
+    return parsed;
   }
 
   onModuleDestroy(): void {

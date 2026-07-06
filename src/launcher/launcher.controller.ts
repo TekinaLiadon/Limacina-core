@@ -22,7 +22,7 @@ export class LauncherController {
   @ApiOperation({ summary: "Получить конфиг лаунчера" })
   @ApiOkResponse({ type: LauncherConfigDto })
   getConfig(): LauncherConfigDto {
-    return { config: this.launcherService.getConfig() };
+    return this.launcherService.getConfig();
   }
 
   @Get(":os/:arch/download")

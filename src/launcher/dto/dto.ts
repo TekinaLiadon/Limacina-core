@@ -17,6 +17,27 @@ export class LauncherVersionDto {
 }
 
 export class LauncherConfigDto {
-  @ApiProperty()
-  config!: string;
+  @ApiProperty({ description: "Название проекта" })
+  projectName!: string;
+
+  @ApiProperty({ description: "Версия Minecraft" })
+  mcVersion!: string;
+
+  @ApiProperty({ description: "Тип загрузчика модов" })
+  modLoader!: string;
+
+  @ApiProperty({ description: "Версия загрузчика" })
+  loaderVersion!: string;
+
+  @ApiProperty({ description: "Аргументы JVM", type: [String] })
+  jvmArgs!: string[];
+
+  @ApiProperty({ description: "Минимальный объём памяти" })
+  minMemory!: string;
+
+  @ApiProperty({ description: "Максимальный объём памяти" })
+  maxMemory!: string;
+
+  @ApiProperty({ description: "Онлайн-режим" })
+  online!: boolean;
 }

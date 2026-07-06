@@ -42,7 +42,13 @@ describe("Тесты эндпоинтов лаунчера", (): void => {
     const res = await supertest(app.getHttpServer()).get("/launcher/config").expect(200);
 
     expect(typeof res.body).toBe("object");
-    expect(typeof res.body.config).toBe("string");
-    expect(res.body.config.length).toBeGreaterThan(0);
+    expect(typeof res.body.projectName).toBe("string");
+    expect(typeof res.body.mcVersion).toBe("string");
+    expect(typeof res.body.modLoader).toBe("string");
+    expect(typeof res.body.loaderVersion).toBe("string");
+    expect(Array.isArray(res.body.jvmArgs)).toBe(true);
+    expect(typeof res.body.minMemory).toBe("string");
+    expect(typeof res.body.maxMemory).toBe("string");
+    expect(typeof res.body.online).toBe("boolean");
   });
 });
