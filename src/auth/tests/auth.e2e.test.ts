@@ -105,11 +105,10 @@ describe("Auth эндпоинты", (): void => {
         .send({ refresh_token })
         .expect(201);
 
-      expect(res.body).toHaveProperty("tokens");
-      expect(res.body).toHaveProperty("profile");
-      expect(res.body.tokens.access_token).toBeTruthy();
-      expect(res.body.tokens.refresh_token).not.toBe(refresh_token);
-      expect(res.body.profile.uuid).toBe(registeredUuid);
+      expect(res.body).toHaveProperty("access_token");
+      expect(res.body).toHaveProperty("refresh_token");
+      expect(res.body.access_token).toBeTruthy();
+      expect(res.body.refresh_token).not.toBe(refresh_token);
     });
 
     it("ошибка при повторном использовании токена", async () => {

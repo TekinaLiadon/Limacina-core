@@ -50,15 +50,11 @@ export class AuthService {
     return { tokens, profile: { uuid: user.uuid, username: user.username } };
   }
 
-  async refresh(refreshToken: string): Promise<ProfileInfo> {
+  async refresh(refreshToken: string): Promise<UserTokens> {
     const entry = await this.validateRefreshToken(refreshToken);
     await this.authStore.deleteRefresh(entry.jti);
     const user = await this.authStore.findByUsername(entry.username);
-    const tokens = await this.createTokens(entry.userId, entry.username, user?.role ?? "user");
-    return {
-      tokens,
-      profile: { uuid: entry.userId, username: entry.username },
-    };
+    return this.createTokens(entry.userId, entry.username, user?.role ?? "user");
   }
 
   async invalidate(refreshToken: string): Promise<void> {
