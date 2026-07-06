@@ -1,5 +1,6 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsString } from "class-validator";
+import { IsString, ValidateNested } from "class-validator";
+import { Type } from "class-transformer";
 
 export class AuthDto {
   @ApiProperty({ example: "john" })
@@ -11,10 +12,51 @@ export class AuthDto {
   password!: string;
 }
 
-export class RefreshDto {
+export class ProfilePropertyDto {
+  @ApiProperty({ example: "textures" })
+  @IsString()
+  name!: string;
+
   @ApiProperty()
   @IsString()
+  value!: string;
+}
+
+export class GameProfileDto {
+  @ApiProperty({ example: "a1b2c3d4e5f67890abcdef1234567890" })
+  @IsString()
+  id!: string;
+
+  @ApiProperty({ example: "player1" })
+  @IsString()
+  name!: string;
+
+  @ApiProperty({ type: [ProfilePropertyDto] })
+  @ValidateNested({ each: true })
+  @Type(() => ProfilePropertyDto)
+  properties!: ProfilePropertyDto[];
+}
+
+export class YggUserDto {
+  @ApiProperty({ example: "a1b2c3d4e5f67890abcdef1234567890" })
+  id!: string;
+
+  @ApiProperty({ type: [ProfilePropertyDto], default: [] })
+  properties!: ProfilePropertyDto[];
+}
+
+export class RefreshDto {
+  @ApiProperty({ description: "Refresh token (JWT)" })
+  @IsString()
   refresh_token!: string;
+}
+
+export class RefreshResponseDto {
+  @ApiProperty()
+  accessToken!: string;
+
+  @ApiProperty()
+  clientToken!: string;
 }
 
 export class UserTokens {

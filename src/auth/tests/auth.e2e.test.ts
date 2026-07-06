@@ -105,10 +105,10 @@ describe("Auth эндпоинты", (): void => {
         .send({ refresh_token })
         .expect(201);
 
-      expect(res.body).toHaveProperty("access_token");
-      expect(res.body).toHaveProperty("refresh_token");
-      expect(res.body.access_token).toBeTruthy();
-      expect(res.body.refresh_token).not.toBe(refresh_token);
+      expect(res.body).toHaveProperty("accessToken");
+      expect(res.body).toHaveProperty("clientToken");
+      expect(res.body.accessToken).toBeTruthy();
+      expect(res.body.clientToken).not.toBe(refresh_token);
     });
 
     it("ошибка при повторном использовании токена", async () => {
