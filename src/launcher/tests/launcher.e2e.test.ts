@@ -37,4 +37,12 @@ describe("Тесты эндпоинтов лаунчера", (): void => {
 
     expect(res.body.statusCode).toBe(400);
   });
+
+  it("Получение конфига лаунчера", async () => {
+    const res = await supertest(app.getHttpServer()).get("/launcher/config").expect(200);
+
+    expect(typeof res.body).toBe("object");
+    expect(typeof res.body.config).toBe("string");
+    expect(res.body.config.length).toBeGreaterThan(0);
+  });
 });

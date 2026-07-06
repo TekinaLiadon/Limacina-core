@@ -18,6 +18,7 @@ import type { FastifyReply } from "fastify";
 
 const PUBLIC_DIR = "public";
 const VERSION_FILE = join(PUBLIC_DIR, "version.json");
+const CONFIG_FILE = "config.toml";
 
 const SUPPORTED_PLATFORMS: Record<string, string[]> = {
   linux: ["x86_64", "aarch64"],
@@ -89,6 +90,14 @@ export class LauncherService implements OnModuleDestroy {
 
   getVersion(): { version: string; platforms: PlatformInfo[] } {
     return { version: this.version, platforms: this.platforms };
+  }
+
+  getConfig(): string {
+    if (!existsSync(CONFIG_FILE)) {
+      throw new NotFoundException("Конфиг не настроен: файл config.toml не найден");
+    }
+
+    return readFileSync(CONFIG_FILE, "utf-8");
   }
 
   onModuleDestroy(): void {

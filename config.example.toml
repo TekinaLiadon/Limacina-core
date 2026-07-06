@@ -1,0 +1,8 @@
+projectName = "Cordelia"
+mcVersion = "1.21.1"
+modLoader = "neoforge"
+loaderVersion = "21.1.234"
+jvmArgs = []
+minMemory = "-Xms512M"
+maxMemory = "-Xmx2560M"
+online = true

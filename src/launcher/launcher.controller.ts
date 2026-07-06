@@ -3,7 +3,7 @@ import type { FastifyReply } from "fastify";
 import { ApiOkResponse, ApiOperation, ApiParam, ApiTags } from "@nestjs/swagger";
 import { Public } from "../common/public.decorator";
 import { LauncherService } from "./launcher.service";
-import { LauncherVersionDto } from "./dto/dto";
+import { LauncherConfigDto, LauncherVersionDto } from "./dto/dto";
 
 @ApiTags("launcher")
 @Public()
@@ -16,6 +16,13 @@ export class LauncherController {
   @ApiOkResponse({ type: LauncherVersionDto })
   getVersion(): LauncherVersionDto {
     return this.launcherService.getVersion();
+  }
+
+  @Get("config")
+  @ApiOperation({ summary: "Получить конфиг лаунчера" })
+  @ApiOkResponse({ type: LauncherConfigDto })
+  getConfig(): LauncherConfigDto {
+    return { config: this.launcherService.getConfig() };
   }
 
   @Get(":os/:arch/download")

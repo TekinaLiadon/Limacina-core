@@ -15,3 +15,8 @@ export class LauncherVersionDto {
   @ApiProperty({ type: [LauncherPlatformDto] })
   platforms!: LauncherPlatformDto[];
 }
+
+export class LauncherConfigDto {
+  @ApiProperty()
+  config!: string;
+}
