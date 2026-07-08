@@ -33,4 +33,11 @@ export class AdminService {
 
     await this.adminStore.setBanned(username, banned);
   }
+
+  async setRole(username: string, role: string): Promise<void> {
+    const user = await this.adminStore.findByUsername(username);
+    if (!user) throw new NotFoundException(`Пользователь ${username} не найден`);
+
+    await this.adminStore.setRole(username, role);
+  }
 }

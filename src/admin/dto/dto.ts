@@ -1,6 +1,18 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsBoolean, IsDateString, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import {
+  IsBoolean,
+  IsDateString,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from "class-validator";
 import { Type } from "class-transformer";
+
+export const AVAILABLE_ROLES = ["admin", "moderator", "user"] as const;
+export type AvailableRole = (typeof AVAILABLE_ROLES)[number];
 
 export interface UserRow extends Record<string, unknown> {
   uuid: string;
@@ -50,6 +62,17 @@ export class BanUserDto {
   banned!: boolean;
 }
 
+export class SetRoleDto {
+  @ApiProperty({ example: "john" })
+  @IsString()
+  username!: string;
+
+  @ApiProperty({ example: "user", enum: AVAILABLE_ROLES })
+  @IsString()
+  @IsIn(AVAILABLE_ROLES)
+  role!: AvailableRole;
+}
+
 export class UserListItemDto {
   @ApiProperty({ example: "john" })
   username!: string;
@@ -78,7 +101,12 @@ export class LogsQueryDto {
   @Min(0)
   offset?: number;
 
-  @ApiProperty({ default: 100, minimum: 1, maximum: 1000, description: "Максимум строк на страницу" })
+  @ApiProperty({
+    default: 100,
+    minimum: 1,
+    maximum: 1000,
+    description: "Максимум строк на страницу",
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

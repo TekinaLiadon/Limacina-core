@@ -28,14 +28,7 @@ interface RefreshRow extends Record<string, unknown> {
 @Injectable()
 export class AuthPostgresStore implements IAuthStore {
   async findByUsername(username: string): Promise<StoredUser | undefined> {
-    const query = selectQuery(
-      "uuid",
-      "username",
-      "password_hash",
-      "role",
-      "approved",
-      "banned",
-    )
+    const query = selectQuery("uuid", "username", "password_hash", "role", "approved", "banned")
       .from(TABLES.users)
       .where("username = $1", username)
       .build();

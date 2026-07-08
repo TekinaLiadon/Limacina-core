@@ -14,6 +14,7 @@ export interface IAdminStore {
   findAllUsers(limit: number): Promise<AdminUser[]>;
   setApproved(username: string, approved: boolean): Promise<void>;
   setBanned(username: string, banned: boolean): Promise<void>;
+  setRole(username: string, role: string): Promise<void>;
 }
 
 export class AdminMapStore implements IAdminStore {
@@ -55,5 +56,10 @@ export class AdminMapStore implements IAdminStore {
   async setBanned(username: string, banned: boolean): Promise<void> {
     const user = this.users.get(username);
     if (user) user.banned = banned;
+  }
+
+  async setRole(username: string, role: string): Promise<void> {
+    const user = this.users.get(username);
+    if (user) user.role = role;
   }
 }

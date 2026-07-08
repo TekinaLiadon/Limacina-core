@@ -17,6 +17,7 @@ import {
   BanUserDto,
   LogsQueryDto,
   LogsResponseDto,
+  SetRoleDto,
   UnapprovedUsersQueryDto,
   UserListItemDto,
 } from "./dto/dto";
@@ -59,7 +60,12 @@ export class AdminController {
     description:
       "Возвращает строки лог-файла за указанную дату с пагинацией. Если дата не указана — используется сегодняшняя.\n\nПримеры:\n- `GET /admin/logs` — логи за сегодня\n- `GET /admin/logs?date=2026-07-08` — логи за 8 июля 2026\n- `GET /admin/logs?date=2026-07-08&offset=0&limit=50` — первые 50 строк за 8 июля",
   })
-  @ApiQuery({ name: "date", required: false, example: "2026-07-08", description: "Дата YYYY-MM-DD (по умолчанию сегодня)" })
+  @ApiQuery({
+    name: "date",
+    required: false,
+    example: "2026-07-08",
+    description: "Дата YYYY-MM-DD (по умолчанию сегодня)",
+  })
   @ApiQuery({ name: "offset", required: false, example: 0, description: "Смещение от начала" })
   @ApiQuery({ name: "limit", required: false, example: 100, description: "Максимум строк" })
   @ApiResponse({
@@ -69,11 +75,7 @@ export class AdminController {
   })
   async getLogs(@Query() query: LogsQueryDto) {
     const date = query.date ?? new Date().toISOString().slice(0, 10);
-    const { lines, total } = this.logsService.getLines(
-      date,
-      query.offset ?? 0,
-      query.limit ?? 100,
-    );
+    const { lines, total } = this.logsService.getLines(date, query.offset ?? 0, query.limit ?? 100);
     return {
       date,
       offset: query.offset ?? 0,
@@ -87,7 +89,7 @@ export class AdminController {
   @ApiOperation({
     summary: "Список доступных дат с логами",
     description:
-      "Возвращает массив дат в формате YYYY-MM-DD, за которые есть лог-файлы. Сегодняшняя дата всегда присутствует в списке.\n\nПример ответа: `[\"2026-07-08\", \"2026-07-07\", \"2026-07-06\"]`",
+      'Возвращает массив дат в формате YYYY-MM-DD, за которые есть лог-файлы. Сегодняшняя дата всегда присутствует в списке.\n\nПример ответа: `["2026-07-08", "2026-07-07", "2026-07-06"]`',
   })
   @ApiResponse({
     status: 200,
@@ -116,6 +118,17 @@ export class AdminController {
   @ApiResponse({ status: 404, description: "Пользователь не найден" })
   async setBanned(@Body() dto: BanUserDto) {
     await this.adminService.setBanned(dto.username, dto.banned);
+    return { success: true };
+  }
+
+  @Patch("role")
+  @ApiOperation({ summary: "Изменить роль пользователя" })
+  @ApiBody({ type: SetRoleDto })
+  @ApiResponse({ status: 200, description: "Роль изменена" })
+  @ApiResponse({ status: 400, description: "Недопустимая роль" })
+  @ApiResponse({ status: 404, description: "Пользователь не найден" })
+  async setRole(@Body() dto: SetRoleDto) {
+    await this.adminService.setRole(dto.username, dto.role);
     return { success: true };
   }
 

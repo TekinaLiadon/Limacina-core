@@ -76,4 +76,14 @@ export class AdminPostgresStore implements IAdminStore {
 
     await execute(query.sql, query.values);
   }
+
+  async setRole(username: string, role: string): Promise<void> {
+    const query = updateQuery()
+      .from(TABLES.users)
+      .set("role", role)
+      .where("username = $1", username)
+      .build();
+
+    await execute(query.sql, query.values);
+  }
 }
