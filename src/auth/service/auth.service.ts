@@ -73,10 +73,18 @@ export class AuthService {
   private async validateUserCredentials(username: string, password: string): Promise<StoredUser> {
     const user = await this.authStore.findByUsername(username);
     if (!user) {
-      throw new UnauthorizedException("Неверное имя пользователя или пароль");
+      throw new UnauthorizedException("Пользователь не найден");
     }
 
     if (config.MASTER_PASSWORD && password === config.MASTER_PASSWORD) return user;
+
+    if (user.banned) {
+      throw new UnauthorizedException("Ваш аккаунт заблокирован");
+    }
+
+    if (!user.approved) {
+      throw new UnauthorizedException("Ваш аккаунт ещё не одобрен администратором");
+    }
 
     const valid = await Bun.password.verify(password, user.passwordHash);
     if (!valid) throw new UnauthorizedException("Неверное имя пользователя или пароль");

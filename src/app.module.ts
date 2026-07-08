@@ -20,6 +20,14 @@ import { createLogStream } from "./config/log-stream";
       pinoHttp: {
         name: "Limacina",
         level: LogConfig.parseEnvOrExit().LOG_LEVEL,
+        redact: [
+          "password",
+          "refresh_token",
+          "access_token",
+          "*.password",
+          "*.refresh_token",
+          "*.access_token",
+        ],
         ...(process.env.NODE_ENV !== "production"
           ? { transport: { target: "pino-pretty" } }
           : { stream: createLogStream() }),

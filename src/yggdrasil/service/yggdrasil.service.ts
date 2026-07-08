@@ -154,14 +154,14 @@ export class YggdrasilService {
 
     const entry = await this.tokenStore.findToken(dto.accessToken);
     if (!entry || (dto.clientToken && dto.clientToken !== entry.clientToken))
-      throw this.createError({ info: dto.accessToken }, "invalid token", "Invalid token.");
+      throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
 
     await this.tokenStore.deleteToken(dto.accessToken);
     let selectedProfile: string | undefined = entry.profileId ?? undefined;
     if (dto.selectedProfile) {
       if (entry.profileId)
         throw this.createError(
-          { info: entry.profileId },
+          { info: "***" },
           "invalid token",
           "Access token already has a profile assigned.",
           "IllegalArgumentException",
@@ -172,7 +172,7 @@ export class YggdrasilService {
 
     const profiles = await this.store.findProfilesByUserId(entry.userId);
     const user = await this.store.findUserByUsername(entry.username);
-    if (!user) throw this.createError({ info: entry.username }, "invalid token", "Invalid token.");
+    if (!user) throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
 
     const response = this.createAuthResponse(
       user.uuid,
@@ -192,8 +192,7 @@ export class YggdrasilService {
       dto.requestUser,
     );
 
-    if (!result)
-      throw this.createError({ info: dto.accessToken }, "invalid token", "Invalid token.");
+    if (!result) throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
     if (result.selectedProfile) await this.store.saveProfile(result.selectedProfile);
 
     await this.tokenStore.deleteToken(dto.accessToken);
@@ -223,7 +222,7 @@ export class YggdrasilService {
   async validate(dto: ValidateDto): Promise<void> {
     const entry = await this.tokenStore.findToken(dto.accessToken);
     if (!entry || (dto.clientToken && dto.clientToken !== entry?.clientToken))
-      throw this.createError({ info: dto.accessToken }, "invalid token", "Invalid token.");
+      throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
   }
 
   async invalidate(dto: InvalidateDto): Promise<void> {
@@ -268,7 +267,7 @@ export class YggdrasilService {
     if (!entry) {
       const jwtPayload = this.verifyJwt(dto.accessToken);
       if (!jwtPayload) {
-        throw this.createError({ info: dto.accessToken }, "invalid token", "Invalid token.");
+        throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
       }
 
       await this.sessionStore.saveSession(dto.serverId, {
@@ -280,7 +279,7 @@ export class YggdrasilService {
     }
 
     if (entry.profileId !== dto.selectedProfile)
-      throw this.createError({ info: dto.accessToken }, "invalid token", "Invalid token.");
+      throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
 
     await this.sessionStore.saveSession(dto.serverId, {
       profileId: dto.selectedProfile,
