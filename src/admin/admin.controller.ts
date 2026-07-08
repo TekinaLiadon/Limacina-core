@@ -54,20 +54,28 @@ export class AdminController {
   }
 
   @Get("logs")
-  @ApiOperation({ summary: "Получить логи за конкретную дату" })
+  @ApiOperation({
+    summary: "Получить логи за конкретную дату",
+    description:
+      "Возвращает строки лог-файла за указанную дату с пагинацией. Если дата не указана — используется сегодняшняя.\n\nПримеры:\n- `GET /admin/logs` — логи за сегодня\n- `GET /admin/logs?date=2026-07-08` — логи за 8 июля 2026\n- `GET /admin/logs?date=2026-07-08&offset=0&limit=50` — первые 50 строк за 8 июля",
+  })
+  @ApiQuery({ name: "date", required: false, example: "2026-07-08", description: "Дата YYYY-MM-DD (по умолчанию сегодня)" })
+  @ApiQuery({ name: "offset", required: false, example: 0, description: "Смещение от начала" })
+  @ApiQuery({ name: "limit", required: false, example: 100, description: "Максимум строк" })
   @ApiResponse({
     status: 200,
     description: "Страница логов с пагинацией",
     type: LogsResponseDto,
   })
   async getLogs(@Query() query: LogsQueryDto) {
+    const date = query.date ?? new Date().toISOString().slice(0, 10);
     const { lines, total } = this.logsService.getLines(
-      query.date,
+      date,
       query.offset ?? 0,
       query.limit ?? 100,
     );
     return {
-      date: query.date,
+      date,
       offset: query.offset ?? 0,
       limit: query.limit ?? 100,
       total,
@@ -76,8 +84,17 @@ export class AdminController {
   }
 
   @Get("logs/dates")
-  @ApiOperation({ summary: "Список доступных дат с логами" })
-  @ApiResponse({ status: 200, description: "Массив дат (YYYY-MM-DD)", type: [String] })
+  @ApiOperation({
+    summary: "Список доступных дат с логами",
+    description:
+      "Возвращает массив дат в формате YYYY-MM-DD, за которые есть лог-файлы. Сегодняшняя дата всегда присутствует в списке.\n\nПример ответа: `[\"2026-07-08\", \"2026-07-07\", \"2026-07-06\"]`",
+  })
+  @ApiResponse({
+    status: 200,
+    description: "Массив дат (YYYY-MM-DD), отсортированных от новых к старым",
+    schema: { type: "array", items: { type: "string", example: "2026-07-08" } },
+    example: ["2026-07-08", "2026-07-07", "2026-07-06"],
+  })
   async getLogDates() {
     return this.logsService.listAvailableDates();
   }

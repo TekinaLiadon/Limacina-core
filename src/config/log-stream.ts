@@ -2,7 +2,7 @@ import { createWriteStream, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 
-const LOGS_DIR = join(import.meta.dir, "../../logs");
+const LOGS_DIR = join(process.cwd(), "logs");
 const RETENTION_DAYS = 7;
 
 function today(): string {

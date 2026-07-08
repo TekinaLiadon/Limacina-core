@@ -62,18 +62,23 @@ export class UserListItemDto {
 }
 
 export class LogsQueryDto {
-  @ApiProperty({ example: "2026-07-08", description: "Дата логов (YYYY-MM-DD)" })
+  @ApiProperty({
+    example: "2026-07-08",
+    description: "Дата логов в формате YYYY-MM-DD. По умолчанию — сегодня",
+    required: false,
+  })
+  @IsOptional()
   @IsDateString()
-  date!: string;
+  date?: string;
 
-  @ApiProperty({ default: 0, minimum: 0 })
+  @ApiProperty({ default: 0, minimum: 0, description: "Смещение от начала файла (номер строки)" })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(0)
   offset?: number;
 
-  @ApiProperty({ default: 100, minimum: 1, maximum: 1000 })
+  @ApiProperty({ default: 100, minimum: 1, maximum: 1000, description: "Максимум строк на страницу" })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -95,6 +100,12 @@ export class LogsResponseDto {
   @ApiProperty({ example: 5432 })
   total!: number;
 
-  @ApiProperty({ type: [String] })
+  @ApiProperty({
+    type: [String],
+    example: [
+      '{"level":30,"time":1751971200000,"msg":"Запуск...","App":"App"}',
+      '{"level":30,"time":1751971201000,"msg":"Сервер запущен на порту 3005","App":"App"}',
+    ],
+  })
   lines!: string[];
 }

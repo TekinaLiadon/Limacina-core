@@ -25,6 +25,7 @@ async function bootstrap() {
   await instance.register(cors, {
     origin: corsOrigins ? corsOrigins.split(",").map((o) => o.trim()) : true,
     credentials: true,
+    methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE"],
   });
 
   await instance.register(fastifyMultipart, { limits: { fileSize: 50 * 1024 * 1024 } });

@@ -2,7 +2,7 @@ import { Injectable, Logger, BadRequestException } from "@nestjs/common";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const LOGS_DIR = join(import.meta.dir, "../../logs");
+const LOGS_DIR = join(process.cwd(), "logs");
 const CACHE_TTL_MS = 10_000;
 
 interface CacheEntry {
@@ -16,14 +16,19 @@ export class LogsService {
   private readonly cache = new Map<string, CacheEntry>();
 
   listAvailableDates(): string[] {
+    const today = new Date().toISOString().slice(0, 10);
     try {
-      return readdirSync(LOGS_DIR)
+      const dates = readdirSync(LOGS_DIR)
         .filter((f) => f.endsWith(".log"))
         .map((f) => f.replace(".log", ""))
         .sort()
         .reverse();
+      if (!dates.includes(today)) {
+        dates.unshift(today);
+      }
+      return dates;
     } catch {
-      return [];
+      return [today];
     }
   }
 
