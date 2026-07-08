@@ -6,6 +6,8 @@ process.env["DB_DRIVER"] = "map";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { AdminController } from "../admin.controller";
 import { AdminService } from "../admin.service";
+import { LogsService } from "../logs.service";
+import { LauncherUpdateService } from "../launcher-update.service";
 import { AdminMapStore, AdminMapStoreToken } from "../admin.store";
 import { INestApplication, ValidationPipe } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
@@ -52,6 +54,8 @@ describe("Admin эндпоинты", (): void => {
       controllers: [AdminController],
       providers: [
         AdminService,
+        LogsService,
+        LauncherUpdateService,
         TestJwtStrategy,
         {
           provide: AdminMapStoreToken,
@@ -78,6 +82,7 @@ describe("Admin эндпоинты", (): void => {
       skin: null,
       role: "admin",
       approved: true,
+      banned: false,
     });
     await store.saveUser({
       uuid: "user-uuid",
@@ -86,6 +91,7 @@ describe("Admin эндпоинты", (): void => {
       skin: null,
       role: "user",
       approved: false,
+      banned: false,
     });
   });
 
@@ -131,6 +137,41 @@ describe("Admin эндпоинты", (): void => {
     });
   });
 
+  describe("GET /admin/users", () => {
+    it("возвращает список пользователей для админа", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/admin/users")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body.length).toBeGreaterThan(0);
+      expect(res.body[0]).toHaveProperty("username");
+      expect(res.body[0]).toHaveProperty("role");
+      expect(res.body[0]).toHaveProperty("banned");
+    });
+
+    it("ограничивает количество по лимиту", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/admin/users?limit=1")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(res.body.length).toBe(1);
+    });
+
+    it("возвращает 403 для не-админа", async () => {
+      await supertest(app.getHttpServer())
+        .get("/admin/users")
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(403);
+    });
+
+    it("возвращает 401 без токена", async () => {
+      await supertest(app.getHttpServer()).get("/admin/users").expect(401);
+    });
+  });
+
   describe("PATCH /admin/approve", () => {
     it("одобряет пользователя", async () => {
       await supertest(app.getHttpServer())
@@ -160,6 +201,110 @@ describe("Admin эндпоинты", (): void => {
         .patch("/admin/approve")
         .set("Authorization", `Bearer ${userToken}`)
         .send({ username: "user", approved: false })
+        .expect(403);
+    });
+  });
+
+  describe("PATCH /admin/ban", () => {
+    it("банит пользователя", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/admin/ban")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "user", banned: true })
+        .expect(200);
+
+      const res = await supertest(app.getHttpServer())
+        .get("/admin/users")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      const user = res.body.find((u: { username: string }) => u.username === "user");
+      expect(user.banned).toBe(true);
+    });
+
+    it("разбанивает пользователя", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/admin/ban")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "user", banned: false })
+        .expect(200);
+
+      const res = await supertest(app.getHttpServer())
+        .get("/admin/users")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      const user = res.body.find((u: { username: string }) => u.username === "user");
+      expect(user.banned).toBe(false);
+    });
+
+    it("возвращает 404 для несуществующего пользователя", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/admin/ban")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "nonexistent", banned: true })
+        .expect(404);
+    });
+
+    it("возвращает 403 для не-админа", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/admin/ban")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ username: "user", banned: true })
+        .expect(403);
+    });
+  });
+
+  describe("GET /admin/logs", () => {
+    it("возвращает логи за дату", async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const res = await supertest(app.getHttpServer())
+        .get(`/admin/logs?date=${today}`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(res.body).toHaveProperty("date", today);
+      expect(res.body).toHaveProperty("offset", 0);
+      expect(res.body).toHaveProperty("limit", 100);
+      expect(res.body).toHaveProperty("total");
+      expect(Array.isArray(res.body.lines)).toBe(true);
+    });
+
+    it("возвращает 400 при неверном формате даты", async () => {
+      await supertest(app.getHttpServer())
+        .get("/admin/logs?date=not-a-date")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(400);
+    });
+
+    it("возвращает 403 для не-админа", async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      await supertest(app.getHttpServer())
+        .get(`/admin/logs?date=${today}`)
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(403);
+    });
+
+    it("возвращает 401 без токена", async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      await supertest(app.getHttpServer()).get(`/admin/logs?date=${today}`).expect(401);
+    });
+  });
+
+  describe("GET /admin/logs/dates", () => {
+    it("возвращает список доступных дат", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/admin/logs/dates")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(Array.isArray(res.body)).toBe(true);
+    });
+
+    it("возвращает 403 для не-админа", async () => {
+      await supertest(app.getHttpServer())
+        .get("/admin/logs/dates")
+        .set("Authorization", `Bearer ${userToken}`)
         .expect(403);
     });
   });

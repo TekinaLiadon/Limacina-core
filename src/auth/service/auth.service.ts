@@ -4,7 +4,7 @@ import { v4 } from "uuid";
 import type { IAuthStore } from "./auth_store.service";
 import { AuthMapStore, AuthMapStoreToken } from "./auth_store.service";
 import GlobalConfig from "../../config/global-config";
-import type { ProfileInfo, RefreshResponseDto, UserTokens } from "../dto/dto";
+import type { AuthResponseDto, RefreshResponseDto, UserTokens } from "../dto/dto";
 import type { StoredUser } from "./auth_store.service";
 import type { RefreshEntry } from "./auth_store.service";
 import { AuthPostgresStore } from "./auth_postgres.service";
@@ -25,7 +25,7 @@ export class AuthService {
     @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
   ) {}
 
-  async register(username: string, password: string): Promise<ProfileInfo> {
+  async register(username: string, password: string): Promise<AuthResponseDto> {
     await this.validateUsernameAvailable(username);
 
     const uuid = this.generateUuid();
@@ -38,16 +38,17 @@ export class AuthService {
       skin: null,
       role: "user",
       approved: false,
+      banned: false,
     });
 
     const tokens = await this.createTokens(uuid, username, "user");
-    return { tokens, profile: { uuid, username } };
+    return { tokens, uuid, username, role: "user" };
   }
 
-  async login(username: string, password: string): Promise<ProfileInfo> {
+  async login(username: string, password: string): Promise<AuthResponseDto> {
     const user = await this.validateUserCredentials(username, password);
     const tokens = await this.createTokens(user.uuid, user.username, user.role);
-    return { tokens, profile: { uuid: user.uuid, username: user.username } };
+    return { tokens, uuid: user.uuid, username: user.username, role: user.role };
   }
 
   async refresh(refreshToken: string): Promise<RefreshResponseDto> {

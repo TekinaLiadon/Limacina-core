@@ -2,7 +2,7 @@ import { Body, Controller, Post } from "@nestjs/common";
 import { ApiBody, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { Public } from "../common/public.decorator";
 import { AuthService } from "./service/auth.service";
-import { AuthDto, ProfileInfo, RefreshDto, RefreshResponseDto } from "./dto/dto";
+import { AuthDto, AuthResponseDto, RefreshDto, RefreshResponseDto } from "./dto/dto";
 
 @ApiTags("auth")
 @Public()
@@ -15,11 +15,11 @@ export class AuthController {
   @ApiBody({ type: AuthDto })
   @ApiResponse({
     status: 201,
-    description: "Пользователь зарегистрирован, возвращает токены и профиль",
-    type: ProfileInfo,
+    description: "Пользователь зарегистрирован, возвращает токены и данные пользователя",
+    type: AuthResponseDto,
   })
   @ApiResponse({ status: 401, description: "Юзернейм уже занят" })
-  async postRegistration(@Body() dto: AuthDto): Promise<ProfileInfo> {
+  async postRegistration(@Body() dto: AuthDto): Promise<AuthResponseDto> {
     return this.authService.register(dto.username, dto.password);
   }
 
@@ -28,14 +28,14 @@ export class AuthController {
   @ApiBody({ type: AuthDto })
   @ApiResponse({
     status: 201,
-    description: "Успешный логин, возвращает токены и профиль",
-    type: ProfileInfo,
+    description: "Успешный логин, возвращает токены и данные пользователя",
+    type: AuthResponseDto,
   })
   @ApiResponse({
     status: 401,
     description: "Неверное имя пользователя или пароль",
   })
-  async postLogin(@Body() dto: AuthDto): Promise<ProfileInfo> {
+  async postLogin(@Body() dto: AuthDto): Promise<AuthResponseDto> {
     return this.authService.login(dto.username, dto.password);
   }
 

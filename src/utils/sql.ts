@@ -315,14 +315,3 @@ export async function execute<T extends Record<string, unknown>>(
   const count = Array.isArray(result) ? result.length : (result?.count ?? 0);
   return { rows, count };
 }
-
-export async function executeTemplate<T extends Record<string, unknown>>(
-  strings: TemplateStringsArray,
-  ...values: unknown[]
-): Promise<QueryResult<T>> {
-  const result = await bunSql(strings, ...values);
-  return {
-    rows: (result.rows ?? []) as T[],
-    count: result.count ?? 0,
-  };
-}

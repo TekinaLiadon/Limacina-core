@@ -6,8 +6,3 @@ export class FileDto {
   @IsString()
   url!: string;
 }
-
-export class ListFileDataDto {
-  @ApiProperty()
-  list!: Record<string, string>;
-}

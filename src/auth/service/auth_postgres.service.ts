@@ -16,6 +16,7 @@ interface UserRow extends Record<string, unknown> {
   skin_url: string | null;
   role: string;
   approved: boolean;
+  banned: boolean;
 }
 
 interface RefreshRow extends Record<string, unknown> {
@@ -28,16 +29,15 @@ interface RefreshRow extends Record<string, unknown> {
 export class AuthPostgresStore implements IAuthStore {
   async findByUsername(username: string): Promise<StoredUser | undefined> {
     const query = selectQuery(
-      "u.uuid",
-      "u.username",
-      "u.password_hash",
-      "t.skin_url",
-      "u.role",
-      "u.approved",
+      "uuid",
+      "username",
+      "password_hash",
+      "role",
+      "approved",
+      "banned",
     )
-      .from(TABLES.users, "u")
-      .join("LEFT JOIN", TABLES.user_textures, "t", "u.uuid = t.uuid")
-      .where("u.username = $1", username)
+      .from(TABLES.users)
+      .where("username = $1", username)
       .build();
 
     const { rows } = await execute<UserRow>(query.sql, query.values);
@@ -48,9 +48,10 @@ export class AuthPostgresStore implements IAuthStore {
       uuid: row.uuid,
       username: row.username,
       passwordHash: row.password_hash,
-      skin: row.skin_url,
+      skin: null,
       role: row.role,
       approved: row.approved,
+      banned: row.banned,
     };
   }
 

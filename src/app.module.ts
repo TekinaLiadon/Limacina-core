@@ -23,10 +23,6 @@ import { createLogStream } from "./config/log-stream";
         ...(process.env.NODE_ENV !== "production"
           ? { transport: { target: "pino-pretty" } }
           : { stream: createLogStream() }),
-        customProps: (req) => ({
-          url: req.url,
-          method: req.method,
-        }),
       },
     }),
     CommonModule,

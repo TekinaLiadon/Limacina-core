@@ -1,14 +1,13 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsBoolean, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import { IsBoolean, IsDateString, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
 import { Type } from "class-transformer";
 
 export interface UserRow extends Record<string, unknown> {
   uuid: string;
   username: string;
-  password_hash: string;
-  skin_url: string | null;
   role: string;
   approved: boolean;
+  banned: boolean;
 }
 
 export class UnapprovedUsersQueryDto {
@@ -21,6 +20,16 @@ export class UnapprovedUsersQueryDto {
   limit?: number;
 }
 
+export class AllUsersQueryDto {
+  @ApiProperty({ default: 10, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}
+
 export class ApproveUserDto {
   @ApiProperty({ example: "john" })
   @IsString()
@@ -29,4 +38,63 @@ export class ApproveUserDto {
   @ApiProperty({ example: true })
   @IsBoolean()
   approved!: boolean;
+}
+
+export class BanUserDto {
+  @ApiProperty({ example: "john" })
+  @IsString()
+  username!: string;
+
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  banned!: boolean;
+}
+
+export class UserListItemDto {
+  @ApiProperty({ example: "john" })
+  username!: string;
+
+  @ApiProperty({ example: "user" })
+  role!: string;
+
+  @ApiProperty({ example: false })
+  banned!: boolean;
+}
+
+export class LogsQueryDto {
+  @ApiProperty({ example: "2026-07-08", description: "Дата логов (YYYY-MM-DD)" })
+  @IsDateString()
+  date!: string;
+
+  @ApiProperty({ default: 0, minimum: 0 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  offset?: number;
+
+  @ApiProperty({ default: 100, minimum: 1, maximum: 1000 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  limit?: number;
+}
+
+export class LogsResponseDto {
+  @ApiProperty({ example: "2026-07-08" })
+  date!: string;
+
+  @ApiProperty({ example: 0 })
+  offset!: number;
+
+  @ApiProperty({ example: 100 })
+  limit!: number;
+
+  @ApiProperty({ example: 5432 })
+  total!: number;
+
+  @ApiProperty({ type: [String] })
+  lines!: string[];
 }

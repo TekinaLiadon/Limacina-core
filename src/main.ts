@@ -7,6 +7,8 @@ import { ValidationPipe } from "@nestjs/common";
 import { Logger, LoggerErrorInterceptor } from "nestjs-pino";
 import GlobalConfig from "./config/global-config";
 import fastifyStatic from "@fastify/static";
+import cors from "@fastify/cors";
+import fastifyMultipart from "@fastify/multipart";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, new FastifyAdapter(), {
@@ -18,6 +20,14 @@ async function bootstrap() {
     root: join(process.cwd(), "public"),
     wildcard: false,
   });
+
+  const corsOrigins = process.env["CORS_ORIGINS"];
+  await instance.register(cors, {
+    origin: corsOrigins ? corsOrigins.split(",").map((o) => o.trim()) : true,
+    credentials: true,
+  });
+
+  await instance.register(fastifyMultipart, { limits: { fileSize: 50 * 1024 * 1024 } });
 
   const logger = app.get(Logger);
   app.useLogger(logger);

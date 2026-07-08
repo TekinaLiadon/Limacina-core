@@ -7,6 +7,7 @@ export interface StoredUser {
   skin: string | null;
   role: string;
   approved: boolean;
+  banned: boolean;
 }
 
 export interface RefreshEntry {

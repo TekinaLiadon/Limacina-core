@@ -45,14 +45,16 @@ describe("Auth эндпоинты", (): void => {
         .expect(201);
 
       expect(res.body).toHaveProperty("tokens");
-      expect(res.body).toHaveProperty("profile");
+      expect(res.body).toHaveProperty("uuid");
+      expect(res.body).toHaveProperty("username");
+      expect(res.body).toHaveProperty("role");
       expect(res.body.tokens).toHaveProperty("access_token");
       expect(res.body.tokens).toHaveProperty("refresh_token");
-      expect(res.body.profile.username).toBe("testuser");
-      expect(res.body.profile).toHaveProperty("uuid");
-      expect(typeof res.body.profile.uuid).toBe("string");
-      expect(res.body.profile.uuid.length).toBeGreaterThan(0);
-      registeredUuid = res.body.profile.uuid;
+      expect(res.body.username).toBe("testuser");
+      expect(typeof res.body.uuid).toBe("string");
+      expect(res.body.uuid.length).toBeGreaterThan(0);
+      expect(res.body.role).toBe("user");
+      registeredUuid = res.body.uuid;
     });
 
     it("ошибка при повторной регистрации", async () => {
@@ -71,9 +73,12 @@ describe("Auth эндпоинты", (): void => {
         .expect(201);
 
       expect(res.body).toHaveProperty("tokens");
-      expect(res.body).toHaveProperty("profile");
-      expect(res.body.profile.username).toBe("testuser");
-      expect(res.body.profile.uuid).toBe(registeredUuid);
+      expect(res.body).toHaveProperty("uuid");
+      expect(res.body).toHaveProperty("username");
+      expect(res.body).toHaveProperty("role");
+      expect(res.body.username).toBe("testuser");
+      expect(res.body.uuid).toBe(registeredUuid);
+      expect(res.body.role).toBe("user");
     });
 
     it("ошибка при неверном пароле", async () => {
