@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, Query } from "@nestjs/common";
+import { Body, Controller, Get, Patch, Query, Req } from "@nestjs/common";
 import {
   ApiBearerAuth,
   ApiBody,
@@ -140,7 +140,7 @@ export class AdminController {
   })
   @ApiResponse({ status: 200, description: "Лаунчер обновлён" })
   @ApiResponse({ status: 400, description: "Невалидная версия или платформа" })
-  async updateLauncher(request: FastifyRequest) {
+  async updateLauncher(@Req() request: FastifyRequest) {
     const parts = request.parts();
     let version = "";
     const files: { os: string; arch: string; buffer: Buffer }[] = [];
