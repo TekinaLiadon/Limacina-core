@@ -140,7 +140,7 @@ export class AdminController {
   })
   @ApiResponse({ status: 200, description: "Лаунчер обновлён" })
   @ApiResponse({ status: 400, description: "Невалидная версия или платформа" })
-  async updateLauncher(@Body() _body: unknown, @Query() _query: unknown, request: FastifyRequest) {
+  async updateLauncher(request: FastifyRequest) {
     const parts = request.parts();
     let version = "";
     const files: { os: string; arch: string; buffer: Buffer }[] = [];
