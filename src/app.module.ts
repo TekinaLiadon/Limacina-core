@@ -5,6 +5,7 @@ import { AuthModule } from "./auth/auth.module";
 import { YggdrasilModule } from "./yggdrasil/yggdrasil.module";
 import { AdminModule } from "./admin/admin.module";
 import { LauncherModule } from "./launcher/launcher.module";
+import { TechnicalModule } from "./technical/technical.module";
 import { CommonModule } from "./common/common.module";
 import { Jwt_authGuard } from "./common/jwt_auth.guard";
 import { RolesGuard } from "./common/roles.guard";
@@ -39,6 +40,7 @@ import { createLogStream } from "./config/log-stream";
     YggdrasilModule,
     AdminModule,
     LauncherModule,
+    TechnicalModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: Jwt_authGuard },

@@ -1,9 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { renameSync } from "node:fs";
 import { LauncherController } from "../launcher.controller";
 import { LauncherService } from "../launcher.service";
 import { INestApplication } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
+
+const CONFIG_FILE = "config.toml";
+const CONFIG_BACKUP = "config.toml.bak";
 
 describe("Тесты эндпоинтов лаунчера", (): void => {
   let app: INestApplication;
@@ -50,5 +54,18 @@ describe("Тесты эндпоинтов лаунчера", (): void => {
     expect(typeof res.body.minMemory).toBe("string");
     expect(typeof res.body.maxMemory).toBe("string");
     expect(typeof res.body.online).toBe("boolean");
+  });
+
+  it("Возвращает 404 если config.toml не найден", async () => {
+    renameSync(CONFIG_FILE, CONFIG_BACKUP);
+
+    try {
+      const res = await supertest(app.getHttpServer()).get("/launcher/config").expect(404);
+
+      expect(res.body.statusCode).toBe(404);
+      expect(res.body.message).toContain("config.toml");
+    } finally {
+      renameSync(CONFIG_BACKUP, CONFIG_FILE);
+    }
   });
 });

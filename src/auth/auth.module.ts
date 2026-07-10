@@ -17,6 +17,6 @@ const config = GlobalConfig.parseEnvOrExit();
       useFactory: () => useFactory(config.DB_DRIVER),
     },
   ],
-  exports: [AuthService],
+  exports: [AuthService, AuthMapStoreToken],
 })
 export class AuthModule {}

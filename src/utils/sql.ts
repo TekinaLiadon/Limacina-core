@@ -21,6 +21,7 @@ export const TABLES = {
   users: "users",
   refresh_tokens: "refresh_tokens",
   user_textures: "user_textures",
+  deleted_users: "deleted_users",
 } as const;
 
 export type TableName = (typeof TABLES)[keyof typeof TABLES];

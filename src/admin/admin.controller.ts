@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Patch, Query, Req } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Query, Req } from "@nestjs/common";
 import {
   ApiBearerAuth,
   ApiBody,
   ApiOperation,
+  ApiParam,
   ApiQuery,
   ApiResponse,
   ApiTags,
@@ -11,10 +12,14 @@ import { Roles } from "../common/roles.decorator";
 import { AdminService } from "./admin.service";
 import { LogsService } from "./logs.service";
 import { LauncherUpdateService } from "./launcher-update.service";
+import { ConfigUpdateService } from "./config-update.service";
 import {
   ApproveUserDto,
   AllUsersQueryDto,
   BanUserDto,
+  DeletedUserListItemDto,
+  DeletedUsersQueryDto,
+  LauncherConfigUpdateDto,
   LogsQueryDto,
   LogsResponseDto,
   SetRoleDto,
@@ -32,6 +37,7 @@ export class AdminController {
     private readonly adminService: AdminService,
     private readonly logsService: LogsService,
     private readonly launcherUpdateService: LauncherUpdateService,
+    private readonly configUpdateService: ConfigUpdateService,
   ) {}
 
   @Get("unapproved")
@@ -47,7 +53,7 @@ export class AdminController {
   @ApiQuery({ name: "limit", required: false, default: 10, maximum: 100 })
   @ApiResponse({
     status: 200,
-    description: "Список пользователей (юзернейм, роль, бан)",
+    description: "Список пользователей (юзернейм, роль, одобрение, бан)",
     type: [UserListItemDto],
   })
   async getAllUsers(@Query() query: AllUsersQueryDto) {
@@ -105,9 +111,11 @@ export class AdminController {
   @ApiOperation({ summary: "Изменить статус одобрения пользователя" })
   @ApiBody({ type: ApproveUserDto })
   @ApiResponse({ status: 200, description: "Статус одобрения изменён" })
+  @ApiResponse({ status: 403, description: "Невозможно изменить owner" })
   @ApiResponse({ status: 404, description: "Пользователь не найден" })
-  async setApproved(@Body() dto: ApproveUserDto) {
-    await this.adminService.setApproved(dto.username, dto.approved);
+  async setApproved(@Req() request: FastifyRequest, @Body() dto: ApproveUserDto) {
+    const callerRole = (request as FastifyRequest & { user: { role: string } }).user.role;
+    await this.adminService.setApproved(dto.username, dto.approved, callerRole);
     return { success: true };
   }
 
@@ -115,9 +123,11 @@ export class AdminController {
   @ApiOperation({ summary: "Добавить/убрать пользователя из черного списка" })
   @ApiBody({ type: BanUserDto })
   @ApiResponse({ status: 200, description: "Статус бана изменён" })
+  @ApiResponse({ status: 403, description: "Невозможно изменить owner" })
   @ApiResponse({ status: 404, description: "Пользователь не найден" })
-  async setBanned(@Body() dto: BanUserDto) {
-    await this.adminService.setBanned(dto.username, dto.banned);
+  async setBanned(@Req() request: FastifyRequest, @Body() dto: BanUserDto) {
+    const callerRole = (request as FastifyRequest & { user: { role: string } }).user.role;
+    await this.adminService.setBanned(dto.username, dto.banned, callerRole);
     return { success: true };
   }
 
@@ -126,10 +136,53 @@ export class AdminController {
   @ApiBody({ type: SetRoleDto })
   @ApiResponse({ status: 200, description: "Роль изменена" })
   @ApiResponse({ status: 400, description: "Недопустимая роль" })
+  @ApiResponse({ status: 403, description: "Невозможно изменить owner" })
   @ApiResponse({ status: 404, description: "Пользователь не найден" })
-  async setRole(@Body() dto: SetRoleDto) {
-    await this.adminService.setRole(dto.username, dto.role);
+  async setRole(@Req() request: FastifyRequest, @Body() dto: SetRoleDto) {
+    const callerRole = (request as FastifyRequest & { user: { role: string } }).user.role;
+    await this.adminService.setRole(dto.username, dto.role, callerRole);
     return { success: true };
+  }
+
+  @Delete("users/:username")
+  @ApiOperation({
+    summary: "Удалить пользователя",
+    description:
+      "Переносит пользователя в таблицу удалённых. Через 30 дней удаляется автоматически.",
+  })
+  @ApiParam({ name: "username", example: "john" })
+  @ApiResponse({ status: 200, description: "Пользователь удалён" })
+  @ApiResponse({ status: 403, description: "Невозможно удалить owner" })
+  @ApiResponse({ status: 404, description: "Пользователь не найден" })
+  async deleteUser(@Req() request: FastifyRequest, @Param("username") username: string) {
+    const callerRole = (request as FastifyRequest & { user: { role: string } }).user.role;
+    const deleted = await this.adminService.deleteUser(username, callerRole);
+    return { success: true, username: deleted.username };
+  }
+
+  @Get("users/deleted")
+  @ApiOperation({ summary: "Получить список удалённых пользователей" })
+  @ApiQuery({ name: "limit", required: false, default: 10, maximum: 100 })
+  @ApiResponse({
+    status: 200,
+    description: "Список удалённых пользователей",
+    type: [DeletedUserListItemDto],
+  })
+  async getDeletedUsers(@Query() query: DeletedUsersQueryDto) {
+    return this.adminService.findDeletedUsers(query.limit);
+  }
+
+  @Patch("users/:username/restore")
+  @ApiOperation({
+    summary: "Восстановить удалённого пользователя",
+    description: "Переносит пользователя из таблицы удалённых обратно в таблицу пользователей",
+  })
+  @ApiParam({ name: "username", example: "john" })
+  @ApiResponse({ status: 200, description: "Пользователь восстановлен" })
+  @ApiResponse({ status: 404, description: "Удалённый пользователь не найден" })
+  async restoreUser(@Param("username") username: string) {
+    await this.adminService.restoreUser(username);
+    return { success: true, username };
   }
 
   @Patch("launcher")
@@ -171,5 +224,16 @@ export class AdminController {
       windows_x86_64: { os: "windows", arch: "x86_64" },
     };
     return map[fieldname] ?? null;
+  }
+
+  @Patch("config")
+  @ApiOperation({
+    summary: "Создать/обновить конфиг лаунчера",
+    description: "Записывает config.toml в корне проекта",
+  })
+  @ApiBody({ type: LauncherConfigUpdateDto })
+  @ApiResponse({ status: 200, description: "Конфиг обновлён", type: LauncherConfigUpdateDto })
+  async updateConfig(@Body() dto: LauncherConfigUpdateDto) {
+    return this.configUpdateService.update(dto);
   }
 }
