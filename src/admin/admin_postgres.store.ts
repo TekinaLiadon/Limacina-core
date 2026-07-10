@@ -201,11 +201,10 @@ export class AdminPostgresStore implements IAdminStore {
     const fullDeleted = await this.findFullDeletedUser(username);
     if (!fullDeleted) return;
 
-    const insert = insertQuery(
+    const userInsert = insertQuery(
       "uuid",
       "username",
       "password_hash",
-      "skin_url",
       "role",
       "approved",
       "banned",
@@ -215,14 +214,22 @@ export class AdminPostgresStore implements IAdminStore {
         fullDeleted.uuid,
         fullDeleted.username,
         fullDeleted.password_hash,
-        fullDeleted.skin_url,
         fullDeleted.role,
         fullDeleted.approved,
         fullDeleted.banned,
       )
       .build();
 
-    await execute(insert.sql, insert.values);
+    await execute(userInsert.sql, userInsert.values);
+
+    if (fullDeleted.skin_url) {
+      const textureInsert = insertQuery("uuid", "skin_url")
+        .from(TABLES.user_textures)
+        .values(fullDeleted.uuid, fullDeleted.skin_url)
+        .build();
+
+      await execute(textureInsert.sql, textureInsert.values);
+    }
 
     const del = deleteQuery().from(TABLES.deleted_users).where("username = $1", username).build();
     await execute(del.sql, del.values);
@@ -237,16 +244,17 @@ export class AdminPostgresStore implements IAdminStore {
 
   private async findFullUser(username: string): Promise<DeletedUserRow | undefined> {
     const query = selectQuery(
-      "uuid",
-      "username",
-      "password_hash",
-      "skin_url",
-      "role",
-      "approved",
-      "banned",
+      "u.uuid",
+      "u.username",
+      "u.password_hash",
+      "t.skin_url",
+      "u.role",
+      "u.approved",
+      "u.banned",
     )
-      .from(TABLES.users)
-      .where("username = $1", username)
+      .from(TABLES.users, "u")
+      .join("LEFT JOIN", TABLES.user_textures, "t", "t.uuid = u.uuid")
+      .where("u.username = $1", username)
       .build();
 
     const { rows } = await execute<DeletedUserRow>(query.sql, query.values);

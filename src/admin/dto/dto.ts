@@ -12,7 +12,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 
-export const AVAILABLE_ROLES = ["owner", "admin", "moderator", "user"] as const;
+export const AVAILABLE_ROLES = ["admin", "moderator", "user"] as const;
 export type AvailableRole = (typeof AVAILABLE_ROLES)[number];
 
 export interface UserRow extends Record<string, unknown> {
