@@ -14,6 +14,8 @@ export interface UserListItem {
   banned: boolean;
 }
 
+const ROLE_HIERARCHY = ["user", "moderator", "admin", "owner"] as const;
+
 @Injectable()
 export class AdminService {
   constructor(@Inject(AdminMapStoreToken) private readonly adminStore: IAdminStore) {}
@@ -62,9 +64,16 @@ export class AdminService {
   private async findMutableUser(username: string, callerRole: string): Promise<AdminUser> {
     const user = await this.adminStore.findByUsername(username);
     if (!user) throw new NotFoundException(`Пользователь ${username} не найден`);
-    if (user.role === "owner" && callerRole !== "owner") {
-      throw new ForbiddenException("Невозможно изменить пользователя с ролью owner");
+
+    const callerLevel = ROLE_HIERARCHY.indexOf(callerRole as (typeof ROLE_HIERARCHY)[number]);
+    const targetLevel = ROLE_HIERARCHY.indexOf(user.role as (typeof ROLE_HIERARCHY)[number]);
+
+    if (callerLevel < 0 || targetLevel < 0 || callerLevel <= targetLevel) {
+      throw new ForbiddenException(
+        "Невозможно изменить пользователя с равной или более высокой ролью",
+      );
     }
+
     return user;
   }
 }

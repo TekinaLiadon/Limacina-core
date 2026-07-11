@@ -44,6 +44,7 @@ describe("Admin эндпоинты", (): void => {
   let adminToken: string;
   let ownerToken: string;
   let userToken: string;
+  let store: AdminMapStore;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -79,34 +80,30 @@ describe("Admin эндпоинты", (): void => {
     ownerToken = jwtService.sign({ sub: "owner-uuid", username: "owner", role: "owner" });
     userToken = jwtService.sign({ sub: "user-uuid", username: "user", role: "user" });
 
-    const store = moduleFixture.get(AdminMapStoreToken);
-    await store.saveUser({
+    const storeInstance = moduleFixture.get(AdminMapStoreToken);
+    await storeInstance.saveUser({
       uuid: "admin-uuid",
       username: "admin",
-      passwordHash: "hash",
-      skin: null,
       role: "admin",
       approved: true,
       banned: false,
     });
-    await store.saveUser({
+    await storeInstance.saveUser({
       uuid: "owner-uuid",
       username: "owner",
-      passwordHash: "hash",
-      skin: null,
       role: "owner",
       approved: true,
       banned: false,
     });
-    await store.saveUser({
+    await storeInstance.saveUser({
       uuid: "user-uuid",
       username: "user",
-      passwordHash: "hash",
-      skin: null,
       role: "user",
       approved: false,
       banned: false,
     });
+
+    store = storeInstance;
   });
 
   afterAll(async () => {
@@ -500,6 +497,63 @@ describe("Admin эндпоинты", (): void => {
 
     it("возвращает 401 без токена", async () => {
       await supertest(app.getHttpServer()).patch("/admin/users/user/restore").expect(401);
+    });
+  });
+
+  describe("Иерархия ролей", () => {
+    beforeAll(async () => {
+      await store.saveUser({
+        uuid: "admin2-uuid",
+        username: "admin2",
+        role: "admin",
+        approved: true,
+        banned: false,
+      });
+    });
+
+    it("admin не может забанить другого admin", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/admin/ban")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "admin2", banned: true })
+        .expect(403);
+    });
+
+    it("admin не может изменить роль другого admin", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/admin/role")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "admin2", role: "user" })
+        .expect(403);
+    });
+
+    it("admin не может удалить другого admin", async () => {
+      await supertest(app.getHttpServer())
+        .delete("/admin/users/admin2")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(403);
+    });
+
+    it("admin не может изменить одобрение другого admin", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/admin/approve")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "admin2", approved: false })
+        .expect(403);
+    });
+
+    it("owner может менять admin", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/admin/ban")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ username: "admin2", banned: true })
+        .expect(200);
+
+      await supertest(app.getHttpServer())
+        .patch("/admin/ban")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ username: "admin2", banned: false })
+        .expect(200);
     });
   });
 
