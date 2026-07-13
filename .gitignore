@@ -7,7 +7,7 @@ yarn-error.log*
 lerna-debug.log*
 .pnpm-debug.log*
 
-public/launcher/mods
+public/launcher/
 public/panel
 keys/
 .idea

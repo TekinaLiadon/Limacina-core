@@ -11,6 +11,7 @@ import {
 } from "./service/yggdrasil_store";
 import { YggdrasilPostgresStore } from "./service/yggdrasil_postgres";
 import { YggdrasilProxyStore } from "./service/yggdrasil_proxy";
+import { UserContentModule } from "../user-content/user-content.module";
 import GlobalConfig from "../config/global-config";
 
 const config = GlobalConfig.parseEnvOrExit();
@@ -31,6 +32,7 @@ export const useTokenStore = () => new YggdrasilMapTokenStore();
 export const useSessionStore = () => new YggdrasilMapSessionStore();
 
 @Module({
+  imports: [UserContentModule],
   controllers: [YggdrasilController],
   providers: [
     YggdrasilService,

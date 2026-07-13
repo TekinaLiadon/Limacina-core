@@ -10,6 +10,8 @@ const configSchema = z.object({
   YGGDRASIL_PROXY_URL: z.string().url().optional(),
   BASE_URL: z.string().url().default("http://localhost:3005"),
   MASTER_PASSWORD: z.string().min(1).optional(),
+  MAX_SKINS_PER_USER: z.coerce.number().int().min(0).default(1),
+  MAX_MODELS_PER_USER: z.coerce.number().int().min(0).default(1),
 });
 
 const AppConfig = new ZodEnvConfig("app", configSchema);

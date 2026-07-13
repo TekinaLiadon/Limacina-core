@@ -24,6 +24,8 @@ import {
   YggdrasilTokenStoreToken,
   YggdrasilSessionStoreToken,
 } from "./yggdrasil_store";
+import type { IUserContentStore } from "../../user-content/user-content.store";
+import { UserContentMapStoreToken } from "../../user-content/user-content.store";
 import GlobalConfig from "../../config/global-config";
 
 const config = GlobalConfig.parseEnvOrExit();
@@ -55,6 +57,7 @@ export class YggdrasilService {
     @Inject(YggdrasilStoreToken) private readonly store: IYggdrasilStore,
     @Inject(YggdrasilTokenStoreToken) private readonly tokenStore: IYggdrasilTokenStore,
     @Inject(YggdrasilSessionStoreToken) private readonly sessionStore: IYggdrasilSessionStore,
+    @Inject(UserContentMapStoreToken) private readonly contentStore: IUserContentStore,
   ) {}
 
   createError(
@@ -101,7 +104,7 @@ export class YggdrasilService {
         "Invalid credentials. Invalid username or password.",
       );
 
-    return this.createAuthResponse(user!.uuid, profiles, dto.clientToken, dto.requestUser);
+    return await this.createAuthResponse(user!.uuid, profiles, dto.clientToken, dto.requestUser);
   }
 
   private async authenticateViaProxy(dto: AuthenticateDto): Promise<AuthenticateResponseDto> {
@@ -124,7 +127,9 @@ export class YggdrasilService {
 
     const resolvedClientToken = dto.clientToken ?? result.clientToken;
     const selected = result.selectedProfile;
-    const availableProfiles = result.profiles.map((p) => this.buildGameProfile(p));
+    const availableProfiles = await Promise.all(
+      result.profiles.map((p) => this.buildGameProfile(p)),
+    );
 
     this.tokenStore.saveToken(result.accessToken, {
       profileId: selected?.uuid ?? null,
@@ -138,7 +143,7 @@ export class YggdrasilService {
       availableProfiles,
     };
 
-    if (selected) response.selectedProfile = this.buildGameProfile(selected);
+    if (selected) response.selectedProfile = await this.buildGameProfile(selected);
     if (dto.requestUser) {
       response.user = {
         id: result.userId ?? selected?.userId ?? "",
@@ -174,7 +179,7 @@ export class YggdrasilService {
     const user = await this.store.findUserByUsername(entry.username);
     if (!user) throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
 
-    const response = this.createAuthResponse(
+    const response = await this.createAuthResponse(
       user.uuid,
       profiles,
       dto.clientToken ?? entry.clientToken,
@@ -209,7 +214,7 @@ export class YggdrasilService {
       clientToken: resolvedClientToken,
     };
 
-    if (selected) response.selectedProfile = this.buildGameProfile(selected);
+    if (selected) response.selectedProfile = await this.buildGameProfile(selected);
     if (dto.requestUser) {
       response.user = {
         id: result.userId ?? selected?.userId ?? "",
@@ -332,7 +337,7 @@ export class YggdrasilService {
     return {
       id: profile.uuid,
       name: profile.username,
-      properties: this.buildTextureProperties(profile),
+      properties: await this.buildTextureProperties(profile),
     };
   }
 
@@ -344,7 +349,7 @@ export class YggdrasilService {
     return {
       id: profile.uuid,
       name: profile.username,
-      properties: this.buildTextureProperties(profile),
+      properties: await this.buildTextureProperties(profile),
     };
   }
 
@@ -439,16 +444,16 @@ export class YggdrasilService {
     };
   }
 
-  private createAuthResponse(
+  private async createAuthResponse(
     userId: string,
     profiles: YggdrasilProfile[],
     clientToken?: string,
     requestUser?: boolean,
     selectedProfileId?: string,
-  ): AuthenticateResponseDto {
+  ): Promise<AuthenticateResponseDto> {
     const accessToken = this.generateAccessToken();
     const resolvedClientToken = clientToken ?? this.generateAccessToken();
-    const gameProfiles = profiles.map((p) => this.buildGameProfile(p));
+    const gameProfiles = await Promise.all(profiles.map((p) => this.buildGameProfile(p)));
     const selected = selectedProfileId
       ? profiles.find((p) => p.uuid === selectedProfileId)
       : profiles.length === 1
@@ -467,7 +472,7 @@ export class YggdrasilService {
       availableProfiles: gameProfiles,
     };
 
-    if (selected) response.selectedProfile = this.buildGameProfile(selected);
+    if (selected) response.selectedProfile = await this.buildGameProfile(selected);
     if (requestUser) {
       response.user = {
         id: userId,
@@ -479,27 +484,29 @@ export class YggdrasilService {
     return response;
   }
 
-  private buildGameProfile(profile: YggdrasilProfile): GameProfileDto {
+  private async buildGameProfile(profile: YggdrasilProfile): Promise<GameProfileDto> {
     return {
       id: profile.uuid,
       name: profile.username,
-      properties: this.buildTextureProperties(profile),
+      properties: await this.buildTextureProperties(profile),
     };
   }
 
-  private buildTextureProperties(
+  private async buildTextureProperties(
     profile: YggdrasilProfile,
-  ): Array<{ name: string; value: string; signature?: string }> {
+  ): Promise<Array<{ name: string; value: string; signature?: string }>> {
     const properties: Array<{ name: string; value: string; signature?: string }> = [];
-    let texturesValue: string;
-    if (profile.skinUrl || profile.capeUrl) {
-      texturesValue = this.encodeTextures(profile.uuid, profile.username, profile);
-    } else {
-      texturesValue = this.encodeTextures(profile.uuid, profile.username, {
-        ...profile,
-        skinUrl: DEFAULT_SKIN_URL,
-      });
+
+    let skinUrl = profile.skinUrl;
+    if (!skinUrl) {
+      const userSkins = await this.contentStore.findByUserUuid(profile.userId, "skin");
+      const latestSkin = userSkins.sort((a, b) => a.id - b.id).at(-1);
+      if (latestSkin) skinUrl = latestSkin.filePath;
     }
+    if (!skinUrl) skinUrl = DEFAULT_SKIN_URL;
+
+    const texturesProfile: YggdrasilProfile = { ...profile, skinUrl };
+    const texturesValue = this.encodeTextures(profile.uuid, profile.username, texturesProfile);
 
     const property: { name: string; value: string; signature?: string } = {
       name: "textures",

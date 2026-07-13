@@ -1,5 +1,6 @@
 import { join } from "path";
 import { readFile } from "fs/promises";
+import { existsSync } from "node:fs";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
@@ -23,30 +24,32 @@ async function bootstrap() {
     wildcard: false,
   });
 
-  await instance.register(
-    async (panelInstance: FastifyInstance) => {
-      await panelInstance.register(fastifyStatic, {
-        root: join(process.cwd(), "public", "panel"),
-        wildcard: true,
-        decorateReply: false,
-      });
+  const panelDir = join(process.cwd(), "public", "panel");
+  if (existsSync(panelDir)) {
+    await instance.register(
+      async (panelInstance: FastifyInstance) => {
+        await panelInstance.register(fastifyStatic, {
+          root: panelDir,
+          wildcard: true,
+          decorateReply: false,
+        });
 
-      const panelRoot = join(process.cwd(), "public", "panel");
-      const panelIndexPath = join(panelRoot, "index.html");
-      panelInstance.setNotFoundHandler(async (request: FastifyRequest, reply: FastifyReply) => {
-        const relativePath = request.url.split("?")[0]!.replace(/^\/panel/, "") || "/index.html";
-        const filePath = join(panelRoot, relativePath);
+        const panelIndexPath = join(panelDir, "index.html");
+        panelInstance.setNotFoundHandler(async (request: FastifyRequest, reply: FastifyReply) => {
+          const relativePath = request.url.split("?")[0]!.replace(/^\/panel/, "") || "/index.html";
+          const filePath = join(panelDir, relativePath);
 
-        if (await Bun.file(filePath).exists()) {
-          return reply.sendFile("panel" + relativePath);
-        }
+          if (await Bun.file(filePath).exists()) {
+            return reply.sendFile("panel" + relativePath);
+          }
 
-        const html = await readFile(panelIndexPath, "utf-8");
-        return reply.type("text/html").send(html);
-      });
-    },
-    { prefix: "/panel" },
-  );
+          const html = await readFile(panelIndexPath, "utf-8");
+          return reply.type("text/html").send(html);
+        });
+      },
+      { prefix: "/panel" },
+    );
+  }
 
   const corsOrigins = process.env["CORS_ORIGINS"];
   await instance.register(cors, {
@@ -71,6 +74,7 @@ async function bootstrap() {
     .addTag("yggdrasil", "Minecraft Yggdrasil authentication")
     .addTag("admin", "Администрирование пользователей")
     .addTag("launcher", "Обновление лаунчера")
+    .addTag("user-content", "Загрузка и управление скинами и моделями")
     .addTag("technical", "Технические эндпоинты")
     .build();
   const documentFactory = () => SwaggerModule.createDocument(app, config);
