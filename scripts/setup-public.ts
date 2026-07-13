@@ -10,6 +10,7 @@ const DIRECTORIES = [
   "linux/aarch64",
   "windows/x86_64",
   "textures",
+  "models",
 ];
 
 const VERSION_FILE = join(PUBLIC_DIR, "version.json");

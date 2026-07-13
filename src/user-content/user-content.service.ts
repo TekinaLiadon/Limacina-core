@@ -82,7 +82,7 @@ export class UserContentService {
 
     await this.store.deleteById(id, type);
 
-    const localPath = item.filePath.replace(`${config.BASE_URL}/`, "");
+    const localPath = `public/${item.filePath.replace(`${config.BASE_URL}/`, "")}`;
     unlinkSync(localPath);
 
     this.logger.debug({ ownerUuid, type, id }, "Deleted");

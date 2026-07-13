@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { insertQuery, selectQuery, updateQuery, execute, TABLES } from "../../utils/sql";
+import { insertQuery, selectQuery, execute, TABLES } from "../../utils/sql";
 import type { IYggdrasilStore, YggdrasilProfile } from "./yggdrasil_store";
 
 interface ProfileRow extends Record<string, unknown> {
@@ -101,12 +101,13 @@ export class YggdrasilPostgresStore implements IYggdrasilStore {
     if (textures.capeUrl !== undefined) sets.push(["cape_url", textures.capeUrl]);
     if (sets.length === 0) return;
 
-    let builder = updateQuery().from(TABLES.user_textures).set(sets[0]![0], sets[0]![1]);
-    for (let i = 1; i < sets.length; i++) {
-      builder = builder.set(sets[i]![0], sets[i]![1]);
-    }
-    const q = builder.where("uuid = $1", uuid).build();
-    await execute(q.sql, q.values);
+    const columns = ["uuid", ...sets.map((s) => s[0])];
+    const values = [uuid, ...sets.map((s) => s[1])];
+    const placeholders = values.map((_, i) => `$${i + 1}`).join(", ");
+    const setClauses = sets.map((s, i) => `${s[0]} = $${i + 2}`).join(", ");
+
+    const sql = `INSERT INTO ${TABLES.user_textures} (${columns.join(", ")}) VALUES (${placeholders}) ON CONFLICT (uuid) DO UPDATE SET ${setClauses}`;
+    await execute(sql, values);
   }
 
   async findUserByUsername(
