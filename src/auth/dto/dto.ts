@@ -11,8 +11,8 @@ export class AuthDto {
   password!: string;
 }
 
-export class RefreshDto {
-  @ApiProperty({ description: "Refresh token (JWT)" })
+export class AuthRefreshDto {
+  @ApiProperty({ example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." })
   @IsString()
   refresh_token!: string;
 }

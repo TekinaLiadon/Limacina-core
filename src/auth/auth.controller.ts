@@ -2,7 +2,7 @@ import { Body, Controller, Post } from "@nestjs/common";
 import { ApiBody, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { Public } from "../common/public.decorator";
 import { AuthService } from "./service/auth.service";
-import { AuthDto, AuthResponseDto, RefreshDto } from "./dto/dto";
+import { AuthDto, AuthResponseDto, AuthRefreshDto } from "./dto/dto";
 
 @ApiTags("auth")
 @Public()
@@ -41,7 +41,7 @@ export class AuthController {
 
   @Post("refresh")
   @ApiOperation({ summary: "Обновление пары токенов" })
-  @ApiBody({ type: RefreshDto })
+  @ApiBody({ type: AuthRefreshDto })
   @ApiResponse({
     status: 201,
     description: "Токены обновлены, возвращает новую пару",
@@ -51,20 +51,20 @@ export class AuthController {
     status: 401,
     description: "Невалидный или инвалидированный refresh токен",
   })
-  async postRefresh(@Body() dto: RefreshDto): Promise<AuthResponseDto> {
+  async postRefresh(@Body() dto: AuthRefreshDto): Promise<AuthResponseDto> {
     return this.authService.refresh(dto.refresh_token);
   }
 
   @Post("invalidate")
   @ApiOperation({ summary: "Инвалидация refresh токена" })
-  @ApiBody({ type: RefreshDto })
+  @ApiBody({ type: AuthRefreshDto })
   @ApiResponse({
     status: 201,
     description: "Refresh токен инвалидирован",
     schema: { type: "object", properties: { success: { type: "boolean", example: true } } },
   })
   @ApiResponse({ status: 401, description: "Невалидный refresh токен" })
-  async postInvalidate(@Body() dto: RefreshDto): Promise<{ success: boolean }> {
+  async postInvalidate(@Body() dto: AuthRefreshDto): Promise<{ success: boolean }> {
     await this.authService.invalidate(dto.refresh_token);
     return { success: true };
   }
