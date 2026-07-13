@@ -21,7 +21,7 @@ async function bootstrap() {
   const instance = app.getHttpAdapter().getInstance();
   await instance.register(fastifyStatic, {
     root: join(process.cwd(), "public"),
-    wildcard: false,
+    wildcard: true,
   });
 
   const panelDir = join(process.cwd(), "public", "panel");
