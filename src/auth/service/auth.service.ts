@@ -4,7 +4,7 @@ import { v4 } from "uuid";
 import type { IAuthStore } from "./auth_store.service";
 import { AuthMapStore, AuthMapStoreToken } from "./auth_store.service";
 import GlobalConfig from "../../config/global-config";
-import type { AuthResponseDto, RefreshResponseDto, UserTokens } from "../dto/dto";
+import type { AuthResponseDto, UserTokens } from "../dto/dto";
 import type { StoredUser } from "./auth_store.service";
 import type { RefreshEntry } from "./auth_store.service";
 import { AuthPostgresStore } from "./auth_postgres.service";
@@ -51,12 +51,12 @@ export class AuthService {
     return { tokens, uuid: user.uuid, username: user.username, role: user.role };
   }
 
-  async refresh(refreshToken: string): Promise<RefreshResponseDto> {
+  async refresh(refreshToken: string): Promise<AuthResponseDto> {
     const entry = await this.validateRefreshToken(refreshToken);
     await this.authStore.deleteRefresh(entry.jti);
     const user = await this.authStore.findByUsername(entry.username);
     const tokens = await this.createTokens(entry.userId, entry.username, user?.role ?? "user");
-    return { accessToken: tokens.access_token, clientToken: tokens.refresh_token };
+    return { tokens, uuid: entry.userId, username: entry.username, role: user?.role ?? "user" };
   }
 
   async invalidate(refreshToken: string): Promise<void> {

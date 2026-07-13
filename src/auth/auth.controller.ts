@@ -2,7 +2,7 @@ import { Body, Controller, Post } from "@nestjs/common";
 import { ApiBody, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { Public } from "../common/public.decorator";
 import { AuthService } from "./service/auth.service";
-import { AuthDto, AuthResponseDto, RefreshDto, RefreshResponseDto } from "./dto/dto";
+import { AuthDto, AuthResponseDto, RefreshDto } from "./dto/dto";
 
 @ApiTags("auth")
 @Public()
@@ -45,13 +45,13 @@ export class AuthController {
   @ApiResponse({
     status: 201,
     description: "Токены обновлены, возвращает новую пару",
-    type: RefreshResponseDto,
+    type: AuthResponseDto,
   })
   @ApiResponse({
     status: 401,
     description: "Невалидный или инвалидированный refresh токен",
   })
-  async postRefresh(@Body() dto: RefreshDto): Promise<RefreshResponseDto> {
+  async postRefresh(@Body() dto: RefreshDto): Promise<AuthResponseDto> {
     return this.authService.refresh(dto.refresh_token);
   }
 

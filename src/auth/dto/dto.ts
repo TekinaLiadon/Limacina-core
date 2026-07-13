@@ -17,14 +17,6 @@ export class RefreshDto {
   refresh_token!: string;
 }
 
-export class RefreshResponseDto {
-  @ApiProperty()
-  accessToken!: string;
-
-  @ApiProperty()
-  clientToken!: string;
-}
-
 export class UserTokens {
   @ApiProperty()
   access_token!: string;

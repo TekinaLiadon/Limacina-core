@@ -10,6 +10,7 @@ import supertest from "supertest";
 describe("Auth эндпоинты", (): void => {
   let app: INestApplication;
   let registeredUuid: string;
+  let authStore: AuthMapStore;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -31,6 +32,7 @@ describe("Auth эндпоинты", (): void => {
 
     app = moduleFixture.createNestApplication();
     await app.init();
+    authStore = moduleFixture.get<AuthMapStore>(AuthMapStoreToken);
   });
 
   afterAll(async () => {
@@ -55,6 +57,8 @@ describe("Auth эндпоинты", (): void => {
       expect(res.body.uuid.length).toBeGreaterThan(0);
       expect(res.body.role).toBe("user");
       registeredUuid = res.body.uuid;
+
+      await authStore.approveUser(registeredUuid);
     });
 
     it("ошибка при повторной регистрации", async () => {
@@ -110,10 +114,16 @@ describe("Auth эндпоинты", (): void => {
         .send({ refresh_token })
         .expect(201);
 
-      expect(res.body).toHaveProperty("accessToken");
-      expect(res.body).toHaveProperty("clientToken");
-      expect(res.body.accessToken).toBeTruthy();
-      expect(res.body.clientToken).not.toBe(refresh_token);
+      expect(res.body).toHaveProperty("tokens");
+      expect(res.body).toHaveProperty("uuid");
+      expect(res.body).toHaveProperty("username");
+      expect(res.body).toHaveProperty("role");
+      expect(res.body.tokens).toHaveProperty("access_token");
+      expect(res.body.tokens).toHaveProperty("refresh_token");
+      expect(res.body.tokens.refresh_token).not.toBe(refresh_token);
+      expect(res.body.username).toBe("testuser");
+      expect(res.body.uuid).toBe(registeredUuid);
+      expect(res.body.role).toBe("user");
     });
 
     it("ошибка при повторном использовании токена", async () => {

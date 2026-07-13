@@ -20,6 +20,7 @@ export const AuthMapStoreToken = Symbol("AuthMapStore");
 export interface IAuthStore {
   findByUsername(username: string): Promise<StoredUser | undefined>;
   saveUser(user: StoredUser): Promise<void>;
+  approveUser(uuid: string): Promise<void>;
   userExists(username: string): Promise<boolean>;
   updateSkin(uuid: string, skin: string): Promise<void>;
   saveRefresh(jti: string, entry: RefreshEntry): Promise<void>;
@@ -39,6 +40,15 @@ export class AuthMapStore implements IAuthStore {
 
   async saveUser(user: StoredUser): Promise<void> {
     this.users.set(user.username, user);
+  }
+
+  async approveUser(uuid: string): Promise<void> {
+    for (const user of this.users.values()) {
+      if (user.uuid === uuid) {
+        user.approved = true;
+        return;
+      }
+    }
   }
 
   async userExists(username: string): Promise<boolean> {

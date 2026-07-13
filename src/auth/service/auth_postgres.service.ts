@@ -57,6 +57,16 @@ export class AuthPostgresStore implements IAuthStore {
     await execute(query.sql, query.values);
   }
 
+  async approveUser(uuid: string): Promise<void> {
+    const query = updateQuery()
+      .from(TABLES.users)
+      .set("approved", true)
+      .where("uuid = $1", uuid)
+      .build();
+
+    await execute(query.sql, query.values);
+  }
+
   async userExists(username: string): Promise<boolean> {
     const query = selectQuery("1").from(TABLES.users).where("username = $1", username).build();
 
