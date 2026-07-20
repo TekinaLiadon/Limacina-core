@@ -1,9 +1,9 @@
-import { Controller, Get, Param, Res } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { ApiOkResponse, ApiOperation, ApiParam, ApiTags } from "@nestjs/swagger";
 import { Public } from "../common/public.decorator";
 import { LauncherService } from "./launcher.service";
-import { LauncherConfigDto, LauncherVersionDto } from "./dto/dto";
+import { LauncherConfigCreateDto, LauncherConfigDto, LauncherVersionDto } from "./dto/dto";
 
 @ApiTags("launcher")
 @Public()
@@ -23,6 +23,13 @@ export class LauncherController {
   @ApiOkResponse({ type: LauncherConfigDto })
   getConfig(): LauncherConfigDto {
     return this.launcherService.getConfig();
+  }
+
+  @Post("config")
+  @ApiOperation({ summary: "Создать конфиг лаунчера если не существует" })
+  @ApiOkResponse({ type: LauncherConfigDto })
+  createConfig(@Body() dto: LauncherConfigCreateDto): LauncherConfigDto {
+    return this.launcherService.createConfig(dto);
   }
 
   @Get(":os/:arch/download")

@@ -1,4 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
+import { IsArray, IsBoolean, IsString } from "class-validator";
 
 export class LauncherPlatformDto {
   @ApiProperty()
@@ -39,5 +40,40 @@ export class LauncherConfigDto {
   maxMemory!: string;
 
   @ApiProperty({ description: "Онлайн-режим" })
+  online!: boolean;
+}
+
+export class LauncherConfigCreateDto {
+  @ApiProperty({ description: "Название проекта", example: "Cordelia" })
+  @IsString()
+  projectName!: string;
+
+  @ApiProperty({ description: "Версия Minecraft", example: "1.21.1" })
+  @IsString()
+  mcVersion!: string;
+
+  @ApiProperty({ description: "Тип загрузчика модов", example: "neoforge" })
+  @IsString()
+  modLoader!: string;
+
+  @ApiProperty({ description: "Версия загрузчика", example: "21.1.234" })
+  @IsString()
+  loaderVersion!: string;
+
+  @ApiProperty({ description: "Аргументы JVM", type: [String], example: [] })
+  @IsArray()
+  @IsString({ each: true })
+  jvmArgs!: string[];
+
+  @ApiProperty({ description: "Минимальный объём памяти", example: "-Xms512M" })
+  @IsString()
+  minMemory!: string;
+
+  @ApiProperty({ description: "Максимальный объём памяти", example: "-Xmx2560M" })
+  @IsString()
+  maxMemory!: string;
+
+  @ApiProperty({ description: "Онлайн-режим", example: true })
+  @IsBoolean()
   online!: boolean;
 }

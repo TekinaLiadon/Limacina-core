@@ -68,4 +68,52 @@ describe("Тесты эндпоинтов лаунчера", (): void => {
       renameSync(CONFIG_BACKUP, CONFIG_FILE);
     }
   });
+
+  it("Создаёт конфиг через POST если config.toml не найден", async () => {
+    renameSync(CONFIG_FILE, CONFIG_BACKUP);
+
+    try {
+      const dto = {
+        projectName: "TestProject",
+        mcVersion: "1.21.1",
+        modLoader: "neoforge",
+        loaderVersion: "21.1.234",
+        jvmArgs: [],
+        minMemory: "-Xms512M",
+        maxMemory: "-Xmx2560M",
+        online: true,
+      };
+
+      const res = await supertest(app.getHttpServer())
+        .post("/launcher/config")
+        .send(dto)
+        .expect(201);
+
+      expect(res.body.projectName).toBe(dto.projectName);
+      expect(res.body.mcVersion).toBe(dto.mcVersion);
+
+      const getRes = await supertest(app.getHttpServer()).get("/launcher/config").expect(200);
+      expect(getRes.body.projectName).toBe(dto.projectName);
+    } finally {
+      renameSync(CONFIG_BACKUP, CONFIG_FILE);
+    }
+  });
+
+  it("POST /launcher/config возвращает существующий конфиг если он уже есть", async () => {
+    const res = await supertest(app.getHttpServer())
+      .post("/launcher/config")
+      .send({
+        projectName: "NewProject",
+        mcVersion: "1.21.1",
+        modLoader: "neoforge",
+        loaderVersion: "21.1.234",
+        jvmArgs: [],
+        minMemory: "-Xms512M",
+        maxMemory: "-Xmx2560M",
+        online: true,
+      })
+      .expect(201);
+
+    expect(res.body.projectName).not.toBe("NewProject");
+  });
 });

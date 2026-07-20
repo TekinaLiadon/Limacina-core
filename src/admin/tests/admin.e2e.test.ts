@@ -500,6 +500,49 @@ describe("Admin эндпоинты", (): void => {
     });
   });
 
+  describe("Повторное удаление пользователя", () => {
+    it("перезаписывает запись в deleted_users при повторном удалении", async () => {
+      await store.saveUser({
+        uuid: "repeat-uuid",
+        username: "repeatuser",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+
+      await supertest(app.getHttpServer())
+        .delete("/admin/users/repeatuser")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      await supertest(app.getHttpServer())
+        .patch("/admin/users/repeatuser/restore")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      await supertest(app.getHttpServer())
+        .patch("/admin/ban")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ username: "repeatuser", banned: true })
+        .expect(200);
+
+      await supertest(app.getHttpServer())
+        .delete("/admin/users/repeatuser")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      const deleted = await supertest(app.getHttpServer())
+        .get("/admin/users/deleted")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      const matches = deleted.body.filter(
+        (u: { username: string }) => u.username === "repeatuser",
+      );
+      expect(matches.length).toBe(1);
+    });
+  });
+
   describe("Иерархия ролей", () => {
     beforeAll(async () => {
       await store.saveUser({

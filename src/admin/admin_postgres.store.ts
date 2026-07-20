@@ -126,6 +126,12 @@ export class AdminPostgresStore implements IAdminStore {
     const userRow = await this.findFullUser(username);
     if (!userRow) return undefined;
 
+    const removeExisting = deleteQuery()
+      .from(TABLES.deleted_users)
+      .where("username = $1", username)
+      .build();
+    await execute(removeExisting.sql, removeExisting.values);
+
     const insert = insertQuery(
       "uuid",
       "username",

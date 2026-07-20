@@ -14,7 +14,8 @@ import {
   NotFoundException,
   OnModuleDestroy,
 } from "@nestjs/common";
-import { parse as parseToml } from "smol-toml";
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { writeFileSync } from "node:fs";
 import type { LauncherConfigDto } from "./dto/dto";
 import type { FastifyReply } from "fastify";
 
@@ -105,10 +106,19 @@ export class LauncherService implements OnModuleDestroy {
     return parsed;
   }
 
+  createConfig(dto: LauncherConfigDto): LauncherConfigDto {
+    if (existsSync(CONFIG_FILE)) return this.getConfig();
+
+    const content = stringifyToml(dto as unknown as Record<string, unknown>);
+    writeFileSync(CONFIG_FILE, content + "\n");
+
+    this.logger.log({ projectName: dto.projectName }, "Конфиг лаунчера создан");
+
+    return dto;
+  }
+
   onModuleDestroy(): void {
-    if (this.versionWatcher) {
-      unwatchFile(VERSION_FILE);
-    }
+    if (this.versionWatcher) unwatchFile(VERSION_FILE);
   }
 
   async download(os: string, arch: string, reply: FastifyReply): Promise<void> {
