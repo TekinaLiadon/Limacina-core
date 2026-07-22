@@ -267,28 +267,14 @@ export class YggdrasilService {
   }
 
   async join(dto: JoinDto): Promise<void> {
-    const entry = await this.tokenStore.findToken(dto.accessToken);
-
-    if (!entry) {
-      const jwtPayload = this.verifyJwt(dto.accessToken);
-      if (!jwtPayload) {
-        throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
-      }
-
-      await this.sessionStore.saveSession(dto.serverId, {
-        profileId: dto.selectedProfile,
-        username: jwtPayload.username,
-        ip: "",
-      });
-      return;
-    }
-
-    if (entry.profileId !== dto.selectedProfile)
+    const jwtPayload = this.verifyJwt(dto.accessToken);
+    if (!jwtPayload) {
       throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
+    }
 
     await this.sessionStore.saveSession(dto.serverId, {
       profileId: dto.selectedProfile,
-      username: entry.username,
+      username: jwtPayload.username,
       ip: "",
     });
   }
@@ -441,7 +427,6 @@ export class YggdrasilService {
       },
       skinDomains,
       signaturePublickey: publicKeyPem,
-      sessionserver: `${config.BASE_URL}/sessionserver/session/minecraft/hasJoined`,
     };
   }
 
