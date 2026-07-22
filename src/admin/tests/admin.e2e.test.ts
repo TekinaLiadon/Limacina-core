@@ -536,9 +536,7 @@ describe("Admin эндпоинты", (): void => {
         .set("Authorization", `Bearer ${ownerToken}`)
         .expect(200);
 
-      const matches = deleted.body.filter(
-        (u: { username: string }) => u.username === "repeatuser",
-      );
+      const matches = deleted.body.filter((u: { username: string }) => u.username === "repeatuser");
       expect(matches.length).toBe(1);
     });
   });

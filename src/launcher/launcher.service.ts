@@ -1,11 +1,4 @@
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  watchFile,
-  unwatchFile,
-  type StatWatcher,
-} from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   Injectable,
@@ -15,7 +8,7 @@ import {
   OnModuleDestroy,
 } from "@nestjs/common";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
-import { writeFileSync } from "node:fs";
+import chokidar, { type FSWatcher } from "chokidar";
 import type { LauncherConfigDto } from "./dto/dto";
 import type { FastifyReply } from "fastify";
 
@@ -43,12 +36,14 @@ export class LauncherService implements OnModuleDestroy {
 
   private version = "0.0.0";
   private platforms: PlatformInfo[] = [];
-  private versionWatcher?: StatWatcher;
+  private versionWatcher?: FSWatcher;
+  private platformsWatcher?: FSWatcher;
 
   async onApplicationBootstrap() {
     this.loadVersion();
     this.watchVersion();
     this.scanPlatforms();
+    this.watchPlatforms();
 
     this.logger.log(
       { version: this.version, platforms: this.platforms.length },
@@ -67,13 +62,48 @@ export class LauncherService implements OnModuleDestroy {
   }
 
   private watchVersion(): void {
-    this.versionWatcher = watchFile(VERSION_FILE, { interval: 500 }, () => {
+    this.versionWatcher = chokidar.watch(VERSION_FILE, { ignoreInitial: true });
+
+    this.versionWatcher.on("change", () => {
       this.loadVersion();
       this.scanPlatforms();
       this.logger.log(
         { version: this.version, platforms: this.platforms.length },
         "Версия лаунчера обновлена",
       );
+    });
+
+    this.versionWatcher.on("error", (error: unknown) => {
+      this.logger.error({ err: error }, "Ошибка watcher version.json");
+    });
+  }
+
+  private watchPlatforms(): void {
+    const dirs = Object.entries(SUPPORTED_PLATFORMS).flatMap(([os, archs]) =>
+      archs.map((arch) => join(PUBLIC_DIR, os, arch)),
+    );
+
+    this.platformsWatcher = chokidar.watch(dirs, {
+      ignoreInitial: true,
+      awaitWriteFinish: { stabilityThreshold: 200 },
+    });
+
+    this.platformsWatcher.on("add", (filePath: string) => {
+      if (!filePath.endsWith(".zip")) return;
+
+      this.scanPlatforms();
+      this.logger.log({ file: filePath }, "Платформенный файл добавлен");
+    });
+
+    this.platformsWatcher.on("unlink", (filePath: string) => {
+      if (!filePath.endsWith(".zip")) return;
+
+      this.scanPlatforms();
+      this.logger.log({ file: filePath }, "Платформенный файл удалён");
+    });
+
+    this.platformsWatcher.on("error", (error: unknown) => {
+      this.logger.error({ err: error }, "Ошибка watcher платформ");
     });
   }
 
@@ -122,7 +152,8 @@ export class LauncherService implements OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
-    if (this.versionWatcher) unwatchFile(VERSION_FILE);
+    this.versionWatcher?.close();
+    this.platformsWatcher?.close();
   }
 
   async download(os: string, arch: string, reply: FastifyReply): Promise<void> {
