@@ -5,6 +5,7 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import { apiReference } from "@scalar/nestjs-api-reference";
 import { ValidationPipe } from "@nestjs/common";
 import { Logger, LoggerErrorInterceptor } from "nestjs-pino";
 import GlobalConfig from "./config/global-config";
@@ -67,8 +68,8 @@ async function bootstrap() {
   logger.log("Идет запуск...", "App");
 
   const config = new DocumentBuilder()
-    .setTitle("Limacina Core")
-    .setDescription("API documentation for Limacina Core")
+    .setTitle("Limacina")
+    .setDescription("API documentation for Limacina")
     .setVersion("1.0")
     .addTag("auth", "Аутентификация и управление токенами")
     .addTag("yggdrasil", "Minecraft Yggdrasil authentication")
@@ -78,7 +79,15 @@ async function bootstrap() {
     .addTag("technical", "Технические эндпоинты")
     .build();
   const documentFactory = () => SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup("api", app, documentFactory);
+  await instance.get("/openapi.json", async () => documentFactory());
+  const scalarHandler = apiReference({
+    withFastify: true,
+    spec: { url: "/openapi.json" },
+  }) as (req: FastifyRequest, res: import("node:http").ServerResponse) => void;
+  await instance.get("/docs", async (request: FastifyRequest, reply: FastifyReply) => {
+    reply.hijack();
+    scalarHandler(request, reply.raw);
+  });
 
   await app.listen(GlobalConfig.parseEnvOrExit().PORT, "0.0.0.0");
 }
