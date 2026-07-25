@@ -41,7 +41,6 @@
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-fastify": "^11.1.19",
     "@nestjs/swagger": "^11.4.1",
-    "@scalar/nestjs-api-reference": "^1.2.11",
     "@tsconfig/node-lts": "^24.0.0",
     "@typescript/native-preview": "^7.0.0-dev.20260427.1",
     "chokidar": "^5.0.0",

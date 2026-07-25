@@ -5,7 +5,6 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
-import { apiReference } from "@scalar/nestjs-api-reference";
 import { ValidationPipe } from "@nestjs/common";
 import { Logger, LoggerErrorInterceptor } from "nestjs-pino";
 import GlobalConfig from "./config/global-config";
@@ -79,11 +78,7 @@ async function bootstrap() {
     .addTag("technical", "Технические эндпоинты")
     .build();
   const documentFactory = () => SwaggerModule.createDocument(app, config);
-  instance.get("/openapi.json", async () => documentFactory());
-  instance.get("/docs", apiReference({
-    withFastify: true,
-    spec: { url: "/openapi.json" },
-  }));
+  SwaggerModule.setup("api", app, documentFactory);
 
   await app.listen(GlobalConfig.parseEnvOrExit().PORT, "0.0.0.0");
 }
