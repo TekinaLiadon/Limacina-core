@@ -79,15 +79,11 @@ async function bootstrap() {
     .addTag("technical", "Технические эндпоинты")
     .build();
   const documentFactory = () => SwaggerModule.createDocument(app, config);
-  await instance.get("/openapi.json", async () => documentFactory());
-  const scalarHandler = apiReference({
+  instance.get("/openapi.json", async () => documentFactory());
+  instance.get("/docs", apiReference({
     withFastify: true,
     spec: { url: "/openapi.json" },
-  }) as (req: FastifyRequest, res: import("node:http").ServerResponse) => void;
-  await instance.get("/docs", async (request: FastifyRequest, reply: FastifyReply) => {
-    reply.hijack();
-    scalarHandler(request, reply.raw);
-  });
+  }));
 
   await app.listen(GlobalConfig.parseEnvOrExit().PORT, "0.0.0.0");
 }
