@@ -1,13 +1,21 @@
 import { Injectable, BadRequestException, Logger } from "@nestjs/common";
 import {
   existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
-  writeFileSync,
+  renameSync,
   unlinkSync,
-  mkdirSync,
+  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import type { LauncherUpdateResponseDto } from "./dto/dto";
+import {
+  LAUNCHER_VERSION_REGEX,
+  OLD_VERSIONS_DIR,
+  buildLauncherZipName,
+  parseLauncherZipName,
+} from "../launcher/launcher-files";
 
 const PUBLIC_DIR = "public";
 const VERSION_FILE = join(PUBLIC_DIR, "version.json");
@@ -16,8 +24,6 @@ const SUPPORTED_PLATFORMS: Record<string, string[]> = {
   linux: ["x86_64", "aarch64"],
   windows: ["x86_64"],
 };
-
-const VERSION_REGEX = /^\d+\.\d+\.\d+$/;
 
 interface VersionData {
   version: string;
@@ -33,7 +39,7 @@ interface PlatformFile {
 export class LauncherUpdateService {
   private readonly logger = new Logger(LauncherUpdateService.name);
 
-  update(version: string, files: PlatformFile[]): { version: string; updated: string[] } {
+  update(version: string, files: PlatformFile[]): LauncherUpdateResponseDto {
     this.validateVersion(version);
     this.writeVersion(version);
 
@@ -49,7 +55,7 @@ export class LauncherUpdateService {
   }
 
   private validateVersion(version: string): void {
-    if (!VERSION_REGEX.test(version)) {
+    if (!LAUNCHER_VERSION_REGEX.test(version)) {
       throw new BadRequestException("Версия должна быть в формате x.x.x (например 1.2.3)");
     }
   }
@@ -68,13 +74,35 @@ export class LauncherUpdateService {
     const dir = join(PUBLIC_DIR, os, arch);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-    const existing = readdirSync(dir).filter((f) => f.endsWith(".zip"));
-    for (const old of existing) {
-      unlinkSync(join(dir, old));
-    }
+    this.archiveCurrentZips(dir, os, arch, version);
 
-    const filename = `Limacina-${version}-${os}-${arch}.zip`;
+    const filename = buildLauncherZipName(version, os, arch);
     writeFileSync(join(dir, filename), new Uint8Array(buffer));
+  }
+
+  private archiveCurrentZips(dir: string, os: string, arch: string, newVersion: string): void {
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith(".zip")) continue;
+
+      const fileVersion = parseLauncherZipName(file, os, arch);
+      if (fileVersion === newVersion) {
+        unlinkSync(join(dir, file));
+        continue;
+      }
+
+      this.moveZipToArchive(dir, file);
+    }
+  }
+
+  private moveZipToArchive(dir: string, file: string): void {
+    const oldDir = join(dir, OLD_VERSIONS_DIR);
+    if (!existsSync(oldDir)) mkdirSync(oldDir, { recursive: true });
+
+    const targetPath = join(oldDir, file);
+    if (existsSync(targetPath)) unlinkSync(targetPath);
+    renameSync(join(dir, file), targetPath);
+
+    this.logger.log({ file }, "Старая версия лаунчера перенесена в архив");
   }
 
   getCurrentVersion(): string {

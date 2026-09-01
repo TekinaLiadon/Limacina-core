@@ -6,9 +6,8 @@ import {
   UserContentMapStoreToken,
   UserContentPostgresStore,
 } from "./user-content.store";
-import GlobalConfig from "../config/global-config";
-
-const config = GlobalConfig.parseEnvOrExit();
+import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
+import type { AppConfigType } from "../config/global-config";
 
 const useFactory = (db: string) => {
   if (db === "postgres") {
@@ -18,14 +17,16 @@ const useFactory = (db: string) => {
 };
 
 @Module({
+  imports: [AppConfigModule],
   controllers: [UserContentController],
   providers: [
     UserContentService,
     {
       provide: UserContentMapStoreToken,
-      useFactory: () => useFactory(config.DB_DRIVER),
+      useFactory: (config: AppConfigType) => useFactory(config.DB_DRIVER),
+      inject: [AppConfigToken],
     },
   ],
-  exports: [UserContentMapStoreToken],
+  exports: [UserContentService, UserContentMapStoreToken],
 })
 export class UserContentModule {}

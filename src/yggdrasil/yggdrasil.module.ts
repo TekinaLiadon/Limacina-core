@@ -12,9 +12,8 @@ import {
 import { YggdrasilPostgresStore } from "./service/yggdrasil_postgres";
 import { YggdrasilProxyStore } from "./service/yggdrasil_proxy";
 import { UserContentModule } from "../user-content/user-content.module";
-import GlobalConfig from "../config/global-config";
-
-const config = GlobalConfig.parseEnvOrExit();
+import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
+import type { AppConfigType } from "../config/global-config";
 
 export const useProfileStore = (db: string, proxyUrl?: string) => {
   if (proxyUrl) {
@@ -32,13 +31,15 @@ export const useTokenStore = () => new YggdrasilMapTokenStore();
 export const useSessionStore = () => new YggdrasilMapSessionStore();
 
 @Module({
-  imports: [UserContentModule],
+  imports: [AppConfigModule, UserContentModule],
   controllers: [YggdrasilController],
   providers: [
     YggdrasilService,
     {
       provide: YggdrasilStoreToken,
-      useFactory: () => useProfileStore(config.DB_DRIVER, config.YGGDRASIL_PROXY_URL),
+      useFactory: (config: AppConfigType) =>
+        useProfileStore(config.DB_DRIVER, config.YGGDRASIL_PROXY_URL),
+      inject: [AppConfigToken],
     },
     {
       provide: YggdrasilTokenStoreToken,

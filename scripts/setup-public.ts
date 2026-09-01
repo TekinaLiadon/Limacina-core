@@ -7,8 +7,11 @@ const DIRECTORIES = [
   "launcher",
   "launcher/mods",
   "linux/x86_64",
+  "linux/x86_64/old",
   "linux/aarch64",
+  "linux/aarch64/old",
   "windows/x86_64",
+  "windows/x86_64/old",
   "textures",
   "models",
 ];

@@ -6,9 +6,8 @@ import { LauncherUpdateService } from "./launcher-update.service";
 import { ConfigUpdateService } from "./config-update.service";
 import { AdminMapStore, AdminMapStoreToken } from "./admin.store";
 import { AdminPostgresStore } from "./admin_postgres.store";
-import GlobalConfig from "../config/global-config";
-
-const config = GlobalConfig.parseEnvOrExit();
+import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
+import type { AppConfigType } from "../config/global-config";
 
 const useFactory = (db: string) => {
   return (
@@ -19,6 +18,7 @@ const useFactory = (db: string) => {
 };
 
 @Module({
+  imports: [AppConfigModule],
   controllers: [AdminController],
   providers: [
     AdminService,
@@ -27,9 +27,16 @@ const useFactory = (db: string) => {
     ConfigUpdateService,
     {
       provide: AdminMapStoreToken,
-      useFactory: () => useFactory(config.DB_DRIVER),
+      useFactory: (config: AppConfigType) => useFactory(config.DB_DRIVER),
+      inject: [AppConfigToken],
     },
   ],
-  exports: [AdminMapStoreToken],
+  exports: [
+    AdminService,
+    LogsService,
+    LauncherUpdateService,
+    ConfigUpdateService,
+    AdminMapStoreToken,
+  ],
 })
 export class AdminModule {}

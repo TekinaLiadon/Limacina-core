@@ -1,22 +1,14 @@
 import { Module } from "@nestjs/common";
 import { AuthController } from "./auth.controller";
-import { AuthService, useFactory } from "./service/auth.service";
-import { AuthMapStoreToken } from "./service/auth_store.service";
+import { AuthService } from "./service/auth.service";
+import { AuthStoreModule } from "./service/auth_store.module";
 import { CommonModule } from "../common/common.module";
-import GlobalConfig from "../config/global-config";
-
-const config = GlobalConfig.parseEnvOrExit();
+import { AppConfigModule } from "../config/app-config.provider";
 
 @Module({
-  imports: [CommonModule],
+  imports: [AppConfigModule, CommonModule, AuthStoreModule],
   controllers: [AuthController],
-  providers: [
-    AuthService,
-    {
-      provide: AuthMapStoreToken,
-      useFactory: () => useFactory(config.DB_DRIVER),
-    },
-  ],
-  exports: [AuthService, AuthMapStoreToken],
+  providers: [AuthService],
+  exports: [AuthService, AuthStoreModule],
 })
 export class AuthModule {}

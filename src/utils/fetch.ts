@@ -1,3 +1,7 @@
+import { Logger } from "@nestjs/common";
+
+const logger = new Logger("Fetch");
+
 export interface FetchOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
@@ -60,12 +64,13 @@ export async function limaFetch<T>(url: string, options?: FetchOptions): Promise
           ? (data as { errorMessage: string }).errorMessage
           : `HTTP ${res.status}`;
 
-      if (!silent) console.warn("[Fetch]", { url, method, status: res.status, error });
+      if (!silent)
+        logger.warn({ url, method, status: res.status, error }, "HTTP-запрос завершился с ошибкой");
 
       return { ok: false, status: res.status, data, error };
     }
 
-    if (!silent) console.debug("[Fetch]", { url, method, status: res.status });
+    if (!silent) logger.debug({ url, method, status: res.status }, "HTTP-запрос выполнен");
 
     return { ok: true, status: res.status, data };
   } catch (err) {
@@ -76,7 +81,7 @@ export async function limaFetch<T>(url: string, options?: FetchOptions): Promise
         : err instanceof Error
           ? err.message
           : "Unknown error";
-    if (!silent) console.error("[Fetch]", { url, method, error: message });
+    if (!silent) logger.error({ url, method, error: message }, "HTTP-запрос не выполнен");
 
     return { ok: false, status: 0, data: null, error: message };
   }

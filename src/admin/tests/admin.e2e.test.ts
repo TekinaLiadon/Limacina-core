@@ -4,7 +4,15 @@ process.env["NODE_ENV"] = "test";
 process.env["DB_DRIVER"] = "map";
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, renameSync, unlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { AdminController } from "../admin.controller";
 import { AdminService } from "../admin.service";
 import { LogsService } from "../logs.service";
@@ -140,11 +148,13 @@ describe("Admin эндпоинты", (): void => {
         .expect(400);
     });
 
-    it("возвращает 400 при лимите меньше 10", async () => {
-      await supertest(app.getHttpServer())
+    it("возвращает 200 при лимите меньше 10", async () => {
+      const res = await supertest(app.getHttpServer())
         .get("/admin/unapproved?limit=5")
         .set("Authorization", `Bearer ${adminToken}`)
-        .expect(400);
+        .expect(200);
+
+      expect(Array.isArray(res.body)).toBe(true);
     });
   });
 
@@ -268,6 +278,44 @@ describe("Admin эндпоинты", (): void => {
   });
 
   describe("GET /admin/logs", () => {
+    const EXCLUSION_DATE = "2099-03-10";
+    const EXCLUSION_LOG_FILE = `logs/${EXCLUSION_DATE}.log`;
+
+    it("не возвращает строки без кода статуса", async () => {
+      const requestLine = JSON.stringify({
+        level: 30,
+        time: 1,
+        name: "Limacina",
+        req: {
+          id: "req-1",
+          method: "GET",
+          url: "/v1/common/auth/login",
+          remoteAddress: "127.0.0.1",
+        },
+        res: { statusCode: 200 },
+        msg: "request completed",
+      });
+      const appLine = JSON.stringify({
+        level: 30,
+        time: 2,
+        name: "Limacina",
+        context: "App",
+        msg: "Запуск",
+      });
+      mkdirSync("logs", { recursive: true });
+      writeFileSync(EXCLUSION_LOG_FILE, `${appLine}\n${requestLine}\n`);
+
+      const res = await supertest(app.getHttpServer())
+        .get(`/admin/logs?date=${EXCLUSION_DATE}`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      rmSync(EXCLUSION_LOG_FILE, { force: true });
+
+      expect(res.body.total).toBe(1);
+      expect(JSON.parse(res.body.lines[0]).res.statusCode).toBe(200);
+    });
+
     it("возвращает логи за дату", async () => {
       const today = new Date().toISOString().slice(0, 10);
       const res = await supertest(app.getHttpServer())

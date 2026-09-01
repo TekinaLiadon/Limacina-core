@@ -17,6 +17,31 @@ export class LauncherVersionDto {
   platforms!: LauncherPlatformDto[];
 }
 
+export class LauncherVersionInfoDto {
+  @ApiProperty({ description: "Версия лаунчера", example: "1.2.3" })
+  version!: string;
+
+  @ApiProperty({ type: [LauncherPlatformDto], description: "Платформы, доступные для версии" })
+  platforms!: LauncherPlatformDto[];
+}
+
+export class LauncherVersionsDto {
+  @ApiProperty({ description: "Последняя (актуальная) версия лаунчера" })
+  version!: string;
+
+  @ApiProperty({
+    type: [LauncherPlatformDto],
+    description: "Платформы, доступные для последней версии",
+  })
+  platforms!: LauncherPlatformDto[];
+
+  @ApiProperty({
+    type: [LauncherVersionInfoDto],
+    description: "Все доступные версии (от новых к старым), включая последнюю",
+  })
+  versions!: LauncherVersionInfoDto[];
+}
+
 export class LauncherConfigDto {
   @ApiProperty({ description: "Название проекта" })
   projectName!: string;

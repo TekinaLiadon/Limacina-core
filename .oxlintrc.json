@@ -1,7 +1,17 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "categories": {
-    "correctness": "error"
+    "correctness": "error",
+    "suspicious": "error"
+  },
+  "rules": {
+    "typescript/no-extraneous-class": "off",
+    "eslint/no-underscore-dangle": [
+      "error",
+      {
+        "allow": ["__test__addUser"]
+      }
+    ]
   },
   "ignorePatterns": ["dist/", "node_modules/", "public/", "migration/"]
 }

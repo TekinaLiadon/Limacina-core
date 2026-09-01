@@ -3,6 +3,8 @@ name: On Pull Request
 on:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
 
 jobs:
   lint-code:
@@ -38,9 +40,61 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Audit dependencies
+        run: bun audit --only-prod
+
       - name: Tests
         run: bun test
         env:
           JWT_ACCESS: ${{ secrets.JWT_ACCESS }}
           JWT_REFRESH: ${{ secrets.JWT_REFRESH }}
           DB_DRIVER: ${{ secrets.DB_DRIVER }}
+
+  update-deps:
+    name: Update dependencies (weekly)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Update outdated dependencies
+        run: |
+          bun update
+          CHANGED=$(git diff --stat package.json bun.lockb)
+          if [ -z "$CHANGED" ]; then
+            echo "Nothing to update"
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Dependencies updated"
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+          fi
+        id: update
+
+      - name: Verify after update
+        if: steps.update.outputs.updated == 'true'
+        run: |
+          bun run check-types
+          bun run fmt:check
+          bun run lint
+          bun test
+
+      - name: Create pull request
+        if: steps.update.outputs.updated == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          title: "chore(deps): weekly dependency update"
+          body: |
+            Автоматическое обновление зависимостей (`bun update`).
+
+            Все проверки пройдены: types, fmt, lint, tests, audit.
+          branch: deps/weekly-update
+          delete-branch: true
+          commit-message: "chore(deps): weekly dependency update"

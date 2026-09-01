@@ -5,6 +5,7 @@ import {
   IsDateString,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   Max,
@@ -24,11 +25,11 @@ export interface UserRow extends Record<string, unknown> {
 }
 
 export class UnapprovedUsersQueryDto {
-  @ApiProperty({ default: 10, minimum: 10, maximum: 50 })
+  @ApiProperty({ default: 10, minimum: 1, maximum: 50 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @Min(10)
+  @Min(1)
   @Max(50)
   limit?: number;
 }
@@ -149,6 +150,40 @@ export class LogsQueryDto {
   limit?: number;
 }
 
+export class V1LogsQueryDto extends LogsQueryDto {
+  @ApiProperty({
+    example: 200,
+    required: false,
+    description: "Фильтр по статус-коду ответа (точное совпадение)",
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(100)
+  @Max(599)
+  statusCode?: number;
+
+  @ApiProperty({
+    example: "/v1/common/auth",
+    required: false,
+    description: "Фильтр по URL запроса (подстрока, без учёта регистра)",
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  url?: string;
+
+  @ApiProperty({
+    example: "127.0.0.1",
+    required: false,
+    description: "Фильтр по IP клиента (подстрока, без учёта регистра)",
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  ip?: string;
+}
+
 export class LogsResponseDto {
   @ApiProperty({ example: "2026-07-08" })
   date!: string;
@@ -165,8 +200,8 @@ export class LogsResponseDto {
   @ApiProperty({
     type: [String],
     example: [
-      '{"level":30,"time":1751971200000,"msg":"Запуск...","App":"App"}',
-      '{"level":30,"time":1751971201000,"msg":"Сервер запущен на порту 3005","App":"App"}',
+      '{"level":30,"time":1751971200000,"req":{"id":"req-1","method":"GET","url":"/v1/common/auth/login","remoteAddress":"127.0.0.1"},"res":{"statusCode":200},"msg":"request completed","responseTime":12}',
+      '{"level":30,"time":1751971201000,"req":{"id":"req-2","method":"POST","url":"/v1/common/auth/registration","remoteAddress":"192.168.1.10"},"res":{"statusCode":400},"msg":"request completed","responseTime":5}',
     ],
   })
   lines!: string[];
@@ -205,4 +240,12 @@ export class LauncherConfigUpdateDto {
   @ApiProperty({ description: "Онлайн-режим", example: true })
   @IsBoolean()
   online!: boolean;
+}
+
+export class LauncherUpdateResponseDto {
+  @ApiProperty({ example: "1.2.3" })
+  version!: string;
+
+  @ApiProperty({ type: [String], example: ["linux/x86_64", "windows/x86_64"] })
+  updated!: string[];
 }

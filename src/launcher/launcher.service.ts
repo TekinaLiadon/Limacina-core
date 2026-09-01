@@ -9,8 +9,15 @@ import {
 } from "@nestjs/common";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import chokidar, { type FSWatcher } from "chokidar";
-import type { LauncherConfigDto } from "./dto/dto";
+import type { LauncherConfigDto, LauncherVersionsDto } from "./dto/dto";
 import type { FastifyReply } from "fastify";
+import {
+  LAUNCHER_VERSION_REGEX,
+  OLD_VERSIONS_DIR,
+  buildLauncherZipName,
+  compareVersions,
+  parseLauncherZipName,
+} from "./launcher-files";
 
 const PUBLIC_DIR = "public";
 const VERSION_FILE = join(PUBLIC_DIR, "version.json");
@@ -65,17 +72,25 @@ export class LauncherService implements OnModuleDestroy {
     this.versionWatcher = chokidar.watch(VERSION_FILE, { ignoreInitial: true });
 
     this.versionWatcher.on("change", () => {
+      this.handleVersionChange();
+    });
+
+    this.versionWatcher.on("error", (error: unknown) => {
+      this.logger.error({ err: error }, "Ошибка watcher version.json");
+    });
+  }
+
+  private handleVersionChange(): void {
+    try {
       this.loadVersion();
       this.scanPlatforms();
       this.logger.log(
         { version: this.version, platforms: this.platforms.length },
         "Версия лаунчера обновлена",
       );
-    });
-
-    this.versionWatcher.on("error", (error: unknown) => {
-      this.logger.error({ err: error }, "Ошибка watcher version.json");
-    });
+    } catch (error) {
+      this.logger.error({ err: error }, "Ошибка обработки изменения version.json");
+    }
   }
 
   private watchPlatforms(): void {
@@ -89,22 +104,27 @@ export class LauncherService implements OnModuleDestroy {
     });
 
     this.platformsWatcher.on("add", (filePath: string) => {
-      if (!filePath.endsWith(".zip")) return;
-
-      this.scanPlatforms();
-      this.logger.log({ file: filePath }, "Платформенный файл добавлен");
+      this.handlePlatformFileChange(filePath, "добавлен");
     });
 
     this.platformsWatcher.on("unlink", (filePath: string) => {
-      if (!filePath.endsWith(".zip")) return;
-
-      this.scanPlatforms();
-      this.logger.log({ file: filePath }, "Платформенный файл удалён");
+      this.handlePlatformFileChange(filePath, "удалён");
     });
 
     this.platformsWatcher.on("error", (error: unknown) => {
       this.logger.error({ err: error }, "Ошибка watcher платформ");
     });
+  }
+
+  private handlePlatformFileChange(filePath: string, event: string): void {
+    if (!filePath.endsWith(".zip")) return;
+
+    try {
+      this.scanPlatforms();
+      this.logger.log({ file: filePath }, `Платформенный файл ${event}`);
+    } catch (error) {
+      this.logger.error({ err: error, file: filePath }, "Ошибка обработки изменения платформы");
+    }
   }
 
   private scanPlatforms(): void {
@@ -127,6 +147,48 @@ export class LauncherService implements OnModuleDestroy {
 
   getVersion(): { version: string; platforms: PlatformInfo[] } {
     return { version: this.version, platforms: this.platforms };
+  }
+
+  getVersions(): LauncherVersionsDto {
+    const platformMap = new Map<string, PlatformInfo[]>();
+
+    for (const [os, archs] of Object.entries(SUPPORTED_PLATFORMS)) {
+      for (const arch of archs) {
+        this.collectDirVersions(join(PUBLIC_DIR, os, arch), os, arch, platformMap);
+        this.collectDirVersions(
+          join(PUBLIC_DIR, os, arch, OLD_VERSIONS_DIR),
+          os,
+          arch,
+          platformMap,
+        );
+      }
+    }
+
+    const versions = [...platformMap.entries()]
+      .map(([version, platforms]) => ({ version, platforms }))
+      .toSorted((a, b) => compareVersions(b.version, a.version));
+
+    return { version: this.version, platforms: this.platforms, versions };
+  }
+
+  private collectDirVersions(
+    dir: string,
+    os: string,
+    arch: string,
+    platformMap: Map<string, PlatformInfo[]>,
+  ): void {
+    if (!existsSync(dir)) return;
+
+    for (const file of readdirSync(dir)) {
+      const version = parseLauncherZipName(file, os, arch);
+      if (!version) continue;
+
+      const platforms = platformMap.get(version) ?? [];
+      if (!platforms.some((p) => p.os === os && p.arch === arch)) {
+        platforms.push({ os, arch });
+        platformMap.set(version, platforms);
+      }
+    }
   }
 
   getConfig(): LauncherConfigDto {
@@ -156,7 +218,7 @@ export class LauncherService implements OnModuleDestroy {
     this.platformsWatcher?.close();
   }
 
-  async download(os: string, arch: string, reply: FastifyReply): Promise<void> {
+  async download(os: string, arch: string, reply: FastifyReply, version?: string): Promise<void> {
     const platform = SUPPORTED_PLATFORMS[os];
     if (!platform || !platform.includes(arch)) {
       throw new BadRequestException(`Неподдерживаемая платформа: ${os}/${arch}`);
@@ -167,23 +229,44 @@ export class LauncherService implements OnModuleDestroy {
       throw new NotFoundException(`Платформа не найдена: ${os}/${arch}`);
     }
 
-    const files = readdirSync(dir);
-    const zipFile = files.find((f) => f.endsWith(".zip"));
+    const zipFile = version ? this.findVersionZip(dir, os, arch, version) : this.findLatestZip(dir);
 
     if (!zipFile) {
-      throw new NotFoundException(`Файл лаунчера не найден для ${os}/${arch}`);
+      throw new NotFoundException(
+        version
+          ? `Версия ${version} не найдена для ${os}/${arch}`
+          : `Файл лаунчера не найден для ${os}/${arch}`,
+      );
     }
 
     const filePath = join(dir, zipFile);
     const file = Bun.file(filePath);
 
-    reply.raw.writeHead(200, {
-      "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="${zipFile}"`,
-      "Content-Length": (await file.size).toString(),
-    });
+    reply.header("Content-Type", "application/zip");
+    reply.header("Content-Disposition", `attachment; filename="${zipFile}"`);
+    reply.header("Content-Length", (await file.size).toString());
+    reply.send(file.stream());
+  }
 
-    const buffer = await file.arrayBuffer();
-    reply.raw.end(Buffer.from(buffer));
+  private findLatestZip(dir: string): string | undefined {
+    return readdirSync(dir).find((file) => file.endsWith(".zip"));
+  }
+
+  private findVersionZip(dir: string, os: string, arch: string, version: string): string | null {
+    if (!LAUNCHER_VERSION_REGEX.test(version)) {
+      throw new BadRequestException("Версия должна быть в формате x.x.x (например 1.2.3)");
+    }
+
+    const expectedZip = buildLauncherZipName(version, os, arch);
+    if (readdirSync(dir).includes(expectedZip)) {
+      return expectedZip;
+    }
+
+    const oldDir = join(dir, OLD_VERSIONS_DIR);
+    if (existsSync(oldDir) && readdirSync(oldDir).includes(expectedZip)) {
+      return join(OLD_VERSIONS_DIR, expectedZip);
+    }
+
+    return null;
   }
 }

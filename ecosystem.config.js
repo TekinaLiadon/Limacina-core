@@ -2,8 +2,9 @@ module.exports = {
   apps: [
     {
       name: "Limacina",
-      script: "pm2-bootstrap.js",
-      interpreter: "bun",
+      script: "./dist/Limacina",
+      interpreter: "none",
+      cwd: "./",
       instances: 1,
       exec_mode: "fork",
       autorestart: true,

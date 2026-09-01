@@ -28,9 +28,24 @@ export class ZodEnvConfig<T extends z.ZodType<Record<string, unknown>>> {
   }
 
   tryParseEnv(env = process.env) {
+    const secrets = parseSecrets(env["SECRETS"]);
+    if (!secrets.ok) {
+      return {
+        success: false as const,
+        error: new z.ZodError([
+          {
+            code: "custom",
+            path: ["SECRETS"],
+            message: "SECRETS must be valid JSON",
+            input: env["SECRETS"],
+          },
+        ]),
+      };
+    }
+
     return this.schema.safeParse({
       ...env,
-      ...JSON.parse(env["SECRETS"] ?? "{}"),
+      ...secrets.value,
     });
   }
 
@@ -44,5 +59,17 @@ export class ZodEnvConfig<T extends z.ZodType<Record<string, unknown>>> {
     logger.error({ ...z.flattenError(result.error).fieldErrors }, "Invalid environment variables");
     Logger.flush();
     process.exit(1);
+  }
+}
+
+function parseSecrets(
+  raw: string | undefined,
+): { ok: true; value: Record<string, unknown> } | { ok: false } {
+  if (raw === undefined) return { ok: true, value: {} };
+
+  try {
+    return { ok: true, value: JSON.parse(raw) as Record<string, unknown> };
+  } catch {
+    return { ok: false };
   }
 }

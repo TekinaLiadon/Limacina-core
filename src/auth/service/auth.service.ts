@@ -3,13 +3,12 @@ import { JwtService } from "@nestjs/jwt";
 import { v4 } from "uuid";
 import type { IAuthStore } from "./auth_store.service";
 import { AuthMapStore, AuthMapStoreToken } from "./auth_store.service";
-import GlobalConfig from "../../config/global-config";
+import { AppConfigToken } from "../../config/app-config.provider";
+import type { AppConfigType } from "../../config/global-config";
 import type { AuthResponseDto, UserTokens } from "../dto/dto";
 import type { StoredUser } from "./auth_store.service";
 import type { RefreshEntry } from "./auth_store.service";
 import { AuthPostgresStore } from "./auth_postgres.service";
-
-const config = GlobalConfig.parseEnvOrExit();
 
 export const useFactory = (db: string) => {
   return (
@@ -23,6 +22,7 @@ export class AuthService {
   constructor(
     private readonly jwtService: JwtService,
     @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
+    @Inject(AppConfigToken) private readonly config: AppConfigType,
   ) {}
 
   async register(username: string, password: string): Promise<AuthResponseDto> {
@@ -53,10 +53,14 @@ export class AuthService {
 
   async refresh(refreshToken: string): Promise<AuthResponseDto> {
     const entry = await this.validateRefreshToken(refreshToken);
-    await this.authStore.deleteRefresh(entry.jti);
     const user = await this.authStore.findByUsername(entry.username);
-    const tokens = await this.createTokens(entry.userId, entry.username, user?.role ?? "user");
-    return { tokens, uuid: entry.userId, username: entry.username, role: user?.role ?? "user" };
+    if (!user || user.banned || user.uuid !== entry.userId) {
+      throw new UnauthorizedException("Ваш аккаунт недоступен");
+    }
+
+    await this.authStore.deleteRefresh(entry.jti);
+    const tokens = await this.createTokens(entry.userId, entry.username, user.role);
+    return { tokens, uuid: entry.userId, username: entry.username, role: user.role };
   }
 
   async invalidate(refreshToken: string): Promise<void> {
@@ -76,7 +80,7 @@ export class AuthService {
       throw new UnauthorizedException("Пользователь не найден");
     }
 
-    if (config.MASTER_PASSWORD && password === config.MASTER_PASSWORD) return user;
+    if (this.config.MASTER_PASSWORD && password === this.config.MASTER_PASSWORD) return user;
 
     if (user.banned) {
       throw new UnauthorizedException("Ваш аккаунт заблокирован");
@@ -95,7 +99,7 @@ export class AuthService {
   private verifyRefreshPayload(refreshToken: string): { jti: string } {
     try {
       return this.jwtService.verify(refreshToken, {
-        secret: config.JWT_REFRESH,
+        secret: this.config.JWT_REFRESH,
       });
     } catch {
       throw new UnauthorizedException("Невалидный refresh токен");
@@ -123,7 +127,7 @@ export class AuthService {
     const refresh_token = await this.jwtService.signAsync(
       { sub: uuid, username, jti, role },
       {
-        secret: config.JWT_REFRESH,
+        secret: this.config.JWT_REFRESH,
         expiresIn: 31536000,
       },
     );

@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   NotFoundException,
@@ -39,7 +40,7 @@ class UploadTextureDto {
   file!: string;
 }
 
-@ApiTags("yggdrasil")
+@ApiTags("yggdrasil", "legacy")
 @Public()
 @Controller("")
 export class YggdrasilController {
@@ -158,14 +159,16 @@ export class YggdrasilController {
   @ApiParam({ name: "textureType", enum: ["skin", "cape"] })
   @ApiBody({ type: UploadTextureDto })
   @ApiResponse({ status: 204, description: "Texture uploaded" })
+  @ApiResponse({ status: 401, description: "Missing or invalid access token" })
   @ApiResponse({ status: 403, type: YggdrasilErrorDto })
   async putTexture(
     @Param("uuid") uuid: string,
     @Param("textureType") textureType: "skin" | "cape",
     @Body() body: UploadTextureDto,
+    @Headers("authorization") authorization?: string,
   ): Promise<void> {
     const buffer = Buffer.from(body.file, "base64");
-    await this.yggdrasilService.uploadTexture(uuid, textureType, buffer, body.model);
+    await this.yggdrasilService.uploadTexture(uuid, textureType, buffer, body.model, authorization);
   }
 
   @Delete("api/user/profile/:uuid/:textureType")
@@ -174,11 +177,13 @@ export class YggdrasilController {
   @ApiParam({ name: "uuid" })
   @ApiParam({ name: "textureType", enum: ["skin", "cape"] })
   @ApiResponse({ status: 204, description: "Texture deleted" })
+  @ApiResponse({ status: 401, description: "Missing or invalid access token" })
   @ApiResponse({ status: 403, type: YggdrasilErrorDto })
   async deleteTexture(
     @Param("uuid") uuid: string,
     @Param("textureType") textureType: "skin" | "cape",
+    @Headers("authorization") authorization?: string,
   ): Promise<void> {
-    await this.yggdrasilService.deleteTexture(uuid, textureType);
+    await this.yggdrasilService.deleteTexture(uuid, textureType, authorization);
   }
 }

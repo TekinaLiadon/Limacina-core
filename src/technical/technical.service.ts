@@ -2,6 +2,7 @@ import { ConflictException, Inject, Injectable, Logger } from "@nestjs/common";
 import { v4 } from "uuid";
 import { AdminMapStoreToken, type IAdminStore } from "../admin/admin.store";
 import { AuthMapStoreToken, type IAuthStore } from "../auth/service/auth_store.service";
+import type { InitOwnerResponseDto } from "./dto/dto";
 
 @Injectable()
 export class TechnicalService {
@@ -12,7 +13,7 @@ export class TechnicalService {
     @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
   ) {}
 
-  async initOwner(username: string, password: string): Promise<{ uuid: string; username: string }> {
+  async initOwner(username: string, password: string): Promise<InitOwnerResponseDto> {
     if (await this.adminStore.hasOwner()) {
       throw new ConflictException("Владелец уже создан");
     }

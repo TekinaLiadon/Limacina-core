@@ -224,3 +224,14 @@ export class ApiMetadataResponseDto {
   @ApiProperty()
   signaturePublickey!: string;
 }
+
+export class UploadTextureDto {
+  @ApiPropertyOptional({ example: "slim", description: "Модель скина (slim/classic)" })
+  @IsOptional()
+  @IsString()
+  model?: string;
+
+  @ApiProperty({ description: "PNG в base64" })
+  @IsString()
+  file!: string;
+}

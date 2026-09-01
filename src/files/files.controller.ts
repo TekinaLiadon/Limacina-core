@@ -2,9 +2,10 @@ import { Body, Controller, Get, Post, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { Public } from "../common/public.decorator";
 import { FileDto } from "./dto/dto";
-import { ApiOkResponse, ApiResponse } from "@nestjs/swagger";
+import { ApiOkResponse, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { FilesService } from "./files.service";
 
+@ApiTags("files", "legacy")
 @Public()
 @Controller("files")
 export class FilesController {

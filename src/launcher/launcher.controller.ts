@@ -5,7 +5,7 @@ import { Public } from "../common/public.decorator";
 import { LauncherService } from "./launcher.service";
 import { LauncherConfigCreateDto, LauncherConfigDto, LauncherVersionDto } from "./dto/dto";
 
-@ApiTags("launcher")
+@ApiTags("launcher", "legacy")
 @Public()
 @Controller("launcher")
 export class LauncherController {

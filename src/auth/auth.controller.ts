@@ -4,7 +4,7 @@ import { Public } from "../common/public.decorator";
 import { AuthService } from "./service/auth.service";
 import { AuthDto, AuthResponseDto, AuthRefreshDto } from "./dto/dto";
 
-@ApiTags("auth")
+@ApiTags("auth", "legacy")
 @Public()
 @Controller("auth")
 export class AuthController {

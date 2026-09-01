@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { existsSync, unlinkSync } from "node:fs";
 import { INestApplication } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
@@ -12,21 +13,37 @@ import {
   YggdrasilTokenStoreToken,
   YggdrasilSessionStoreToken,
 } from "../service/yggdrasil_store";
+import {
+  UserContentMapStore,
+  UserContentMapStoreToken,
+} from "../../user-content/user-content.store";
+import GlobalConfig from "../../config/global-config";
+import { AppConfigToken } from "../../config/app-config.provider";
 
 const TEST_USERNAME = "testplayer";
 const TEST_UUID = "a1b2c3d4e5f67890abcdef1234567890";
 const TEST_USER_UUID = "11111111111111111111111111111111";
 const TEST_PASSWORD = "pass123";
+const ATTACKER_USERNAME = "attacker";
+const ATTACKER_UUID = "c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6";
+const ATTACKER_USER_UUID = "22222222222222222222222222222222";
+const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const buildPngBase64 = (body: string): string => {
+  const bytes = new Uint8Array([...PNG_SIGNATURE, ...new Uint8Array(Buffer.from(body))]);
+  return Buffer.from(bytes.buffer).toString("base64");
+};
 
 describe("Yggdrasil эндпоинты", () => {
   let app: INestApplication;
   let store: YggdrasilMapStore;
+  const uploadedTextures: string[] = [];
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       controllers: [YggdrasilController],
       providers: [
         YggdrasilService,
+        { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
         {
           provide: YggdrasilStoreToken,
           useClass: YggdrasilMapStore,
@@ -39,6 +56,10 @@ describe("Yggdrasil эндпоинты", () => {
           provide: YggdrasilSessionStoreToken,
           useClass: YggdrasilMapSessionStore,
         },
+        {
+          provide: UserContentMapStoreToken,
+          useClass: UserContentMapStore,
+        },
       ],
     }).compile();
 
@@ -49,9 +70,18 @@ describe("Yggdrasil эндпоинты", () => {
     const passwordHash = await Bun.password.hash(TEST_PASSWORD);
     await store.__test__addUser(TEST_USERNAME, TEST_USER_UUID, passwordHash);
     await store.saveProfile({ uuid: TEST_UUID, userId: TEST_USER_UUID, username: TEST_USERNAME });
+    await store.__test__addUser(ATTACKER_USERNAME, ATTACKER_USER_UUID, passwordHash);
+    await store.saveProfile({
+      uuid: ATTACKER_UUID,
+      userId: ATTACKER_USER_UUID,
+      username: ATTACKER_USERNAME,
+    });
   });
 
   afterAll(async () => {
+    for (const texturePath of uploadedTextures) {
+      if (existsSync(texturePath)) unlinkSync(texturePath);
+    }
     await app.close();
   });
 
@@ -383,6 +413,15 @@ describe("Yggdrasil эндпоинты", () => {
     return refreshRes.body.accessToken;
   }
 
+  async function authenticateUser(username: string): Promise<string> {
+    const authRes = await supertest(app.getHttpServer())
+      .post("/authserver/authenticate")
+      .send({ username, password: TEST_PASSWORD })
+      .expect(201);
+
+    return authRes.body.accessToken;
+  }
+
   describe("POST /sessionserver/session/minecraft/join", () => {
     it("успешная запись сессии", async () => {
       const token = await authenticateAndBindProfile();
@@ -619,12 +658,30 @@ describe("Yggdrasil эндпоинты", () => {
   // ─── API: Texture Upload/Delete ───
 
   describe("PUT /api/user/profile/:uuid/skin", () => {
-    it("загружает скин как base64", async () => {
-      const fakePng = Buffer.from("fake-png-data");
-      const base64 = fakePng.toString("base64");
+    it("возвращает 401 без Authorization заголовка", async () => {
+      await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .send({ file: buildPngBase64("fake-png-data") })
+        .expect(401);
+    });
+
+    it("возвращает 403 если токен принадлежит другому профилю", async () => {
+      const attackerToken = await authenticateUser(ATTACKER_USERNAME);
 
       await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${attackerToken}`)
+        .send({ file: buildPngBase64("fake-png-data") })
+        .expect(403);
+    });
+
+    it("загружает скин как base64", async () => {
+      const token = await authenticateAndBindProfile();
+      const base64 = buildPngBase64("fake-png-data");
+
+      await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
         .send({ file: base64, model: "slim" })
         .expect(204);
 
@@ -632,11 +689,13 @@ describe("Yggdrasil эндпоинты", () => {
       expect(profile).toBeDefined();
       expect(profile!.skinUrl).toContain("/textures/");
       expect(profile!.skinModel).toBe("slim");
+      if (profile!.skinUrl) {
+        uploadedTextures.push(profile!.skinUrl.replace(/^https?:\/\/[^/]+\//, "public/"));
+      }
     });
 
     it("возвращает 403 для несуществующего профиля", async () => {
-      const fakePng = Buffer.from("fake-png-data");
-      const base64 = fakePng.toString("base64");
+      const base64 = buildPngBase64("fake-png-data");
 
       await supertest(app.getHttpServer())
         .put("/api/user/profile/00000000000000000000000000000000/skin")
@@ -647,22 +706,33 @@ describe("Yggdrasil эндпоинты", () => {
 
   describe("PUT /api/user/profile/:uuid/cape", () => {
     it("загружает кейп как base64", async () => {
-      const fakePng = Buffer.from("fake-cape-data");
-      const base64 = fakePng.toString("base64");
+      const token = await authenticateAndBindProfile();
+      const base64 = buildPngBase64("fake-cape-data");
 
       await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/cape`)
+        .set("Authorization", `Bearer ${token}`)
         .send({ file: base64 })
         .expect(204);
 
       const profile = await store.findProfileByUuid(TEST_UUID);
       expect(profile).toBeDefined();
       expect(profile!.capeUrl).toContain("/textures/");
+      if (profile!.capeUrl) {
+        uploadedTextures.push(profile!.capeUrl.replace(/^https?:\/\/[^/]+\//, "public/"));
+      }
     });
   });
 
   describe("DELETE /api/user/profile/:uuid/:textureType", () => {
+    it("возвращает 401 без Authorization заголовка", async () => {
+      await supertest(app.getHttpServer())
+        .delete(`/api/user/profile/${TEST_UUID}/skin`)
+        .expect(401);
+    });
+
     it("удаляет скин", async () => {
+      const token = await authenticateAndBindProfile();
       await store.saveProfile({
         uuid: TEST_UUID,
         userId: TEST_USER_UUID,
@@ -673,6 +743,7 @@ describe("Yggdrasil эндпоинты", () => {
 
       await supertest(app.getHttpServer())
         .delete(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
         .expect(204);
 
       const profile = await store.findProfileByUuid(TEST_UUID);
@@ -681,6 +752,7 @@ describe("Yggdrasil эндпоинты", () => {
     });
 
     it("удаляет кейп", async () => {
+      const token = await authenticateAndBindProfile();
       await store.saveProfile({
         uuid: TEST_UUID,
         userId: TEST_USER_UUID,
@@ -690,6 +762,7 @@ describe("Yggdrasil эндпоинты", () => {
 
       await supertest(app.getHttpServer())
         .delete(`/api/user/profile/${TEST_UUID}/cape`)
+        .set("Authorization", `Bearer ${token}`)
         .expect(204);
 
       const profile = await store.findProfileByUuid(TEST_UUID);

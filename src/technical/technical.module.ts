@@ -8,5 +8,6 @@ import { AuthModule } from "../auth/auth.module";
   imports: [AdminModule, AuthModule],
   controllers: [TechnicalController],
   providers: [TechnicalService],
+  exports: [TechnicalService],
 })
 export class TechnicalModule {}

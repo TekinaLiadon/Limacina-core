@@ -10,6 +10,17 @@ interface CacheEntry {
   expiresAt: number;
 }
 
+export interface LogsFilter {
+  statusCode?: number | undefined;
+  url?: string | undefined;
+  ip?: string | undefined;
+}
+
+interface RequestLogEntry {
+  req?: { url?: string; remoteAddress?: string };
+  res?: { statusCode?: number };
+}
+
 @Injectable()
 export class LogsService {
   private readonly logger = new Logger(LogsService.name);
@@ -21,8 +32,8 @@ export class LogsService {
       const dates = readdirSync(LOGS_DIR)
         .filter((f) => f.endsWith(".log"))
         .map((f) => f.replace(".log", ""))
-        .sort()
-        .reverse();
+        .toSorted()
+        .toReversed();
       if (!dates.includes(today)) {
         dates.unshift(today);
       }
@@ -32,24 +43,82 @@ export class LogsService {
     }
   }
 
-  getLines(date: string, offset: number, limit: number): { lines: string[]; total: number } {
+  getLines(
+    date: string,
+    offset: number,
+    limit: number,
+    filter?: LogsFilter,
+  ): { lines: string[]; total: number } {
     this.validateDate(date);
 
+    const allLines = this.getCachedLines(date);
+    const matchedLines = this.filterRequestLines(allLines, filter);
+
+    return {
+      lines: matchedLines.slice(offset, offset + limit),
+      total: matchedLines.length,
+    };
+  }
+
+  private getCachedLines(date: string): string[] {
     const cached = this.cache.get(date);
     const now = Date.now();
 
-    let lines: string[];
     if (cached && cached.expiresAt > now) {
-      lines = cached.lines;
-    } else {
-      lines = this.readLogFile(date);
-      this.cache.set(date, { lines, expiresAt: now + CACHE_TTL_MS });
+      return cached.lines;
     }
 
-    return {
-      lines: lines.slice(offset, offset + limit),
-      total: lines.length,
-    };
+    const lines = this.readLogFile(date);
+    this.cache.set(date, { lines, expiresAt: now + CACHE_TTL_MS });
+    return lines;
+  }
+
+  private filterRequestLines(lines: string[], filter?: LogsFilter): string[] {
+    const matchedLines: string[] = [];
+
+    for (const line of lines) {
+      const entry = this.parseLogLine(line);
+      if (!entry?.res?.statusCode) {
+        continue;
+      }
+      if (!this.matchesFilter(entry, filter)) {
+        continue;
+      }
+      matchedLines.push(line);
+    }
+
+    return matchedLines;
+  }
+
+  private parseLogLine(line: string): RequestLogEntry | undefined {
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (typeof parsed !== "object" || parsed === null) {
+        return undefined;
+      }
+      return parsed as RequestLogEntry;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private matchesFilter(entry: RequestLogEntry, filter?: LogsFilter): boolean {
+    const statusCode = filter?.statusCode;
+    if (statusCode !== undefined && entry.res?.statusCode !== statusCode) {
+      return false;
+    }
+
+    const url = filter?.url;
+    if (url !== undefined && !entry.req?.url?.toLowerCase().includes(url.toLowerCase())) {
+      return false;
+    }
+
+    const ip = filter?.ip;
+    if (ip !== undefined && !entry.req?.remoteAddress?.toLowerCase().includes(ip.toLowerCase())) {
+      return false;
+    }
+
+    return true;
   }
 
   private readLogFile(date: string): string[] {

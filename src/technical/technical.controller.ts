@@ -4,7 +4,7 @@ import { Public } from "../common/public.decorator";
 import { TechnicalService } from "./technical.service";
 import { InitOwnerDto } from "./dto/dto";
 
-@ApiTags("technical")
+@ApiTags("technical", "legacy")
 @Public()
 @Controller("technical")
 export class TechnicalController {

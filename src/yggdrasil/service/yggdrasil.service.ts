@@ -1,5 +1,6 @@
 import { HttpException, HttpStatus, Inject, Injectable, Logger } from "@nestjs/common";
 import { readFileSync, existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { sign, createHmac } from "node:crypto";
 import type {
   AuthenticateDto,
@@ -26,15 +27,24 @@ import {
 } from "./yggdrasil_store";
 import type { IUserContentStore } from "../../user-content/user-content.store";
 import { UserContentMapStoreToken } from "../../user-content/user-content.store";
-import GlobalConfig from "../../config/global-config";
+import { AppConfigToken } from "../../config/app-config.provider";
+import type { AppConfigType } from "../../config/global-config";
 
-const config = GlobalConfig.parseEnvOrExit();
-const DEFAULT_SKIN_URL = `${config.BASE_URL}/textures/default.png`;
-const JWT_SECRET: string = config.JWT_ACCESS;
+export function resolveKeysDir(): string {
+  const envKeysDir = process.env["KEYS_DIR"];
+  if (envKeysDir) return resolve(envKeysDir);
 
-const KEYS_DIR = `${import.meta.dir}/../../../keys`;
-const privateKeyPath = `${KEYS_DIR}/private.pem`;
-const publicKeyPath = `${KEYS_DIR}/public.pem`;
+  if (import.meta.dir.startsWith("/$bunfs")) return join(process.cwd(), "keys");
+
+  return join(import.meta.dir, "..", "..", "..", "keys");
+}
+
+const KEYS_DIR = resolveKeysDir();
+const privateKeyPath = join(KEYS_DIR, "private.pem");
+const publicKeyPath = join(KEYS_DIR, "public.pem");
+
+const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const MAX_TEXTURE_BYTES = 512 * 1024;
 
 let privateKey = "";
 let publicKeyPem = "";
@@ -52,13 +62,26 @@ type Textures = {
 @Injectable()
 export class YggdrasilService {
   private readonly logger = new Logger(YggdrasilService.name);
+  private readonly defaultSkinUrl: string;
+  private readonly jwtSecret: string;
 
   constructor(
     @Inject(YggdrasilStoreToken) private readonly store: IYggdrasilStore,
     @Inject(YggdrasilTokenStoreToken) private readonly tokenStore: IYggdrasilTokenStore,
     @Inject(YggdrasilSessionStoreToken) private readonly sessionStore: IYggdrasilSessionStore,
     @Inject(UserContentMapStoreToken) private readonly contentStore: IUserContentStore,
-  ) {}
+    @Inject(AppConfigToken) private readonly config: AppConfigType,
+  ) {
+    this.defaultSkinUrl = `${config.BASE_URL}/textures/default.png`;
+    this.jwtSecret = config.JWT_ACCESS;
+
+    if (!publicKeyPem || !privateKey) {
+      this.logger.error(
+        { keysDir: KEYS_DIR },
+        "Yggdrasil texture signing keys not found — texture signatures are disabled. Run `bun run generate:keypair` or set KEYS_DIR.",
+      );
+    }
+  }
 
   createError(
     message: { info: string },
@@ -302,7 +325,7 @@ export class YggdrasilService {
       const payloadB64 = parts[1];
       const sigB64 = parts[2];
       if (!headerB64 || !payloadB64 || !sigB64) return null;
-      const expectedSig = createHmac("sha256", JWT_SECRET)
+      const expectedSig = createHmac("sha256", this.jwtSecret)
         .update(`${headerB64}.${payloadB64}`)
         .digest("base64url");
 
@@ -370,14 +393,40 @@ export class YggdrasilService {
     textureType: "skin" | "cape",
     file: Buffer,
     model?: string,
+    authorization?: string,
   ): Promise<void> {
-    const profile = await this.store.findProfileByUuid(uuid);
+    const normalizedUuid = uuid.replace(/-/g, "");
+    const profile = await this.store.findProfileByUuid(normalizedUuid);
     if (!profile) throw this.createError({ info: uuid }, "invalid uuid", "Invalid token.");
+
+    await this.assertTextureOwnership(profile, authorization);
+    this.validateTextureFile(file);
 
     const url = await this.writeTexture(file);
 
     const textures: Textures = this.createTextures(textureType, model ?? null, url);
-    await this.store.updateProfileTexture(uuid, textures);
+    await this.store.updateProfileTexture(normalizedUuid, textures);
+  }
+
+  private validateTextureFile(file: Buffer): void {
+    if (file.length > MAX_TEXTURE_BYTES) {
+      throw this.createError(
+        { info: `size ${file.length} bytes, max ${MAX_TEXTURE_BYTES}` },
+        "texture upload",
+        `Texture file too large: ${file.length} bytes (max ${MAX_TEXTURE_BYTES}).`,
+      );
+    }
+
+    const hasPngSignature =
+      file.length >= PNG_SIGNATURE.length &&
+      PNG_SIGNATURE.every((byte, index) => file[index] === byte);
+    if (!hasPngSignature) {
+      throw this.createError(
+        { info: "no png signature" },
+        "texture upload",
+        "Invalid texture file: PNG signature missing.",
+      );
+    }
   }
 
   async writeTexture(file: Buffer): Promise<string> {
@@ -385,17 +434,73 @@ export class YggdrasilService {
     hasher.update(new Uint8Array(file));
     const hash = hasher.digest("hex");
     const filename = `${hash}.png`;
-    const url = `${config.BASE_URL}/textures/${filename}`;
+    const url = `${this.config.BASE_URL}/textures/${filename}`;
     await Bun.write(`public/textures/${filename}`, new Uint8Array(file));
     return url;
   }
 
-  async deleteTexture(uuid: string, textureType: "skin" | "cape"): Promise<void> {
-    const profile = await this.store.findProfileByUuid(uuid);
+  async deleteTexture(
+    uuid: string,
+    textureType: "skin" | "cape",
+    authorization?: string,
+  ): Promise<void> {
+    const normalizedUuid = uuid.replace(/-/g, "");
+    const profile = await this.store.findProfileByUuid(normalizedUuid);
     if (!profile) throw this.createError({ info: uuid }, "invalid uuid", "Invalid token.");
 
+    await this.assertTextureOwnership(profile, authorization);
+
     const textures: Textures = this.createTextures(textureType);
-    await this.store.updateProfileTexture(uuid, textures);
+    await this.store.updateProfileTexture(normalizedUuid, textures);
+  }
+
+  private async assertTextureOwnership(
+    profile: YggdrasilProfile,
+    authorization?: string,
+  ): Promise<void> {
+    const accessToken = this.parseBearerToken(authorization);
+    if (!accessToken)
+      throw this.createError(
+        { info: "missing bearer token" },
+        "texture access",
+        "Missing Authorization header with Bearer token.",
+        "ForbiddenOperationException",
+        HttpStatus.UNAUTHORIZED,
+      );
+
+    const entry = await this.tokenStore.findToken(accessToken);
+    if (entry) {
+      if (entry.profileId !== profile.uuid)
+        throw this.createError(
+          { info: profile.uuid },
+          "texture access denied",
+          "Access token does not belong to this profile.",
+        );
+      return;
+    }
+
+    const jwtPayload = this.verifyJwt(accessToken);
+    if (!jwtPayload)
+      throw this.createError(
+        { info: "***" },
+        "invalid token",
+        "Invalid token.",
+        "ForbiddenOperationException",
+        HttpStatus.UNAUTHORIZED,
+      );
+
+    if (jwtPayload.sub !== profile.userId)
+      throw this.createError(
+        { info: profile.uuid },
+        "texture access denied",
+        "Access token does not belong to this profile.",
+      );
+  }
+
+  private parseBearerToken(authorization?: string): string | null {
+    if (!authorization) return null;
+    const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim());
+    return match?.[1] ?? null;
   }
 
   createTextures(
@@ -420,7 +525,7 @@ export class YggdrasilService {
   getMetadata() {
     const skinDomains: string[] = [];
     try {
-      const url = new URL(config.BASE_URL);
+      const url = new URL(this.config.BASE_URL);
       const host = url.hostname;
       skinDomains.push(host);
       if (host.includes(".")) {
@@ -500,10 +605,10 @@ export class YggdrasilService {
     let skinUrl = profile.skinUrl;
     if (!skinUrl) {
       const userSkins = await this.contentStore.findByUserUuid(profile.userId, "skin");
-      const latestSkin = userSkins.sort((a, b) => a.id - b.id).at(-1);
+      const latestSkin = userSkins.toSorted((a, b) => a.id - b.id).at(-1);
       if (latestSkin) skinUrl = latestSkin.filePath;
     }
-    if (!skinUrl) skinUrl = DEFAULT_SKIN_URL;
+    if (!skinUrl) skinUrl = this.defaultSkinUrl;
 
     const texturesProfile: YggdrasilProfile = { ...profile, skinUrl };
     const texturesValue = this.encodeTextures(profile.uuid, profile.username, texturesProfile);

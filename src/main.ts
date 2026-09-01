@@ -1,23 +1,40 @@
-import { join } from "path";
+import { join, relative, resolve, isAbsolute } from "path";
 import { readFile } from "fs/promises";
 import { existsSync } from "node:fs";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import type { OpenAPIObject } from "@nestjs/swagger";
 import { apiReference } from "@scalar/nestjs-api-reference";
-import { ValidationPipe } from "@nestjs/common";
+import { ValidationPipe, Logger as NestLogger } from "@nestjs/common";
 import { Logger, LoggerErrorInterceptor } from "nestjs-pino";
 import GlobalConfig from "./config/global-config";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import fastifyStatic from "@fastify/static";
 import cors from "@fastify/cors";
 import fastifyMultipart from "@fastify/multipart";
+import { registerAuthRateLimit } from "./common/auth-rate-limit";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, new FastifyAdapter(), {
+  const envConfig = GlobalConfig.parseEnvOrExit();
+  const adapterOptions =
+    envConfig.TRUST_PROXY && envConfig.TRUST_PROXY.length > 0
+      ? { trustProxy: envConfig.TRUST_PROXY }
+      : {};
+  const app = await NestFactory.create(AppModule, new FastifyAdapter(adapterOptions), {
     bufferLogs: true,
   });
+
+  const logger = app.get(Logger);
+  app.useLogger(logger);
+  app.useGlobalInterceptors(new LoggerErrorInterceptor());
+  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+
+  registerProcessErrorHandlers(logger);
+  if (process.env.NODE_ENV === "production") {
+    logger.warn = () => undefined;
+  }
 
   const instance = app.getHttpAdapter().getInstance();
   await instance.register(fastifyStatic, {
@@ -37,15 +54,14 @@ async function bootstrap() {
 
         const panelIndexPath = join(panelDir, "index.html");
         panelInstance.setNotFoundHandler(async (request: FastifyRequest, reply: FastifyReply) => {
-          const relativePath = request.url.split("?")[0]!.replace(/^\/panel/, "") || "/index.html";
-          const filePath = join(panelDir, relativePath);
-
-          if (await Bun.file(filePath).exists()) {
-            return reply.sendFile("panel" + relativePath);
+          try {
+            await servePanelFallback(request, reply, panelDir, panelIndexPath);
+          } catch (error) {
+            logger.error({ err: error, url: request.url }, "Ошибка отдачи panel SPA");
+            if (!reply.sent) {
+              reply.code(404).send("Not found");
+            }
           }
-
-          const html = await readFile(panelIndexPath, "utf-8");
-          return reply.type("text/html").send(html);
         });
       },
       { prefix: "/panel" },
@@ -61,34 +77,134 @@ async function bootstrap() {
 
   await instance.register(fastifyMultipart, { limits: { fileSize: 50 * 1024 * 1024 } });
 
-  const logger = app.get(Logger);
-  app.useLogger(logger);
-  app.useGlobalInterceptors(new LoggerErrorInterceptor());
-  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+  await registerAuthRateLimit(instance, {
+    max: envConfig.RATE_LIMIT_AUTH_MAX,
+    timeWindow: envConfig.RATE_LIMIT_AUTH_WINDOW,
+  });
+
   logger.log("Идет запуск...", "App");
 
   const config = new DocumentBuilder()
     .setTitle("Limacina")
-    .setDescription("API documentation for Limacina")
-    .setVersion("1.0")
-    .addTag("auth", "Аутентификация и управление токенами")
-    .addTag("yggdrasil", "Minecraft Yggdrasil authentication")
-    .addTag("admin", "Администрирование пользователей")
-    .addTag("launcher", "Обновление лаунчера")
-    .addTag("user-content", "Загрузка и управление скинами и моделями")
-    .addTag("technical", "Технические эндпоинты")
+    .setDescription(
+      "API documentation for Limacina\n\n" +
+        "Актуальные эндпоинты расположены под префиксом `/v1` и сгруппированы по потребителю: " +
+        "`common_*` (общее для панели и лаунчера), `launcher_*` (лаунчер), `panel_*` (админ-панель), " +
+        "`yggdrasil` (протокол Minecraft). " +
+        "Эндпоинты без префикса — legacy (помечены `deprecated`), сохранены для обратной совместимости и не развиваются.",
+    )
+    .setVersion("1.1")
+    .addSecurity("bearer", { type: "apiKey", name: "Authorization", in: "header" })
+    .addTag("common_auth", "Общая авторизация — панель и лаунчер (/v1/common/auth)")
+    .addTag("common_content", "Скины и модели пользователей (/v1/common/content)")
+    .addTag("launcher_update", "Самообновление лаунчера (/v1/launcher/update)")
+    .addTag("launcher_files", "Файлы игры: манифест и моды (/v1/launcher/files)")
+    .addTag("launcher_config", "Конфиг лаунчера — чтение (/v1/launcher/config)")
+    .addTag("panel_users", "Управление пользователями, включая init-owner (/v1/panel/users)")
+    .addTag("panel_logs", "Просмотр логов сервера (/v1/panel/logs)")
+    .addTag(
+      "panel_launcher",
+      "Управление лаунчером и его конфигом — только admin (/v1/panel/launcher)",
+    )
+    .addTag(
+      "yggdrasil",
+      "Minecraft Yggdrasil authentication (/v1/authserver, /v1/sessionserver, /v1/api)",
+    )
+    .addTag(
+      "legacy",
+      "Устаревшие эндпоинты без префикса /v1 — только для обратной совместимости, будут удалены",
+    )
+    .addTag("auth", "Legacy: прежние /auth-эндпоинты (актуальные — common_auth)")
+    .addTag("admin", "Legacy: прежние /admin-эндпоинты (актуальные — panel_*)")
+    .addTag("launcher", "Legacy: прежние /launcher-эндпоинты (актуальные — launcher_*)")
+    .addTag("files", "Legacy: прежние /files-эндпоинты (актуальные — launcher_files)")
+    .addTag("user-content", "Legacy: прежние /user-content-эндпоинты (актуальные — common_content)")
+    .addTag("technical", "Legacy: прежние /technical-эндпоинты (актуальные — panel_users)")
     .build();
-  const documentFactory = () => SwaggerModule.createDocument(app, config);
-  await instance.get("/openapi.json", async () => documentFactory());
+
+  const documentFactory = () => markLegacyEndpoints(SwaggerModule.createDocument(app, config));
+  await instance.get("/openapi.json", async (_request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      return documentFactory();
+    } catch (error) {
+      logger.error({ err: error }, "Ошибка генерации OpenAPI-документа");
+      return reply.code(500).send({ statusCode: 500, message: "OpenAPI document unavailable" });
+    }
+  });
   const scalarHandler = apiReference({
     withFastify: true,
     spec: { url: "/openapi.json" },
   }) as (req: FastifyRequest, res: import("node:http").ServerResponse) => void;
   await instance.get("/docs", async (request: FastifyRequest, reply: FastifyReply) => {
-    reply.hijack();
-    scalarHandler(request, reply.raw);
+    try {
+      reply.hijack();
+      scalarHandler(request, reply.raw);
+    } catch (error) {
+      logger.error({ err: error }, "Ошибка Scalar UI");
+      if (!reply.raw.headersSent) {
+        reply.raw.statusCode = 500;
+        reply.raw.end("Docs unavailable");
+      }
+    }
   });
 
-  await app.listen(GlobalConfig.parseEnvOrExit().PORT, "0.0.0.0");
+  await app.listen(envConfig.PORT, "0.0.0.0");
 }
-bootstrap();
+
+function markLegacyEndpoints(document: OpenAPIObject): OpenAPIObject {
+  const httpMethods = ["get", "put", "post", "delete", "options", "head", "patch"] as const;
+
+  for (const [path, pathItem] of Object.entries(document.paths)) {
+    if (path.startsWith("/v1")) continue;
+
+    for (const method of httpMethods) {
+      const operation = pathItem?.[method];
+      if (operation) {
+        operation.deprecated = true;
+      }
+    }
+  }
+
+  return document;
+}
+
+function registerProcessErrorHandlers(logger: Logger): void {
+  process.on("unhandledRejection", (reason: unknown) => {
+    logger.error({ err: reason }, "Необработанный promise rejection");
+  });
+
+  process.on("uncaughtException", (error: Error) => {
+    logger.error({ err: error }, "Необработанное исключение");
+  });
+}
+
+async function servePanelFallback(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  panelDir: string,
+  panelIndexPath: string,
+): Promise<void> {
+  const relativePath = request.url.split("?")[0]!.replace(/^\/panel/, "") || "/index.html";
+  const resolvedPath = resolve(panelDir, `.${relativePath}`);
+  const relativeToPanel = relative(panelDir, resolvedPath);
+
+  const isInsidePanel =
+    !!relativeToPanel && !relativeToPanel.startsWith("..") && !isAbsolute(relativeToPanel);
+  if (isInsidePanel && (await Bun.file(resolvedPath).exists())) {
+    return reply.sendFile("panel" + relativePath);
+  }
+
+  if (!existsSync(panelIndexPath)) {
+    return reply.code(404).send("Not found");
+  }
+
+  const html = await readFile(panelIndexPath, "utf-8");
+  return reply.type("text/html").send(html);
+}
+
+bootstrap().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  const stack = error instanceof Error ? error.stack : undefined;
+  new NestLogger("Bootstrap").error(message, stack);
+  process.exit(1);
+});

@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { AuthController } from "../auth.controller";
 import { AuthService } from "../service/auth.service";
 import { AuthMapStore, AuthMapStoreToken } from "../service/auth_store.service";
+import GlobalConfig from "../../config/global-config";
+import { AppConfigToken } from "../../config/app-config.provider";
 import { INestApplication } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtModule } from "@nestjs/jwt";
@@ -23,6 +25,7 @@ describe("Auth эндпоинты", (): void => {
       controllers: [AuthController],
       providers: [
         AuthService,
+        { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
         {
           provide: AuthMapStoreToken,
           useClass: AuthMapStore,
@@ -153,6 +156,62 @@ describe("Auth эндпоинты", (): void => {
     });
   });
 
+  describe("POST /auth/refresh при забаненном пользователе", () => {
+    it("ошибка 401 после бана", async () => {
+      const loginRes = await supertest(app.getHttpServer())
+        .post("/auth/login")
+        .send({ username: "testuser", password: "pass123" })
+        .expect(201);
+
+      const { refresh_token } = loginRes.body.tokens;
+
+      const user = await authStore.findByUsername("testuser");
+      await authStore.saveUser({ ...user!, banned: true });
+
+      await supertest(app.getHttpServer())
+        .post("/auth/refresh")
+        .send({ refresh_token })
+        .expect(401);
+
+      await authStore.saveUser({ ...user!, banned: false });
+    });
+
+    it("ошибка 401 после удаления пользователя", async () => {
+      const loginRes = await supertest(app.getHttpServer())
+        .post("/auth/login")
+        .send({ username: "testuser", password: "pass123" })
+        .expect(201);
+
+      const { refresh_token } = loginRes.body.tokens;
+
+      const removedUserHash = await Bun.password.hash("pass123");
+      await authStore.saveUser({
+        uuid: "removed-user-uuid",
+        username: "testuser",
+        passwordHash: removedUserHash,
+        skin: null,
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+
+      const newLogin = await supertest(app.getHttpServer())
+        .post("/auth/login")
+        .send({ username: "testuser", password: "pass123" })
+        .expect(201);
+
+      await supertest(app.getHttpServer())
+        .post("/auth/refresh")
+        .send({ refresh_token: newLogin.body.tokens.refresh_token })
+        .expect(201);
+
+      await supertest(app.getHttpServer())
+        .post("/auth/refresh")
+        .send({ refresh_token })
+        .expect(401);
+    });
+  });
+
   describe("POST /auth/invalidate", () => {
     it("успешная инвалидация токена", async () => {
       const loginRes = await supertest(app.getHttpServer())
@@ -178,6 +237,21 @@ describe("Auth эндпоинты", (): void => {
         .post("/auth/invalidate")
         .send({ refresh_token: "invalid-token" })
         .expect(401);
+    });
+  });
+
+  describe("Инвалидация access-токена при бане", () => {
+    it("логин забаненного пользователя отклоняется", async () => {
+      const user = await authStore.findByUsername("testuser");
+      await authStore.saveUser({ ...user!, banned: true });
+
+      const loginRes = await supertest(app.getHttpServer())
+        .post("/auth/login")
+        .send({ username: "testuser", password: "pass123" })
+        .expect(401);
+      expect(loginRes.body).toBeDefined();
+
+      await authStore.saveUser({ ...user!, banned: false });
     });
   });
 });

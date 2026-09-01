@@ -4,7 +4,7 @@ import { UserContentService } from "./user-content.service";
 import { UserContentItemDto } from "./dto/dto";
 import type { FastifyRequest } from "fastify";
 
-@ApiTags("user-content")
+@ApiTags("user-content", "legacy")
 @ApiBearerAuth()
 @Controller("user-content")
 export class UserContentController {

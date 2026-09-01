@@ -1,4 +1,3 @@
-import { unlinkSync } from "node:fs";
 import {
   BadRequestException,
   ForbiddenException,
@@ -8,23 +7,29 @@ import {
 } from "@nestjs/common";
 import type { IUserContentStore, ContentType } from "./user-content.store";
 import { UserContentMapStoreToken } from "./user-content.store";
-import GlobalConfig from "../config/global-config";
-
-const config = GlobalConfig.parseEnvOrExit();
-const DEFAULT_SKIN_URL = `${config.BASE_URL}/textures/default.png`;
+import type { UserContentUploadResponseDto } from "./dto/dto";
+import { unlinkSync } from "node:fs";
+import { AppConfigToken } from "../config/app-config.provider";
+import type { AppConfigType } from "../config/global-config";
 
 @Injectable()
 export class UserContentService {
   private readonly logger = new Logger(UserContentService.name);
+  private readonly defaultSkinUrl: string;
 
-  constructor(@Inject(UserContentMapStoreToken) private readonly store: IUserContentStore) {}
-
-  async uploadSkin(userUuid: string, file: Buffer): Promise<{ id: number; url: string }> {
-    return this.upload(userUuid, file, "skin", config.MAX_SKINS_PER_USER, "png", "textures");
+  constructor(
+    @Inject(UserContentMapStoreToken) private readonly store: IUserContentStore,
+    @Inject(AppConfigToken) private readonly config: AppConfigType,
+  ) {
+    this.defaultSkinUrl = `${config.BASE_URL}/textures/default.png`;
   }
 
-  async uploadModel(userUuid: string, file: Buffer): Promise<{ id: number; url: string }> {
-    return this.upload(userUuid, file, "model", config.MAX_MODELS_PER_USER, "txt", "models");
+  async uploadSkin(userUuid: string, file: Buffer): Promise<UserContentUploadResponseDto> {
+    return this.upload(userUuid, file, "skin", this.config.MAX_SKINS_PER_USER, "png", "textures");
+  }
+
+  async uploadModel(userUuid: string, file: Buffer): Promise<UserContentUploadResponseDto> {
+    return this.upload(userUuid, file, "model", this.config.MAX_MODELS_PER_USER, "txt", "models");
   }
 
   private async upload(
@@ -34,7 +39,7 @@ export class UserContentService {
     maxPerUser: number,
     extension: string,
     directory: string,
-  ): Promise<{ id: number; url: string }> {
+  ): Promise<UserContentUploadResponseDto> {
     const count = await this.store.countByUserUuid(userUuid, type);
     if (count >= maxPerUser) {
       this.logger.warn({ userUuid, type, count, maxPerUser }, "Upload limit reached");
@@ -47,7 +52,7 @@ export class UserContentService {
     hasher.update(new Uint8Array(file));
     const hash = hasher.digest("hex");
     const filename = `${hash}.${extension}`;
-    const url = `${config.BASE_URL}/${directory}/${filename}`;
+    const url = `${this.config.BASE_URL}/${directory}/${filename}`;
     const filePath = `public/${directory}/${filename}`;
 
     await Bun.write(filePath, new Uint8Array(file));
@@ -59,7 +64,7 @@ export class UserContentService {
 
   async listSkins(userUuid: string): Promise<Array<{ id: number | null; url: string }>> {
     const items = await this.store.findByUserUuid(userUuid, "skin");
-    if (items.length === 0) return [{ id: null, url: DEFAULT_SKIN_URL }];
+    if (items.length === 0) return [{ id: null, url: this.defaultSkinUrl }];
 
     return items.map((item) => ({ id: item.id, url: item.filePath }));
   }
@@ -82,8 +87,12 @@ export class UserContentService {
 
     await this.store.deleteById(id, type);
 
-    const localPath = `public/${item.filePath.replace(`${config.BASE_URL}/`, "")}`;
-    unlinkSync(localPath);
+    const localPath = `public/${item.filePath.replace(`${this.config.BASE_URL}/`, "")}`;
+    try {
+      unlinkSync(localPath);
+    } catch (error) {
+      this.logger.error({ err: error, path: localPath }, "Не удалось удалить файл контента");
+    }
 
     this.logger.debug({ ownerUuid, type, id }, "Deleted");
   }

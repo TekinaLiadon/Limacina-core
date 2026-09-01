@@ -28,7 +28,7 @@ import {
 } from "./dto/dto";
 import type { FastifyRequest } from "fastify";
 
-@ApiTags("admin")
+@ApiTags("admin", "legacy")
 @ApiBearerAuth()
 @Roles("admin")
 @Controller("admin")
@@ -64,7 +64,7 @@ export class AdminController {
   @ApiOperation({
     summary: "Получить логи за конкретную дату",
     description:
-      "Возвращает строки лог-файла за указанную дату с пагинацией. Если дата не указана — используется сегодняшняя.\n\nПримеры:\n- `GET /admin/logs` — логи за сегодня\n- `GET /admin/logs?date=2026-07-08` — логи за 8 июля 2026\n- `GET /admin/logs?date=2026-07-08&offset=0&limit=50` — первые 50 строк за 8 июля",
+      "Возвращает строки лог-файла за указанную дату с пагинацией — только записи HTTP-запросов (с кодом статуса). Если дата не указана — используется сегодняшняя.\n\nПримеры:\n- `GET /admin/logs` — логи за сегодня\n- `GET /admin/logs?date=2026-07-08` — логи за 8 июля 2026\n- `GET /admin/logs?date=2026-07-08&offset=0&limit=50` — первые 50 строк за 8 июля",
   })
   @ApiQuery({
     name: "date",
