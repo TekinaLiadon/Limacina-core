@@ -20,6 +20,7 @@ import {
   BanUserDto,
   DeletedUsersListResponseDto,
   SetRoleDto,
+  SetUserPasswordDto,
   UsersListResponseDto,
   UsersQueryDto,
   V1DeletedUsersQueryDto,
@@ -200,6 +201,27 @@ export class V1PanelUsersController {
     return { success: true };
   }
 
+  @Patch("password")
+  @Roles("owner")
+  @ApiOperation({
+    summary: "Задать пользователю новый пароль",
+    description:
+      "Меняет пароль пользователя на заданный без знания старого пароля. " +
+      "Все refresh токены пользователя инвалидируются. Доступно только владельцу.",
+  })
+  @ApiBody({ type: SetUserPasswordDto })
+  @ApiResponse({ status: 200, description: "Пароль изменён", type: SuccessResponseDto })
+  @ApiResponse({ status: 400, description: "Пароль короче 6 символов" })
+  @ApiResponse({ status: 403, description: "Доступно только владельцу" })
+  @ApiResponse({ status: 404, description: "Пользователь не найден" })
+  async setUserPassword(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: SetUserPasswordDto,
+  ): Promise<SuccessResponseDto> {
+    await this.adminService.setUserPassword(dto.username, dto.password, user.role);
+    return { success: true };
+  }
+
   @Delete(":username")
   @ApiOperation({
     summary: "Удалить пользователя",
@@ -221,7 +243,9 @@ export class V1PanelUsersController {
   @Patch(":username/restore")
   @ApiOperation({
     summary: "Восстановить удалённого пользователя",
-    description: "Переносит пользователя из таблицы удалённых обратно в таблицу пользователей",
+    description:
+      "Переносит пользователя из таблицы удалённых обратно в таблицу пользователей. " +
+      "Восстанавливать можно только пользователей с ролью ниже вызывающего.",
   })
   @ApiParam({ name: "username", example: "john" })
   @ApiResponse({
@@ -229,9 +253,13 @@ export class V1PanelUsersController {
     description: "Пользователь восстановлен",
     type: UserSuccessResponseDto,
   })
+  @ApiResponse({ status: 403, description: "Роль восстанавливаемого не ниже роли вызывающего" })
   @ApiResponse({ status: 404, description: "Удалённый пользователь не найден" })
-  async restoreUser(@Param("username") username: string): Promise<UserSuccessResponseDto> {
-    await this.adminService.restoreUser(username);
+  async restoreUser(
+    @CurrentUser() user: RequestUser,
+    @Param("username") username: string,
+  ): Promise<UserSuccessResponseDto> {
+    await this.adminService.restoreUser(username, user.role);
     return { success: true, username };
   }
 }

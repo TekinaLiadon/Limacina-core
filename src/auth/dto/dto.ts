@@ -20,6 +20,19 @@ export class AuthRefreshDto {
   refresh_token!: string;
 }
 
+export class ChangePasswordDto {
+  @ApiProperty({ example: "secret123", minLength: 6 })
+  @IsString()
+  @IsNotEmpty()
+  old_password!: string;
+
+  @ApiProperty({ example: "newsecret123", minLength: 6 })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6)
+  new_password!: string;
+}
+
 export class UserTokens {
   @ApiProperty()
   access_token!: string;

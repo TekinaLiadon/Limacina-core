@@ -10,6 +10,7 @@ import {
   IsString,
   Max,
   Min,
+  MinLength,
 } from "class-validator";
 import { Transform, Type } from "class-transformer";
 
@@ -120,6 +121,18 @@ export class SetRoleDto {
   @IsString()
   @IsIn(AVAILABLE_ROLES)
   role!: AvailableRole;
+}
+
+export class SetUserPasswordDto {
+  @ApiProperty({ example: "john" })
+  @IsString()
+  username!: string;
+
+  @ApiProperty({ example: "newsecret123", minLength: 6 })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6)
+  password!: string;
 }
 
 export class UserListItemDto {

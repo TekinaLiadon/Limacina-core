@@ -4,10 +4,13 @@ process.env["NODE_ENV"] = "test";
 process.env["DB_DRIVER"] = "map";
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
+import { INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
 import type { FastifyInstance } from "fastify";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
-import { JwtModule } from "@nestjs/jwt";
+import { Reflector } from "@nestjs/core";
+import { JwtModule, JwtService } from "@nestjs/jwt";
+import { PassportModule, PassportStrategy } from "@nestjs/passport";
+import { ExtractJwt, Strategy } from "passport-jwt";
 import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
 import { V1AuthController } from "../auth.controller";
@@ -16,15 +19,34 @@ import { AuthMapStore, AuthMapStoreToken } from "../../../../auth/service/auth_s
 import GlobalConfig from "../../../../config/global-config";
 import { AppConfigToken } from "../../../../config/app-config.provider";
 import { registerAuthRateLimit } from "../../../../common/auth-rate-limit";
+import { Jwt_authGuard } from "../../../../common/jwt_auth.guard";
+import { RolesGuard } from "../../../../common/roles.guard";
+
+@Injectable()
+class TestJwtStrategy extends PassportStrategy(Strategy) {
+  constructor() {
+    super({
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ignoreExpiration: false,
+      secretOrKey: "test-access-secret",
+    });
+  }
+
+  validate(payload: { sub: string; username: string; role: string }) {
+    return { uuid: payload.sub, username: payload.username, role: payload.role };
+  }
+}
 
 describe("V1 common/auth эндпоинты", (): void => {
   let app: INestApplication;
   let registeredUuid: string;
   let authStore: AuthMapStore;
+  let jwtService: JwtService;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [
+        PassportModule,
         JwtModule.register({
           secret: "test-access-secret",
           signOptions: { expiresIn: 31536000 },
@@ -38,11 +60,14 @@ describe("V1 common/auth эндпоинты", (): void => {
           provide: AuthMapStoreToken,
           useClass: AuthMapStore,
         },
+        TestJwtStrategy,
       ],
     }).compile();
 
     app = moduleFixture.createNestApplication(new FastifyAdapter());
     app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+    const reflector = app.get(Reflector);
+    app.useGlobalGuards(new Jwt_authGuard(reflector), new RolesGuard(reflector));
     const fastifyInstance = app.getHttpAdapter().getInstance() as FastifyInstance;
     await registerAuthRateLimit(fastifyInstance, {
       max: 10,
@@ -51,6 +76,7 @@ describe("V1 common/auth эндпоинты", (): void => {
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
     authStore = moduleFixture.get<AuthMapStore>(AuthMapStoreToken);
+    jwtService = moduleFixture.get(JwtService);
   });
 
   afterAll(async () => {
@@ -256,6 +282,114 @@ describe("V1 common/auth эндпоинты", (): void => {
         .expect(201);
 
       expect(res.body.username).toBe("v1user");
+    });
+  });
+
+  describe("PATCH /v1/common/auth/password", () => {
+    let passchangerToken: string;
+
+    beforeAll(async () => {
+      const res = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/registration")
+        .send({ username: "passchanger", password: "oldpass123" })
+        .expect(201);
+
+      await authStore.approveUser(res.body.uuid);
+      passchangerToken = jwtService.sign({
+        sub: res.body.uuid,
+        username: "passchanger",
+        role: "user",
+      });
+    });
+
+    it("успешная смена пароля с перевыпуском токенов", async () => {
+      const loginRes = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "passchanger", password: "oldpass123" })
+        .expect(201);
+
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/common/auth/password")
+        .set("Authorization", `Bearer ${passchangerToken}`)
+        .send({ old_password: "oldpass123", new_password: "newpass456" })
+        .expect(200);
+
+      expect(res.body.tokens).toHaveProperty("access_token");
+      expect(res.body.tokens).toHaveProperty("refresh_token");
+      expect(res.body.username).toBe("passchanger");
+      expect(res.body.tokens.refresh_token).not.toBe(loginRes.body.tokens.refresh_token);
+
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/refresh")
+        .send({ refresh_token: loginRes.body.tokens.refresh_token })
+        .expect(401);
+
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/refresh")
+        .send({ refresh_token: res.body.tokens.refresh_token })
+        .expect(201);
+    });
+
+    it("вход с новым паролем после смены", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "passchanger", password: "newpass456" })
+        .expect(201);
+    });
+
+    it("вход со старым паролем отклоняется", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "passchanger", password: "oldpass123" })
+        .expect(401);
+    });
+
+    it("401 при неверном старом пароле", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/auth/password")
+        .set("Authorization", `Bearer ${passchangerToken}`)
+        .send({ old_password: "wrongoldpass", new_password: "another789" })
+        .expect(401);
+    });
+
+    it("401 без токена", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/auth/password")
+        .send({ old_password: "newpass456", new_password: "another789" })
+        .expect(401);
+    });
+
+    it("400 при коротком новом пароле", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/auth/password")
+        .set("Authorization", `Bearer ${passchangerToken}`)
+        .send({ old_password: "newpass456", new_password: "123" })
+        .expect(400);
+    });
+
+    it("401 для заблокированного пользователя", async () => {
+      const passwordHash = await Bun.password.hash("bannedpass1");
+      await authStore.saveUser({
+        uuid: "banned-passchanger-uuid",
+        username: "bannedpasschanger",
+        passwordHash,
+        skin: null,
+        role: "user",
+        approved: true,
+        banned: true,
+      });
+
+      const token = jwtService.sign({
+        sub: "banned-passchanger-uuid",
+        username: "bannedpasschanger",
+        role: "user",
+      });
+
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/auth/password")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ old_password: "bannedpass1", new_password: "another789" })
+        .expect(401);
     });
   });
 });

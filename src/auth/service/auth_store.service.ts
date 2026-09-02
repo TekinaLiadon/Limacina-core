@@ -23,6 +23,7 @@ export interface IAuthStore {
   approveUser(uuid: string): Promise<void>;
   userExists(username: string): Promise<boolean>;
   updateSkin(uuid: string, skin: string): Promise<void>;
+  updatePasswordHash(uuid: string, passwordHash: string): Promise<void>;
   saveRefresh(jti: string, entry: RefreshEntry): Promise<void>;
   findRefresh(jti: string): Promise<RefreshEntry | undefined>;
   deleteRefresh(jti: string): Promise<void>;
@@ -59,6 +60,15 @@ export class AuthMapStore implements IAuthStore {
     for (const user of this.users.values()) {
       if (user.uuid === uuid) {
         user.skin = skin;
+        return;
+      }
+    }
+  }
+
+  async updatePasswordHash(uuid: string, passwordHash: string): Promise<void> {
+    for (const user of this.users.values()) {
+      if (user.uuid === uuid) {
+        user.passwordHash = passwordHash;
         return;
       }
     }

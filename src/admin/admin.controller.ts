@@ -174,13 +174,16 @@ export class AdminController {
   @Patch("users/:username/restore")
   @ApiOperation({
     summary: "Восстановить удалённого пользователя",
-    description: "Переносит пользователя из таблицы удалённых обратно в таблицу пользователей",
+    description:
+      "Переносит пользователя из таблицы удалённых обратно в таблицу пользователей. " +
+      "Восстанавливать можно только пользователей с ролью ниже вызывающего.",
   })
   @ApiParam({ name: "username", example: "john" })
   @ApiResponse({ status: 200, description: "Пользователь восстановлен" })
+  @ApiResponse({ status: 403, description: "Роль восстанавливаемого не ниже роли вызывающего" })
   @ApiResponse({ status: 404, description: "Удалённый пользователь не найден" })
-  async restoreUser(@Param("username") username: string) {
-    await this.adminService.restoreUser(username);
+  async restoreUser(@CurrentUser() user: RequestUser, @Param("username") username: string) {
+    await this.adminService.restoreUser(username, user.role);
     return { success: true, username };
   }
 

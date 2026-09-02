@@ -68,6 +68,36 @@ export class AuthService {
     await this.authStore.deleteRefresh(payload.jti);
   }
 
+  async changePassword(
+    username: string,
+    oldPassword: string,
+    newPassword: string,
+  ): Promise<AuthResponseDto> {
+    const user = await this.authStore.findByUsername(username);
+    if (!user) {
+      throw new UnauthorizedException("Пользователь не найден");
+    }
+
+    if (user.banned) {
+      throw new UnauthorizedException("Ваш аккаунт заблокирован");
+    }
+
+    const validOldPassword = await Bun.password.verify(oldPassword, user.passwordHash);
+    if (!validOldPassword) {
+      throw new UnauthorizedException("Неверный текущий пароль");
+    }
+
+    await this.replacePassword(user.uuid, newPassword);
+    const tokens = await this.createTokens(user.uuid, user.username, user.role);
+    return { tokens, uuid: user.uuid, username: user.username, role: user.role };
+  }
+
+  private async replacePassword(uuid: string, newPassword: string): Promise<void> {
+    const passwordHash = await Bun.password.hash(newPassword);
+    await this.authStore.updatePasswordHash(uuid, passwordHash);
+    await this.authStore.deleteRefreshByUserId(uuid);
+  }
+
   private async validateUsernameAvailable(username: string): Promise<void> {
     if (await this.authStore.userExists(username)) {
       throw new ConflictException("Юзернейм уже занят");

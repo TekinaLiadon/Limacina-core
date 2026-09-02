@@ -6,6 +6,7 @@ import { LauncherUpdateService } from "./launcher-update.service";
 import { ConfigUpdateService } from "./config-update.service";
 import { AdminMapStore, AdminMapStoreToken } from "./admin.store";
 import { AdminPostgresStore } from "./admin_postgres.store";
+import { AuthStoreModule } from "../auth/service/auth_store.module";
 import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 
@@ -18,7 +19,7 @@ const useFactory = (db: string) => {
 };
 
 @Module({
-  imports: [AppConfigModule],
+  imports: [AppConfigModule, AuthStoreModule],
   controllers: [AdminController],
   providers: [
     AdminService,

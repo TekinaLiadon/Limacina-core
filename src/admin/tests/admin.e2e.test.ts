@@ -19,6 +19,7 @@ import { LogsService } from "../logs.service";
 import { LauncherUpdateService } from "../launcher-update.service";
 import { ConfigUpdateService } from "../config-update.service";
 import { AdminMapStore, AdminMapStoreToken } from "../admin.store";
+import { AuthMapStore, AuthMapStoreToken } from "../../auth/service/auth_store.service";
 import { INestApplication, ValidationPipe } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { Test, TestingModule } from "@nestjs/testing";
@@ -73,6 +74,10 @@ describe("Admin эндпоинты", (): void => {
         {
           provide: AdminMapStoreToken,
           useClass: AdminMapStore,
+        },
+        {
+          provide: AuthMapStoreToken,
+          useClass: AuthMapStore,
         },
       ],
     }).compile();

@@ -1,17 +1,18 @@
-import { Body, Controller, Post } from "@nestjs/common";
-import { ApiBody, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
+import { Body, Controller, Patch, Post } from "@nestjs/common";
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { Public } from "../../../common/public.decorator";
+import { CurrentUser, type RequestUser } from "../../../common/current-user.decorator";
 import { SuccessResponseDto } from "../../../common/dto/dto";
 import { AuthService } from "../../../auth/service/auth.service";
-import { AuthDto, AuthResponseDto, AuthRefreshDto } from "../../../auth/dto/dto";
+import { AuthDto, AuthResponseDto, AuthRefreshDto, ChangePasswordDto } from "../../../auth/dto/dto";
 
 @ApiTags("common_auth")
-@Public()
 @Controller("v1/common/auth")
 export class V1AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post("registration")
+  @Public()
   @ApiOperation({ summary: "Регистрация нового пользователя" })
   @ApiBody({ type: AuthDto })
   @ApiResponse({
@@ -25,6 +26,7 @@ export class V1AuthController {
   }
 
   @Post("login")
+  @Public()
   @ApiOperation({ summary: "Авторизация пользователя" })
   @ApiBody({ type: AuthDto })
   @ApiResponse({
@@ -41,6 +43,7 @@ export class V1AuthController {
   }
 
   @Post("refresh")
+  @Public()
   @ApiOperation({ summary: "Обновление пары токенов" })
   @ApiBody({ type: AuthRefreshDto })
   @ApiResponse({
@@ -57,6 +60,7 @@ export class V1AuthController {
   }
 
   @Post("invalidate")
+  @Public()
   @ApiOperation({ summary: "Инвалидация refresh токена" })
   @ApiBody({ type: AuthRefreshDto })
   @ApiResponse({
@@ -68,5 +72,28 @@ export class V1AuthController {
   async postInvalidate(@Body() dto: AuthRefreshDto): Promise<SuccessResponseDto> {
     await this.authService.invalidate(dto.refresh_token);
     return { success: true };
+  }
+
+  @Patch("password")
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Смена собственного пароля",
+    description:
+      "Меняет пароль текущего пользователя по старому паролю. " +
+      "Все refresh токены пользователя инвалидируются, в ответе выдаётся свежая пара токенов.",
+  })
+  @ApiBody({ type: ChangePasswordDto })
+  @ApiResponse({
+    status: 200,
+    description: "Пароль изменён, возвращает новую пару токенов",
+    type: AuthResponseDto,
+  })
+  @ApiResponse({ status: 401, description: "Неверный текущий пароль или нет токена" })
+  @ApiResponse({ status: 400, description: "Новый пароль короче 6 символов" })
+  async patchPassword(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: ChangePasswordDto,
+  ): Promise<AuthResponseDto> {
+    return this.authService.changePassword(user.username, dto.old_password, dto.new_password);
   }
 }

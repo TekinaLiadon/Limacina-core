@@ -438,7 +438,108 @@ describe("V1 panel эндпоинты", (): void => {
     });
   });
 
+  describe("PATCH /v1/panel/users/password", () => {
+    beforeAll(async () => {
+      const authStore = app.get(AuthMapStoreToken, { strict: false });
+      await authStore.saveUser({
+        uuid: "user-uuid",
+        username: "user",
+        passwordHash: await Bun.password.hash("useroldpass"),
+        skin: null,
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+    });
+
+    it("владелец задаёт новый пароль без знания старого", async () => {
+      const authStore = app.get(AuthMapStoreToken, { strict: false });
+      await authStore.saveRefresh("password-test-jti", {
+        userId: "user-uuid",
+        username: "user",
+      });
+
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/password")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ username: "user", password: "ownernewpass" })
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+
+      const stored = await authStore.findByUsername("user");
+      expect(await Bun.password.verify("ownernewpass", stored!.passwordHash)).toBe(true);
+      expect(await Bun.password.verify("useroldpass", stored!.passwordHash)).toBe(false);
+      expect(await authStore.findRefresh("password-test-jti")).toBeUndefined();
+    });
+
+    it("возвращает 403 для админа", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/password")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "user", password: "adminsetpass" })
+        .expect(403);
+    });
+
+    it("возвращает 403 для не-админа", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/password")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ username: "user", password: "usersetpass" })
+        .expect(403);
+    });
+
+    it("возвращает 401 без токена", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/password")
+        .send({ username: "user", password: "anypass123" })
+        .expect(401);
+    });
+
+    it("возвращает 404 для несуществующего пользователя", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/password")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ username: "nonexistent", password: "anypass123" })
+        .expect(404);
+    });
+
+    it("возвращает 403 при попытке изменить пароль владельца", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/password")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ username: "owner", password: "anypass123" })
+        .expect(403);
+    });
+
+    it("возвращает 400 при коротком пароле", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/password")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ username: "user", password: "123" })
+        .expect(400);
+    });
+  });
+
   describe("DELETE /v1/panel/users/:username", () => {
+    beforeAll(async () => {
+      const store = app.get(AdminMapStoreToken, { strict: false });
+      await store.saveUser({
+        uuid: "secondadmin-uuid",
+        username: "secondadmin",
+        role: "admin",
+        approved: true,
+        banned: false,
+      });
+      await store.saveUser({
+        uuid: "modtarget-uuid",
+        username: "modtarget",
+        role: "moderator",
+        approved: true,
+        banned: false,
+      });
+    });
+
     it("удаляет пользователя", async () => {
       const res = await supertest(app.getHttpServer())
         .delete("/v1/panel/users/roleuser")
@@ -454,6 +555,30 @@ describe("V1 panel эндпоинты", (): void => {
         .delete("/v1/panel/users/nonexistent")
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(404);
+    });
+
+    it("возвращает 403 при удалении другого админа админом", async () => {
+      await supertest(app.getHttpServer())
+        .delete("/v1/panel/users/secondadmin")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(403);
+    });
+
+    it("возвращает 403 при удалении владельца админом", async () => {
+      await supertest(app.getHttpServer())
+        .delete("/v1/panel/users/owner")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(403);
+    });
+
+    it("админ может удалить пользователя с ролью ниже", async () => {
+      await supertest(app.getHttpServer())
+        .delete("/v1/panel/users/modtarget")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      const store = app.get(AdminMapStoreToken, { strict: false });
+      await store.restoreUser("modtarget");
     });
   });
 
@@ -584,6 +709,25 @@ describe("V1 panel эндпоинты", (): void => {
   });
 
   describe("PATCH /v1/panel/users/:username/restore", () => {
+    beforeAll(async () => {
+      const store = app.get(AdminMapStoreToken, { strict: false });
+      const targets: Array<[string, string]> = [
+        ["deletedadmin", "admin"],
+        ["deletedowner", "owner"],
+        ["deletedmod", "moderator"],
+      ];
+      for (const [username, role] of targets) {
+        await store.saveUser({
+          uuid: `${username}-uuid`,
+          username,
+          role,
+          approved: true,
+          banned: false,
+        });
+        await store.deleteUser(username);
+      }
+    });
+
     it("восстанавливает удалённого пользователя", async () => {
       const res = await supertest(app.getHttpServer())
         .patch("/v1/panel/users/roleuser/restore")
@@ -592,6 +736,41 @@ describe("V1 panel эндпоинты", (): void => {
 
       expect(res.body.success).toBe(true);
       expect(res.body.username).toBe("roleuser");
+    });
+
+    it("возвращает 403 при восстановлении удалённого админа админом", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/deletedadmin/restore")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(403);
+    });
+
+    it("возвращает 403 при восстановлении удалённого владельца админом", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/deletedowner/restore")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(403);
+    });
+
+    it("админ может восстановить удалённого модератора", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/deletedmod/restore")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+    });
+
+    it("владелец может восстановить удалённого админа", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/deletedadmin/restore")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+    });
+
+    it("возвращает 404 для несуществующего удалённого пользователя", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/nonexistent/restore")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(404);
     });
   });
 

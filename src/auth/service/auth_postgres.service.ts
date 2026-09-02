@@ -93,6 +93,16 @@ export class AuthPostgresStore implements IAuthStore {
     }
   }
 
+  async updatePasswordHash(uuid: string, passwordHash: string): Promise<void> {
+    const query = updateQuery()
+      .from(TABLES.users)
+      .set("password_hash", passwordHash)
+      .where("uuid = $1", uuid)
+      .build();
+
+    await execute(query.sql, query.values);
+  }
+
   private async findSkinByUuid(uuid: string): Promise<boolean> {
     const query = selectQuery("1").from(TABLES.user_textures).where("uuid = $1", uuid).build();
     const { rows } = await execute<UserRow>(query.sql, query.values);
