@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
 } from "@nestjs/common";
 import type { IUserContentStore, ContentType } from "./user-content.store";
 import { UserContentMapStoreToken } from "./user-content.store";
@@ -11,6 +12,9 @@ import type { UserContentUploadResponseDto } from "./dto/dto";
 import { unlinkSync } from "node:fs";
 import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
+
+const MAX_SKIN_BYTES = 512 * 1024;
+const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 @Injectable()
 export class UserContentService {
@@ -40,6 +44,10 @@ export class UserContentService {
     extension: string,
     directory: string,
   ): Promise<UserContentUploadResponseDto> {
+    if (type === "skin") {
+      this.validateSkinFile(file);
+    }
+
     const count = await this.store.countByUserUuid(userUuid, type);
     if (count >= maxPerUser) {
       this.logger.warn({ userUuid, type, count, maxPerUser }, "Upload limit reached");
@@ -62,6 +70,21 @@ export class UserContentService {
     return { id: item.id, url };
   }
 
+  private validateSkinFile(file: Buffer): void {
+    if (file.length > MAX_SKIN_BYTES) {
+      throw new BadRequestException(
+        `Файл скина слишком большой: ${file.length} байт (максимум ${MAX_SKIN_BYTES})`,
+      );
+    }
+
+    const hasPngSignature =
+      file.length >= PNG_SIGNATURE.length &&
+      PNG_SIGNATURE.every((byte, index) => file[index] === byte);
+    if (!hasPngSignature) {
+      throw new BadRequestException("Невалидный файл скина: отсутствует PNG-сигнатура");
+    }
+  }
+
   async listSkins(userUuid: string): Promise<Array<{ id: number | null; url: string }>> {
     const items = await this.store.findByUserUuid(userUuid, "skin");
     if (items.length === 0) return [{ id: null, url: this.defaultSkinUrl }];
@@ -77,7 +100,7 @@ export class UserContentService {
   async delete(ownerUuid: string, id: number, type: ContentType): Promise<void> {
     const item = await this.store.findById(id, type);
     if (!item) {
-      throw new BadRequestException(`${type === "skin" ? "Скин" : "Модель"} не найдена`);
+      throw new NotFoundException(`${type === "skin" ? "Скин не найден" : "Модель не найдена"}`);
     }
 
     if (item.userUuid !== ownerUuid) {

@@ -1,4 +1,4 @@
-import { Inject, Injectable, UnauthorizedException } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { v4 } from "uuid";
 import type { IAuthStore } from "./auth_store.service";
@@ -70,7 +70,7 @@ export class AuthService {
 
   private async validateUsernameAvailable(username: string): Promise<void> {
     if (await this.authStore.userExists(username)) {
-      throw new UnauthorizedException("Юзернейм уже занят");
+      throw new ConflictException("Юзернейм уже занят");
     }
   }
 

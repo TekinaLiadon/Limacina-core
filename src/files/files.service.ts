@@ -137,7 +137,7 @@ export class FilesService implements OnModuleDestroy {
     return Object.fromEntries(entries);
   }
 
-  async postFile(fileInfo: FileDto, reply: FastifyReply): Promise<void> {
+  async sendFile(fileInfo: FileDto, reply: FastifyReply): Promise<void> {
     const filePath = this.resolveLauncherPath(fileInfo.url);
     if (!existsSync(filePath)) {
       throw new NotFoundException(`Файл не найден: ${fileInfo.url}`);

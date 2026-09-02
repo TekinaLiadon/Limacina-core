@@ -1,18 +1,15 @@
-type BunSqlFn = {
-  (
-    strings: TemplateStringsArray,
-    ...values: unknown[]
-  ): Promise<{
-    rows: Record<string, unknown>[];
-    count: number;
-  }>;
-  unsafe(
-    sql: string,
-    values: unknown[],
-  ): Promise<{
-    rows: Record<string, unknown>[];
-    count: number;
-  }>;
+interface SqlResult {
+  rows: Record<string, unknown>[];
+  count: number;
+}
+
+type BunSqlClient = {
+  (strings: TemplateStringsArray, ...values: unknown[]): Promise<SqlResult>;
+  unsafe(sql: string, values: unknown[]): Promise<SqlResult>;
+};
+
+type BunSqlFn = BunSqlClient & {
+  begin(callback: (tx: BunSqlClient) => Promise<unknown>): Promise<unknown>;
 };
 
 const bunSql: BunSqlFn = ((await import("bun")) as unknown as { sql: BunSqlFn }).sql;
@@ -35,7 +32,7 @@ export interface QueryResult<T> {
   count: number;
 }
 
-interface BuiltQuery {
+export interface BuiltQuery {
   sql: string;
   values: SqlValue[];
 }
@@ -58,16 +55,15 @@ interface InsertAfterValues {
   build: () => BuiltQuery;
 }
 
-interface WhereAndNext {
-  and: (condition: string, ...args: SqlValue[]) => WithLimit;
-  limit: (n: number) => WithBuild;
-  build: () => BuiltQuery;
-}
+export type OrderDirection = "asc" | "desc";
 
-interface SelectFrom {
-  join: (type: string, table: TableName, alias: string, on: string) => SelectFrom;
-  where: (condition: string, ...args: SqlValue[]) => WhereAndNext;
-  limit: (n: number) => WithBuild;
+export interface SelectBuilder {
+  join: (type: string, table: TableName, alias: string, on: string) => SelectBuilder;
+  where: (condition: string, ...args: SqlValue[]) => SelectBuilder;
+  and: (condition: string, ...args: SqlValue[]) => SelectBuilder;
+  orderBy: (column: string, direction?: OrderDirection) => SelectBuilder;
+  limit: (n: number) => SelectBuilder;
+  offset: (n: number) => SelectBuilder;
   build: () => BuiltQuery;
 }
 
@@ -154,56 +150,63 @@ function buildInsert(
 }
 
 export function selectQuery(...columns: string[]): {
-  from: (table: TableName, alias?: string) => SelectFrom;
+  from: (table: TableName, alias?: string) => SelectBuilder;
 } {
   const cols = columns.length > 0 ? columns.join(", ") : "*";
 
   return {
     from: (table: TableName, alias?: string) => {
       const state = createQueryBuilder();
+      const orderParts: string[] = [];
       const tableRef = alias ? `${table} ${alias}` : table;
       let fromClause = `SELECT ${cols} FROM ${tableRef}`;
       let limitValue: number | undefined;
+      let offsetValue: number | undefined;
 
       const buildSelect = (): BuiltQuery => {
         const whereClause = buildWhereClause(state);
+        const orderClause = orderParts.length > 0 ? ` ORDER BY ${orderParts.join(", ")}` : "";
         const limitClause = limitValue !== undefined ? ` LIMIT ${limitValue}` : "";
+        const offsetClause = offsetValue !== undefined ? ` OFFSET ${offsetValue}` : "";
         return {
-          sql: `${fromClause}${whereClause}${limitClause}`,
+          sql: `${fromClause}${whereClause}${orderClause}${limitClause}${offsetClause}`,
           values: state.values,
         };
       };
 
-      const buildWhereChain = () => ({
-        and: (condition: string, ...args: SqlValue[]) => {
-          addAnd(state, condition, ...args);
-          return {
-            limit: limitMethod,
-            build: buildSelect,
-          };
-        },
-        limit: limitMethod,
-        build: buildSelect,
-      });
-
-      const limitMethod = createLimitMethod((n) => {
-        limitValue = n;
-      }, buildSelect);
-
-      const selectFromMethods: SelectFrom = {
+      const builder: SelectBuilder = {
         join: (type: string, joinTable: TableName, joinAlias: string, on: string) => {
           fromClause += ` ${type} ${joinTable} ${joinAlias} ON ${on}`;
-          return selectFromMethods;
+          return builder;
         },
         where: (condition: string, ...args: SqlValue[]) => {
-          addWhere(state, condition, ...args);
-          return buildWhereChain();
+          if (state.parts.length === 0) {
+            addWhere(state, condition, ...args);
+          } else {
+            addAnd(state, condition, ...args);
+          }
+          return builder;
         },
-        limit: limitMethod,
+        and: (condition: string, ...args: SqlValue[]) => {
+          addAnd(state, condition, ...args);
+          return builder;
+        },
+        orderBy: (column: string, direction: OrderDirection = "asc") => {
+          orderParts.push(`${column} ${direction.toUpperCase()}`);
+          return builder;
+        },
+        limit: (n: number) => {
+          limitValue = n;
+          return builder;
+        },
+        offset: (n: number) => {
+          offsetValue = n;
+          return builder;
+        },
         build: buildSelect,
       };
 
-      return selectFromMethods;
+      return builder;
     },
   };
 }
@@ -317,4 +320,12 @@ export async function execute<T extends Record<string, unknown>>(
   const rows = (Array.isArray(result) ? result : (result?.rows ?? [])) as T[];
   const count = Array.isArray(result) ? result.length : (result?.count ?? 0);
   return { rows, count };
+}
+
+export async function executeInTransaction(statements: BuiltQuery[]): Promise<void> {
+  await bunSql.begin(async (tx) => {
+    for (const statement of statements) {
+      await tx.unsafe(statement.sql, statement.values as unknown[]);
+    }
+  });
 }

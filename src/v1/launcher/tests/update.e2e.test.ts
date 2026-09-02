@@ -21,18 +21,25 @@ const VERSION_FILE = "public/version.json";
 const VERSION_BACKUP = "public/version.json.bak";
 const PLATFORM_DIR = "public/linux/x86_64";
 const OLD_DIR = join(PLATFORM_DIR, "old");
+const MACOS_PLATFORM_DIR = "public/macos/arm64";
+const MACOS_PARENT_DIR = "public/macos";
 
 const CURRENT_VERSION = "9.8.7";
 const ARCHIVED_VERSION = "9.8.6";
 const CURRENT_ZIP = `Limacina-${CURRENT_VERSION}-linux-x86_64.zip`;
 const ARCHIVED_ZIP = `Limacina-${ARCHIVED_VERSION}-linux-x86_64.zip`;
+const MACOS_ZIP = `Limacina-${CURRENT_VERSION}-macos-arm64.zip`;
 
 const CURRENT_ZIP_CONTENT = "latest-zip-content";
 const ARCHIVED_ZIP_CONTENT = "archived-zip-content";
+const MACOS_ZIP_CONTENT = "macos-zip-content";
 
 describe("V1 launcher/update эндпоинты — версии и скачивание", (): void => {
   let app: INestApplication;
   const backedUpFiles: Array<{ path: string; backupPath: string }> = [];
+  let oldDirCreatedByTest = false;
+  let macosArm64Existed = false;
+  let macosParentExisted = false;
 
   beforeAll(async () => {
     if (existsSync(VERSION_FILE)) {
@@ -50,6 +57,7 @@ describe("V1 launcher/update эндпоинты — версии и скачив
       }
     } else {
       mkdirSync(OLD_DIR, { recursive: true });
+      oldDirCreatedByTest = true;
     }
     for (const file of readdirSync(PLATFORM_DIR)) {
       if (!file.endsWith(".zip")) continue;
@@ -61,6 +69,11 @@ describe("V1 launcher/update эндпоинты — версии и скачив
 
     writeFileSync(join(PLATFORM_DIR, CURRENT_ZIP), CURRENT_ZIP_CONTENT);
     writeFileSync(join(OLD_DIR, ARCHIVED_ZIP), ARCHIVED_ZIP_CONTENT);
+
+    macosArm64Existed = existsSync(MACOS_PLATFORM_DIR);
+    macosParentExisted = existsSync(MACOS_PARENT_DIR);
+    mkdirSync(MACOS_PLATFORM_DIR, { recursive: true });
+    writeFileSync(join(MACOS_PLATFORM_DIR, MACOS_ZIP), MACOS_ZIP_CONTENT);
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       controllers: [V1LauncherUpdateController, LauncherController],
@@ -77,13 +90,20 @@ describe("V1 launcher/update эндпоинты — версии и скачив
 
     unlinkSync(join(PLATFORM_DIR, CURRENT_ZIP));
     unlinkSync(join(OLD_DIR, ARCHIVED_ZIP));
+    unlinkSync(join(MACOS_PLATFORM_DIR, MACOS_ZIP));
     for (const { path, backupPath } of backedUpFiles) {
       if (existsSync(backupPath)) {
         renameSync(backupPath, path);
       }
     }
-    if (readdirSync(OLD_DIR).length === 0) {
+    if (oldDirCreatedByTest) {
       rmSync(OLD_DIR, { recursive: true });
+    }
+    if (!macosArm64Existed) {
+      rmSync(MACOS_PLATFORM_DIR, { recursive: true });
+    }
+    if (!macosParentExisted) {
+      rmSync(MACOS_PARENT_DIR, { recursive: true });
     }
     if (existsSync(VERSION_FILE)) {
       unlinkSync(VERSION_FILE);
@@ -175,6 +195,39 @@ describe("V1 launcher/update эндпоинты — версии и скачив
     it("возвращает 400 для неподдерживаемой платформы", async () => {
       await supertest(app.getHttpServer())
         .get("/v1/launcher/update/win/arm/download?version=1.0.0")
+        .expect(400);
+    });
+
+    it("возвращает 400 для неизвестной os", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/launcher/update/macos/x86_64/download")
+        .expect(400);
+    });
+
+    it("возвращает 400 для неизвестного arch", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/launcher/update/linux/riscv/download")
+        .expect(400);
+    });
+
+    it("возвращает 400 для неподдерживаемой связки os/arch", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/launcher/update/windows/aarch64/download")
+        .expect(400);
+    });
+
+    it("отдаёт zip для macos/arm64", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/launcher/update/macos/arm64/download")
+        .expect(200)
+        .expect("Content-Type", "application/zip");
+
+      expect(res.text).toBe(MACOS_ZIP_CONTENT);
+    });
+
+    it("возвращает 400 для macos/x86_64", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/launcher/update/macos/x86_64/download")
         .expect(400);
     });
   });

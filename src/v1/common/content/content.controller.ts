@@ -1,7 +1,17 @@
-import { BadRequestException, Controller, Delete, Get, Param, Post, Req } from "@nestjs/common";
+import {
+  BadRequestException,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Req,
+} from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { UserContentService } from "../../../user-content/user-content.service";
 import { SuccessResponseDto } from "../../../common/dto/dto";
+import { CurrentUser, type RequestUser } from "../../../common/current-user.decorator";
 import { UserContentItemDto, UserContentUploadResponseDto } from "../../../user-content/dto/dto";
 import type { FastifyRequest } from "fastify";
 
@@ -14,11 +24,16 @@ export class V1ContentController {
   @Post("skins")
   @ApiOperation({ summary: "Загрузить скин (.png)" })
   @ApiResponse({ status: 201, type: UserContentUploadResponseDto })
-  @ApiResponse({ status: 400, description: "Лимит загрузки скинов" })
-  async uploadSkin(@Req() request: FastifyRequest): Promise<UserContentUploadResponseDto> {
-    const userUuid = (request as FastifyRequest & { user: { uuid: string } }).user.uuid;
+  @ApiResponse({
+    status: 400,
+    description: "Лимит загрузки скинов, невалидный PNG или превышен размер (512 КБ)",
+  })
+  async uploadSkin(
+    @CurrentUser() user: RequestUser,
+    @Req() request: FastifyRequest,
+  ): Promise<UserContentUploadResponseDto> {
     const buffer = await this.extractFile(request);
-    return this.userContentService.uploadSkin(userUuid, buffer);
+    return this.userContentService.uploadSkin(user.uuid, buffer);
   }
 
   @Get("skins/:uuid")
@@ -34,13 +49,12 @@ export class V1ContentController {
   @ApiParam({ name: "id", description: "ID скина" })
   @ApiResponse({ status: 200, description: "Скин удалён", type: SuccessResponseDto })
   @ApiResponse({ status: 403, description: "Нет прав на удаление" })
-  @ApiResponse({ status: 400, description: "Скин не найден" })
+  @ApiResponse({ status: 404, description: "Скин не найден" })
   async deleteSkin(
-    @Req() request: FastifyRequest,
-    @Param("id") id: string,
+    @CurrentUser() user: RequestUser,
+    @Param("id", ParseIntPipe) id: number,
   ): Promise<SuccessResponseDto> {
-    const userUuid = (request as FastifyRequest & { user: { uuid: string } }).user.uuid;
-    await this.userContentService.delete(userUuid, Number(id), "skin");
+    await this.userContentService.delete(user.uuid, id, "skin");
     return { success: true };
   }
 
@@ -48,10 +62,12 @@ export class V1ContentController {
   @ApiOperation({ summary: "Загрузить модель (.txt)" })
   @ApiResponse({ status: 201, type: UserContentUploadResponseDto })
   @ApiResponse({ status: 400, description: "Лимит загрузки моделей" })
-  async uploadModel(@Req() request: FastifyRequest): Promise<UserContentUploadResponseDto> {
-    const userUuid = (request as FastifyRequest & { user: { uuid: string } }).user.uuid;
+  async uploadModel(
+    @CurrentUser() user: RequestUser,
+    @Req() request: FastifyRequest,
+  ): Promise<UserContentUploadResponseDto> {
     const buffer = await this.extractFile(request);
-    return this.userContentService.uploadModel(userUuid, buffer);
+    return this.userContentService.uploadModel(user.uuid, buffer);
   }
 
   @Get("models/:uuid")
@@ -67,13 +83,12 @@ export class V1ContentController {
   @ApiParam({ name: "id", description: "ID модели" })
   @ApiResponse({ status: 200, description: "Модель удалена", type: SuccessResponseDto })
   @ApiResponse({ status: 403, description: "Нет прав на удаление" })
-  @ApiResponse({ status: 400, description: "Модель не найдена" })
+  @ApiResponse({ status: 404, description: "Модель не найдена" })
   async deleteModel(
-    @Req() request: FastifyRequest,
-    @Param("id") id: string,
+    @CurrentUser() user: RequestUser,
+    @Param("id", ParseIntPipe) id: number,
   ): Promise<SuccessResponseDto> {
-    const userUuid = (request as FastifyRequest & { user: { uuid: string } }).user.uuid;
-    await this.userContentService.delete(userUuid, Number(id), "model");
+    await this.userContentService.delete(user.uuid, id, "model");
     return { success: true };
   }
 

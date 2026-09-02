@@ -4,15 +4,10 @@ import {
   type IAdminStore,
   type AdminUser,
   type DeletedUser,
+  type UsersFilter,
+  type UsersPage,
+  type DeletedUsersPage,
 } from "./admin.store";
-
-export interface UserListItem {
-  uuid: string;
-  username: string;
-  role: string;
-  approved: boolean;
-  banned: boolean;
-}
 
 const ROLE_HIERARCHY = ["user", "moderator", "admin", "owner"] as const;
 
@@ -24,8 +19,16 @@ export class AdminService {
     return this.adminStore.findUnapprovedUsers(limit);
   }
 
-  async findAllUsers(limit: number = 10): Promise<UserListItem[]> {
+  async findAllUsers(limit: number = 10): Promise<AdminUser[]> {
     return this.adminStore.findAllUsers(limit);
+  }
+
+  async searchUsers(filter: UsersFilter): Promise<UsersPage> {
+    return this.adminStore.searchUsers(filter);
+  }
+
+  async searchDeletedUsers(filter: UsersFilter): Promise<DeletedUsersPage> {
+    return this.adminStore.searchDeletedUsers(filter);
   }
 
   async setApproved(username: string, approved: boolean, callerRole: string): Promise<void> {

@@ -26,6 +26,13 @@ import { Jwt_authGuard } from "../../../../common/jwt_auth.guard";
 import { RolesGuard } from "../../../../common/roles.guard";
 
 const TEST_UUID = "v1user-uuid-0001";
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+const pngBuffer = (extraBytes = 16): Buffer => {
+  const buffer = Buffer.alloc(PNG_SIGNATURE.length + extraBytes);
+  buffer.set(PNG_SIGNATURE);
+  return buffer;
+};
 
 @Injectable()
 class TestJwtStrategy extends PassportStrategy(Strategy) {
@@ -105,7 +112,7 @@ describe("V1 common/content эндпоинты", (): void => {
       const res = await supertest(app.getHttpServer())
         .post("/v1/common/content/skins")
         .set("Authorization", `Bearer ${userToken}`)
-        .attach("file", Buffer.from("fake-png-v1"), "skin.png")
+        .attach("file", pngBuffer(), "skin.png")
         .expect(201);
 
       expect(res.body).toHaveProperty("id");
@@ -119,6 +126,22 @@ describe("V1 common/content эндпоинты", (): void => {
         .post("/v1/common/content/skins")
         .set("Authorization", `Bearer ${userToken}`)
         .field("dummy", "no-file")
+        .expect(400);
+    });
+
+    it("возвращает 400 если файл не является PNG", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/content/skins")
+        .set("Authorization", `Bearer ${userToken}`)
+        .attach("file", Buffer.from("not-a-png"), "skin.png")
+        .expect(400);
+    });
+
+    it("возвращает 400 при превышении лимита размера скина", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/content/skins")
+        .set("Authorization", `Bearer ${userToken}`)
+        .attach("file", pngBuffer(512 * 1024), "skin.png")
         .expect(400);
     });
   });
@@ -156,9 +179,16 @@ describe("V1 common/content эндпоинты", (): void => {
       expect(res.body.success).toBe(true);
     });
 
-    it("возвращает 400 если скин не найден", async () => {
+    it("возвращает 404 если скин не найден", async () => {
       await supertest(app.getHttpServer())
         .delete("/v1/common/content/skins/999999")
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(404);
+    });
+
+    it("возвращает 400 при нечисловом id", async () => {
+      await supertest(app.getHttpServer())
+        .delete("/v1/common/content/skins/not-a-number")
         .set("Authorization", `Bearer ${userToken}`)
         .expect(400);
     });

@@ -1,6 +1,23 @@
 import { Injectable } from "@nestjs/common";
-import { selectQuery, insertQuery, updateQuery, deleteQuery, execute, TABLES } from "../utils/sql";
-import type { IAdminStore, AdminUser, DeletedUser } from "./admin.store";
+import {
+  selectQuery,
+  updateQuery,
+  insertQuery,
+  deleteQuery,
+  execute,
+  executeInTransaction,
+  TABLES,
+  type BuiltQuery,
+  type SelectBuilder,
+} from "../utils/sql";
+import type {
+  IAdminStore,
+  AdminUser,
+  DeletedUser,
+  UsersFilter,
+  UsersPage,
+  DeletedUsersPage,
+} from "./admin.store";
 import type { UserRow } from "./dto/dto";
 
 interface DeletedUserRow extends Record<string, unknown> {
@@ -12,6 +29,54 @@ interface DeletedUserRow extends Record<string, unknown> {
   approved: boolean;
   banned: boolean;
   deleted_at: Date;
+}
+
+interface CountRow extends Record<string, unknown> {
+  total: string | number;
+}
+
+function toAdminUser(row: UserRow): AdminUser {
+  return {
+    uuid: row.uuid,
+    username: row.username,
+    role: row.role,
+    approved: row.approved,
+    banned: row.banned,
+  };
+}
+
+function toDeletedUser(row: DeletedUserRow): DeletedUser {
+  return {
+    uuid: row.uuid,
+    username: row.username,
+    role: row.role,
+    approved: row.approved,
+    banned: row.banned,
+    deletedAt: new Date(row.deleted_at),
+  };
+}
+
+function escapeLikePattern(input: string): string {
+  return input.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+function withUsersFilter(query: SelectBuilder, filter: UsersFilter): SelectBuilder {
+  let chained = query;
+  let placeholders = 0;
+
+  const username = filter.username;
+  if (username !== undefined) {
+    placeholders += 1;
+    chained = chained.where(`username ILIKE $${placeholders}`, `${escapeLikePattern(username)}%`);
+  }
+
+  const approved = filter.approved;
+  if (approved !== undefined) {
+    placeholders += 1;
+    chained = chained.where(`approved = $${placeholders}`, approved);
+  }
+
+  return chained;
 }
 
 @Injectable()
@@ -26,13 +91,7 @@ export class AdminPostgresStore implements IAdminStore {
     const row = rows[0];
     if (!row) return undefined;
 
-    return {
-      uuid: row.uuid,
-      username: row.username,
-      role: row.role,
-      approved: row.approved,
-      banned: row.banned,
-    };
+    return toAdminUser(row);
   }
 
   async saveUser(user: AdminUser): Promise<void> {
@@ -64,13 +123,7 @@ export class AdminPostgresStore implements IAdminStore {
       .build();
 
     const { rows } = await execute<UserRow>(query.sql, query.values);
-    return rows.map((row) => ({
-      uuid: row.uuid,
-      username: row.username,
-      role: row.role,
-      approved: row.approved,
-      banned: row.banned,
-    }));
+    return rows.map(toAdminUser);
   }
 
   async findAllUsers(limit: number): Promise<AdminUser[]> {
@@ -80,13 +133,59 @@ export class AdminPostgresStore implements IAdminStore {
       .build();
 
     const { rows } = await execute<UserRow>(query.sql, query.values);
-    return rows.map((row) => ({
-      uuid: row.uuid,
-      username: row.username,
-      role: row.role,
-      approved: row.approved,
-      banned: row.banned,
-    }));
+    return rows.map(toAdminUser);
+  }
+
+  async searchUsers(filter: UsersFilter): Promise<UsersPage> {
+    const itemsQuery = withUsersFilter(
+      selectQuery("uuid", "username", "role", "approved", "banned").from(TABLES.users),
+      filter,
+    )
+      .orderBy("username")
+      .limit(filter.limit)
+      .offset(filter.offset)
+      .build();
+    const { rows } = await execute<UserRow>(itemsQuery.sql, itemsQuery.values);
+
+    const countQuery = withUsersFilter(
+      selectQuery("count(*) AS total").from(TABLES.users),
+      filter,
+    ).build();
+    const { rows: countRows } = await execute<CountRow>(countQuery.sql, countQuery.values);
+    const countRow = countRows[0];
+    const total = countRow ? Number(countRow.total) : 0;
+
+    return {
+      items: rows.map(toAdminUser),
+      total,
+    };
+  }
+
+  async searchDeletedUsers(filter: UsersFilter): Promise<DeletedUsersPage> {
+    const itemsQuery = withUsersFilter(
+      selectQuery("uuid", "username", "role", "approved", "banned", "deleted_at").from(
+        TABLES.deleted_users,
+      ),
+      filter,
+    )
+      .orderBy("username")
+      .limit(filter.limit)
+      .offset(filter.offset)
+      .build();
+    const { rows } = await execute<DeletedUserRow>(itemsQuery.sql, itemsQuery.values);
+
+    const countQuery = withUsersFilter(
+      selectQuery("count(*) AS total").from(TABLES.deleted_users),
+      filter,
+    ).build();
+    const { rows: countRows } = await execute<CountRow>(countQuery.sql, countQuery.values);
+    const countRow = countRows[0];
+    const total = countRow ? Number(countRow.total) : 0;
+
+    return {
+      items: rows.map(toDeletedUser),
+      total,
+    };
   }
 
   async setApproved(username: string, approved: boolean): Promise<void> {
@@ -130,7 +229,6 @@ export class AdminPostgresStore implements IAdminStore {
       .from(TABLES.deleted_users)
       .where("username = $1", username)
       .build();
-    await execute(removeExisting.sql, removeExisting.values);
 
     const insert = insertQuery(
       "uuid",
@@ -153,10 +251,9 @@ export class AdminPostgresStore implements IAdminStore {
       )
       .build();
 
-    await execute(insert.sql, insert.values);
-
     const del = deleteQuery().from(TABLES.users).where("username = $1", username).build();
-    await execute(del.sql, del.values);
+
+    await executeInTransaction([removeExisting, insert, del]);
 
     this.cleanupOldDeleted();
 
@@ -170,14 +267,7 @@ export class AdminPostgresStore implements IAdminStore {
       .build();
 
     const { rows } = await execute<DeletedUserRow>(query.sql, query.values);
-    return rows.map((row) => ({
-      uuid: row.uuid,
-      username: row.username,
-      role: row.role,
-      approved: row.approved,
-      banned: row.banned,
-      deletedAt: new Date(row.deleted_at),
-    }));
+    return rows.map(toDeletedUser);
   }
 
   async findDeletedByUsername(username: string): Promise<DeletedUser | undefined> {
@@ -190,14 +280,7 @@ export class AdminPostgresStore implements IAdminStore {
     const row = rows[0];
     if (!row) return undefined;
 
-    return {
-      uuid: row.uuid,
-      username: row.username,
-      role: row.role,
-      approved: row.approved,
-      banned: row.banned,
-      deletedAt: new Date(row.deleted_at),
-    };
+    return toDeletedUser(row);
   }
 
   async restoreUser(username: string): Promise<void> {
@@ -207,38 +290,36 @@ export class AdminPostgresStore implements IAdminStore {
     const fullDeleted = await this.findFullDeletedUser(username);
     if (!fullDeleted) return;
 
-    const userInsert = insertQuery(
-      "uuid",
-      "username",
-      "password_hash",
-      "role",
-      "approved",
-      "banned",
-    )
-      .from(TABLES.users)
-      .values(
-        fullDeleted.uuid,
-        fullDeleted.username,
-        fullDeleted.password_hash,
-        fullDeleted.role,
-        fullDeleted.approved,
-        fullDeleted.banned,
-      )
-      .build();
+    const statements: BuiltQuery[] = [];
 
-    await execute(userInsert.sql, userInsert.values);
+    statements.push(
+      insertQuery("uuid", "username", "password_hash", "role", "approved", "banned")
+        .from(TABLES.users)
+        .values(
+          fullDeleted.uuid,
+          fullDeleted.username,
+          fullDeleted.password_hash,
+          fullDeleted.role,
+          fullDeleted.approved,
+          fullDeleted.banned,
+        )
+        .build(),
+    );
 
     if (fullDeleted.skin_url) {
-      const textureInsert = insertQuery("uuid", "skin_url")
-        .from(TABLES.user_textures)
-        .values(fullDeleted.uuid, fullDeleted.skin_url)
-        .build();
-
-      await execute(textureInsert.sql, textureInsert.values);
+      statements.push(
+        insertQuery("uuid", "skin_url")
+          .from(TABLES.user_textures)
+          .values(fullDeleted.uuid, fullDeleted.skin_url)
+          .build(),
+      );
     }
 
-    const del = deleteQuery().from(TABLES.deleted_users).where("username = $1", username).build();
-    await execute(del.sql, del.values);
+    statements.push(
+      deleteQuery().from(TABLES.deleted_users).where("username = $1", username).build(),
+    );
+
+    await executeInTransaction(statements);
   }
 
   async hasOwner(): Promise<boolean> {

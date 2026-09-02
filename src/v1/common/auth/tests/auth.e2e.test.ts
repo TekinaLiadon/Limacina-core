@@ -4,7 +4,7 @@ process.env["NODE_ENV"] = "test";
 process.env["DB_DRIVER"] = "map";
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { INestApplication } from "@nestjs/common";
+import { INestApplication, ValidationPipe } from "@nestjs/common";
 import type { FastifyInstance } from "fastify";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { JwtModule } from "@nestjs/jwt";
@@ -42,6 +42,7 @@ describe("V1 common/auth эндпоинты", (): void => {
     }).compile();
 
     app = moduleFixture.createNestApplication(new FastifyAdapter());
+    app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
     const fastifyInstance = app.getHttpAdapter().getInstance() as FastifyInstance;
     await registerAuthRateLimit(fastifyInstance, {
       max: 10,
@@ -77,7 +78,28 @@ describe("V1 common/auth эндпоинты", (): void => {
       await supertest(app.getHttpServer())
         .post("/v1/common/auth/registration")
         .send({ username: "v1user", password: "pass123" })
-        .expect(401);
+        .expect(409);
+    });
+
+    it("возвращает 400 при пустом username", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/registration")
+        .send({ username: "", password: "pass123" })
+        .expect(400);
+    });
+
+    it("возвращает 400 при коротком пароле", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/registration")
+        .send({ username: "shortpassuser", password: "123" })
+        .expect(400);
+    });
+
+    it("возвращает 400 при пустом пароле", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/registration")
+        .send({ username: "emptypassuser", password: "" })
+        .expect(400);
     });
   });
 
@@ -98,6 +120,13 @@ describe("V1 common/auth эндпоинты", (): void => {
         .post("/v1/common/auth/login")
         .send({ username: "v1user", password: "wrongpass" })
         .expect(401);
+    });
+
+    it("возвращает 400 при пустом пароле", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "v1user", password: "" })
+        .expect(400);
     });
   });
 
@@ -208,13 +237,13 @@ describe("V1 common/auth эндпоинты", (): void => {
       for (let attempt = 0; attempt < 10; attempt++) {
         await supertest(app.getHttpServer())
           .post("/v1/common/auth/login")
-          .send({ username: "bruteforce-target", password: "wrong" })
+          .send({ username: "bruteforce-target", password: "wrongpass" })
           .expect(401);
       }
 
       const res = await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
-        .send({ username: "bruteforce-target", password: "wrong" })
+        .send({ username: "bruteforce-target", password: "wrongpass" })
         .expect(429);
 
       expect(res.body).toHaveProperty("statusCode", 429);

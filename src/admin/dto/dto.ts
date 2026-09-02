@@ -11,7 +11,7 @@ import {
   Max,
   Min,
 } from "class-validator";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 
 export const AVAILABLE_ROLES = ["admin", "moderator", "user"] as const;
 export type AvailableRole = (typeof AVAILABLE_ROLES)[number];
@@ -42,6 +42,53 @@ export class AllUsersQueryDto {
   @Min(1)
   @Max(100)
   limit?: number;
+}
+
+export class UsersQueryDto {
+  @ApiProperty({
+    default: 10,
+    minimum: 1,
+    maximum: 100,
+    description: "Пользователей на страницу",
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+
+  @ApiProperty({ default: 0, minimum: 0, description: "Смещение от начала списка" })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  offset?: number;
+
+  @ApiProperty({
+    example: "john",
+    required: false,
+    description: "Поиск по началу юзернейма (без учёта регистра)",
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  username?: string;
+
+  @ApiProperty({
+    example: false,
+    required: false,
+    description: "Фильтр по статусу одобрения (false — только неодобренные)",
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === "boolean") return value;
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return value;
+  })
+  @IsBoolean()
+  approved?: boolean;
 }
 
 export class ApproveUserDto {
@@ -92,6 +139,20 @@ export class UserListItemDto {
   banned!: boolean;
 }
 
+export class UsersListResponseDto {
+  @ApiProperty({ example: 0, description: "Смещение от начала списка" })
+  offset!: number;
+
+  @ApiProperty({ example: 10, description: "Пользователей на страницу" })
+  limit!: number;
+
+  @ApiProperty({ example: 42, description: "Всего пользователей по фильтру" })
+  total!: number;
+
+  @ApiProperty({ type: [UserListItemDto] })
+  items!: UserListItemDto[];
+}
+
 export class DeletedUserListItemDto {
   @ApiProperty({ example: "john" })
   username!: string;
@@ -109,6 +170,20 @@ export class DeletedUserListItemDto {
   deletedAt!: Date;
 }
 
+export class DeletedUsersListResponseDto {
+  @ApiProperty({ example: 0, description: "Смещение от начала списка" })
+  offset!: number;
+
+  @ApiProperty({ example: 10, description: "Пользователей на страницу" })
+  limit!: number;
+
+  @ApiProperty({ example: 42, description: "Всего удалённых пользователей по фильтру" })
+  total!: number;
+
+  @ApiProperty({ type: [DeletedUserListItemDto] })
+  items!: DeletedUserListItemDto[];
+}
+
 export class DeletedUsersQueryDto {
   @ApiProperty({ default: 10, minimum: 1, maximum: 100 })
   @IsOptional()
@@ -117,6 +192,25 @@ export class DeletedUsersQueryDto {
   @Min(1)
   @Max(100)
   limit?: number;
+}
+
+export class V1DeletedUsersQueryDto extends DeletedUsersQueryDto {
+  @ApiProperty({ default: 0, minimum: 0, description: "Смещение от начала списка" })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  offset?: number;
+
+  @ApiProperty({
+    example: "john",
+    required: false,
+    description: "Поиск по началу юзернейма (без учёта регистра)",
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  username?: string;
 }
 
 export class LogsQueryDto {
@@ -246,6 +340,6 @@ export class LauncherUpdateResponseDto {
   @ApiProperty({ example: "1.2.3" })
   version!: string;
 
-  @ApiProperty({ type: [String], example: ["linux/x86_64", "windows/x86_64"] })
+  @ApiProperty({ type: [String], example: ["linux/x86_64", "macos/arm64", "windows/x86_64"] })
   updated!: string[];
 }

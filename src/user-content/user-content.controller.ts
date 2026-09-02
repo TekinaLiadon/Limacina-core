@@ -2,6 +2,7 @@ import { BadRequestException, Controller, Delete, Get, Param, Post, Req } from "
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { UserContentService } from "./user-content.service";
 import { UserContentItemDto } from "./dto/dto";
+import { CurrentUser, type RequestUser } from "../common/current-user.decorator";
 import type { FastifyRequest } from "fastify";
 
 @ApiTags("user-content", "legacy")
@@ -13,11 +14,16 @@ export class UserContentController {
   @Post("skins")
   @ApiOperation({ summary: "Загрузить скин (.png)" })
   @ApiResponse({ status: 201, type: UserContentItemDto })
-  @ApiResponse({ status: 400, description: "Лимит загрузки скинов" })
-  async uploadSkin(@Req() request: FastifyRequest): Promise<UserContentItemDto> {
-    const userUuid = (request as FastifyRequest & { user: { uuid: string } }).user.uuid;
+  @ApiResponse({
+    status: 400,
+    description: "Лимит загрузки скинов, невалидный PNG или превышен размер (512 КБ)",
+  })
+  async uploadSkin(
+    @CurrentUser() user: RequestUser,
+    @Req() request: FastifyRequest,
+  ): Promise<UserContentItemDto> {
     const buffer = await this.extractFile(request);
-    return this.userContentService.uploadSkin(userUuid, buffer);
+    return this.userContentService.uploadSkin(user.uuid, buffer);
   }
 
   @Get("skins/:uuid")
@@ -33,13 +39,12 @@ export class UserContentController {
   @ApiParam({ name: "id", description: "ID скина" })
   @ApiResponse({ status: 200, description: "Скин удалён" })
   @ApiResponse({ status: 403, description: "Нет прав на удаление" })
-  @ApiResponse({ status: 400, description: "Скин не найден" })
+  @ApiResponse({ status: 404, description: "Скин не найден" })
   async deleteSkin(
-    @Req() request: FastifyRequest,
+    @CurrentUser() user: RequestUser,
     @Param("id") id: string,
   ): Promise<{ success: boolean }> {
-    const userUuid = (request as FastifyRequest & { user: { uuid: string } }).user.uuid;
-    await this.userContentService.delete(userUuid, Number(id), "skin");
+    await this.userContentService.delete(user.uuid, Number(id), "skin");
     return { success: true };
   }
 
@@ -47,10 +52,12 @@ export class UserContentController {
   @ApiOperation({ summary: "Загрузить модель (.txt)" })
   @ApiResponse({ status: 201, type: UserContentItemDto })
   @ApiResponse({ status: 400, description: "Лимит загрузки моделей" })
-  async uploadModel(@Req() request: FastifyRequest): Promise<UserContentItemDto> {
-    const userUuid = (request as FastifyRequest & { user: { uuid: string } }).user.uuid;
+  async uploadModel(
+    @CurrentUser() user: RequestUser,
+    @Req() request: FastifyRequest,
+  ): Promise<UserContentItemDto> {
     const buffer = await this.extractFile(request);
-    return this.userContentService.uploadModel(userUuid, buffer);
+    return this.userContentService.uploadModel(user.uuid, buffer);
   }
 
   @Get("models/:uuid")
@@ -66,13 +73,12 @@ export class UserContentController {
   @ApiParam({ name: "id", description: "ID модели" })
   @ApiResponse({ status: 200, description: "Модель удалена" })
   @ApiResponse({ status: 403, description: "Нет прав на удаление" })
-  @ApiResponse({ status: 400, description: "Модель не найдена" })
+  @ApiResponse({ status: 404, description: "Модель не найдена" })
   async deleteModel(
-    @Req() request: FastifyRequest,
+    @CurrentUser() user: RequestUser,
     @Param("id") id: string,
   ): Promise<{ success: boolean }> {
-    const userUuid = (request as FastifyRequest & { user: { uuid: string } }).user.uuid;
-    await this.userContentService.delete(userUuid, Number(id), "model");
+    await this.userContentService.delete(user.uuid, Number(id), "model");
     return { success: true };
   }
 

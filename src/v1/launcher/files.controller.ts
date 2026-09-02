@@ -29,7 +29,7 @@ export class V1LauncherFilesController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Скачать файл лаунчера по пути" })
   @ApiResponse({ status: 200, description: "Файл по указаному урлу" })
-  async postFile(@Body() fileInfo: FileDto, @Res() reply: FastifyReply): Promise<void> {
-    return this.filesService.postFile(fileInfo, reply);
+  async sendFile(@Body() fileInfo: FileDto, @Res() reply: FastifyReply): Promise<void> {
+    return this.filesService.sendFile(fileInfo, reply);
   }
 }

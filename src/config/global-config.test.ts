@@ -36,12 +36,32 @@ describe("AppConfig", () => {
     }
   });
 
-  it("принимает postgres в production", () => {
+  it("принимает postgres в production при наличии DATABASE_URL", () => {
+    const result = AppConfig.tryParseEnv({
+      ...baseEnv,
+      NODE_ENV: "production",
+      DB_DRIVER: "postgres",
+      DATABASE_URL: "postgres://localhost:5432/limacina",
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("отклоняет postgres без DATABASE_URL", () => {
     const result = AppConfig.tryParseEnv({
       ...baseEnv,
       NODE_ENV: "production",
       DB_DRIVER: "postgres",
     });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path.includes("DATABASE_URL"))).toBe(true);
+    }
+  });
+
+  it("map не требует DATABASE_URL", () => {
+    const result = AppConfig.tryParseEnv({ ...baseEnv, DB_DRIVER: "map" });
 
     expect(result.success).toBe(true);
   });

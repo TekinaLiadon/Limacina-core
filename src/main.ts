@@ -30,6 +30,7 @@ async function bootstrap() {
   app.useLogger(logger);
   app.useGlobalInterceptors(new LoggerErrorInterceptor());
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+  app.enableShutdownHooks();
 
   registerProcessErrorHandlers(logger);
   if (process.env.NODE_ENV === "production") {
@@ -89,9 +90,10 @@ async function bootstrap() {
     .setDescription(
       "API documentation for Limacina\n\n" +
         "Актуальные эндпоинты расположены под префиксом `/v1` и сгруппированы по потребителю: " +
-        "`common_*` (общее для панели и лаунчера), `launcher_*` (лаунчер), `panel_*` (админ-панель), " +
-        "`yggdrasil` (протокол Minecraft). " +
-        "Эндпоинты без префикса — legacy (помечены `deprecated`), сохранены для обратной совместимости и не развиваются.",
+        "`common_*` (общее для панели и лаунчера), `launcher_*` (лаунчер), `panel_*` (админ-панель). " +
+        "Исключение — протокол Yggdrasil (`yggdrasil`): его пути диктуются протоколом authlib-injector " +
+        "и живут в корне сервера (`/authserver`, `/sessionserver`, `/api`, метадата — `GET /`). " +
+        "Остальные эндпоинты без префикса — legacy (помечены `deprecated`), сохранены для обратной совместимости и не развиваются.",
     )
     .setVersion("1.1")
     .addSecurity("bearer", { type: "apiKey", name: "Authorization", in: "header" })
@@ -106,9 +108,10 @@ async function bootstrap() {
       "panel_launcher",
       "Управление лаунчером и его конфигом — только admin (/v1/panel/launcher)",
     )
+    .addTag("panel_server", "Управление сервером — перезапуск (/v1/panel/server)")
     .addTag(
       "yggdrasil",
-      "Minecraft Yggdrasil authentication (/v1/authserver, /v1/sessionserver, /v1/api)",
+      "Minecraft Yggdrasil protocol — пути диктуются протоколом authlib-injector, корень API совпадает с корнем сервера (/, /authserver, /sessionserver, /api)",
     )
     .addTag(
       "legacy",
@@ -153,9 +156,13 @@ async function bootstrap() {
 
 function markLegacyEndpoints(document: OpenAPIObject): OpenAPIObject {
   const httpMethods = ["get", "put", "post", "delete", "options", "head", "patch"] as const;
+  const yggdrasilPathPrefixes = ["/authserver", "/sessionserver", "/api"];
+
+  const isYggdrasilPath = (path: string): boolean =>
+    path === "/" || yggdrasilPathPrefixes.some((prefix) => path.startsWith(prefix));
 
   for (const [path, pathItem] of Object.entries(document.paths)) {
-    if (path.startsWith("/v1")) continue;
+    if (path.startsWith("/v1") || isYggdrasilPath(path)) continue;
 
     for (const method of httpMethods) {
       const operation = pathItem?.[method];

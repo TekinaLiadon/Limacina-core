@@ -702,6 +702,15 @@ describe("Yggdrasil эндпоинты", () => {
         .send({ file: base64 })
         .expect(403);
     });
+
+    it("возвращает 400 для неизвестного textureType", async () => {
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/hat`)
+        .send({ file: buildPngBase64("fake-png-data") })
+        .expect(400);
+
+      expect(res.body.statusCode).toBe(400);
+    });
   });
 
   describe("PUT /api/user/profile/:uuid/cape", () => {
@@ -773,6 +782,14 @@ describe("Yggdrasil эндпоинты", () => {
       await supertest(app.getHttpServer())
         .delete("/api/user/profile/00000000000000000000000000000000/skin")
         .expect(403);
+    });
+
+    it("возвращает 400 для неизвестного textureType", async () => {
+      const res = await supertest(app.getHttpServer())
+        .delete(`/api/user/profile/${TEST_UUID}/hat`)
+        .expect(400);
+
+      expect(res.body.statusCode).toBe(400);
     });
   });
 

@@ -1,8 +1,9 @@
-import { Controller, Get, Param, Query, Res } from "@nestjs/common";
+import { Controller, Get, Param, ParseEnumPipe, Query, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from "@nestjs/swagger";
 import { Public } from "../../common/public.decorator";
 import { LauncherService } from "../../launcher/launcher.service";
+import { SUPPORTED_ARCHS, SUPPORTED_OS } from "../../launcher/launcher-files";
 import { LauncherVersionsDto } from "../../launcher/dto/dto";
 
 @ApiTags("launcher_update")
@@ -20,8 +21,8 @@ export class V1LauncherUpdateController {
 
   @Get(":os/:arch/download")
   @ApiOperation({ summary: "Скачать лаунчер" })
-  @ApiParam({ name: "os", enum: ["linux", "windows"] })
-  @ApiParam({ name: "arch", enum: ["x86_64", "aarch64"] })
+  @ApiParam({ name: "os", enum: SUPPORTED_OS })
+  @ApiParam({ name: "arch", enum: SUPPORTED_ARCHS })
   @ApiQuery({
     name: "version",
     required: false,
@@ -29,8 +30,8 @@ export class V1LauncherUpdateController {
     description: "Конкретная версия (по умолчанию — последняя)",
   })
   async download(
-    @Param("os") os: string,
-    @Param("arch") arch: string,
+    @Param("os", new ParseEnumPipe(SUPPORTED_OS)) os: string,
+    @Param("arch", new ParseEnumPipe(SUPPORTED_ARCHS)) arch: string,
     @Res() reply: FastifyReply,
     @Query("version") version?: string,
   ): Promise<void> {

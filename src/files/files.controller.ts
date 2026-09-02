@@ -27,7 +27,7 @@ export class FilesController {
   @ApiOkResponse({
     description: "Файл по указаному урлу",
   })
-  async postFile(@Body() fileInfo: FileDto, @Res() reply: FastifyReply): Promise<void> {
-    return this.filesService.postFile(fileInfo, reply);
+  async sendFile(@Body() fileInfo: FileDto, @Res() reply: FastifyReply): Promise<void> {
+    return this.filesService.sendFile(fileInfo, reply);
   }
 }

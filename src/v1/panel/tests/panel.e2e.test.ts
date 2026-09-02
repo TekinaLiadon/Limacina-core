@@ -26,6 +26,7 @@ import supertest from "supertest";
 import { V1PanelUsersController } from "../users.controller";
 import { V1PanelLogsController } from "../logs.controller";
 import { V1PanelLauncherController } from "../launcher.controller";
+import { V1PanelServerController } from "../server.controller";
 import { AdminService } from "../../../admin/admin.service";
 import { LogsService } from "../../../admin/logs.service";
 import { LauncherUpdateService } from "../../../admin/launcher-update.service";
@@ -86,7 +87,12 @@ describe("V1 panel эндпоинты", (): void => {
           signOptions: { expiresIn: 31536000 },
         }),
       ],
-      controllers: [V1PanelUsersController, V1PanelLogsController, V1PanelLauncherController],
+      controllers: [
+        V1PanelUsersController,
+        V1PanelLogsController,
+        V1PanelLauncherController,
+        V1PanelServerController,
+      ],
       providers: [
         AdminService,
         LogsService,
@@ -168,48 +174,191 @@ describe("V1 panel эндпоинты", (): void => {
     });
   });
 
-  describe("GET /v1/panel/users/unapproved", () => {
-    it("возвращает неодобренных пользователей для админа", async () => {
-      const res = await supertest(app.getHttpServer())
-        .get("/v1/panel/users/unapproved")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .expect(200);
-
-      expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.some((u: { username: string }) => u.username === "user")).toBe(true);
-    });
-
-    it("принимает limit меньше 10", async () => {
-      const res = await supertest(app.getHttpServer())
-        .get("/v1/panel/users/unapproved?limit=5")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .expect(200);
-
-      expect(Array.isArray(res.body)).toBe(true);
-    });
-
-    it("возвращает 403 для не-админа", async () => {
-      await supertest(app.getHttpServer())
-        .get("/v1/panel/users/unapproved")
-        .set("Authorization", `Bearer ${userToken}`)
-        .expect(403);
-    });
-
-    it("возвращает 401 без токена", async () => {
-      await supertest(app.getHttpServer()).get("/v1/panel/users/unapproved").expect(401);
-    });
-  });
-
   describe("GET /v1/panel/users", () => {
-    it("возвращает список пользователей", async () => {
+    beforeAll(async () => {
+      const store = app.get(AdminMapStoreToken, { strict: false });
+      await store.saveUser({
+        uuid: "alice-uuid",
+        username: "alice",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      await store.saveUser({
+        uuid: "bob-uuid",
+        username: "bob",
+        role: "user",
+        approved: false,
+        banned: false,
+      });
+      await store.saveUser({
+        uuid: "carol-uuid",
+        username: "carol",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+    });
+
+    it("возвращает пользователей с пагинацией", async () => {
       const res = await supertest(app.getHttpServer())
         .get("/v1/panel/users")
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(200);
 
-      expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBeGreaterThan(0);
-      expect(res.body[0]).toHaveProperty("username");
+      expect(res.body.items.map((u: { username: string }) => u.username)).toEqual([
+        "admin",
+        "alice",
+        "bob",
+        "carol",
+        "owner",
+        "user",
+      ]);
+      expect(res.body.total).toBe(6);
+      expect(res.body.limit).toBe(10);
+      expect(res.body.offset).toBe(0);
+      expect(res.body.items[0]).toHaveProperty("uuid");
+      expect(res.body.items[0]).toHaveProperty("role");
+      expect(res.body.items[0]).toHaveProperty("approved");
+      expect(res.body.items[0]).toHaveProperty("banned");
+    });
+
+    it("фильтрует неодобренных через approved=false", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?approved=false")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(res.body.items.map((u: { username: string }) => u.username)).toEqual(["bob", "user"]);
+      expect(res.body.total).toBe(2);
+      expect(res.body.items.every((u: { approved: boolean }) => u.approved === false)).toBe(true);
+    });
+
+    it("фильтрует одобренных через approved=true", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?approved=true")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(res.body.total).toBe(4);
+      expect(res.body.items.every((u: { approved: boolean }) => u.approved === true)).toBe(true);
+    });
+
+    it("ищет по username с начала имени без учёта регистра", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?username=ALI")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(res.body.items.map((u: { username: string }) => u.username)).toEqual(["alice"]);
+      expect(res.body.total).toBe(1);
+    });
+
+    it("не ищет по подстроке в середине юзернейма", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?username=li")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(res.body.items).toEqual([]);
+      expect(res.body.total).toBe(0);
+    });
+
+    it("комбинирует поиск по username с фильтром approved", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?username=o&approved=true")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(res.body.items.map((u: { username: string }) => u.username)).toEqual(["owner"]);
+      expect(res.body.total).toBe(1);
+    });
+
+    it("пагинрует через limit и offset", async () => {
+      const firstPage = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?limit=2")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(firstPage.body.items.map((u: { username: string }) => u.username)).toEqual([
+        "admin",
+        "alice",
+      ]);
+      expect(firstPage.body.total).toBe(6);
+      expect(firstPage.body.limit).toBe(2);
+
+      const secondPage = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?limit=2&offset=2")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(secondPage.body.items.map((u: { username: string }) => u.username)).toEqual([
+        "bob",
+        "carol",
+      ]);
+      expect(secondPage.body.offset).toBe(2);
+      expect(secondPage.body.total).toBe(6);
+    });
+
+    it("возвращает пустую страницу при offset за пределами списка", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?offset=100")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(res.body.items).toEqual([]);
+      expect(res.body.total).toBe(6);
+    });
+
+    it("возвращает 400 при невалидном approved", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/users?approved=maybe")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(400);
+    });
+
+    it("возвращает 400 при limit вне диапазона", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/users?limit=0")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(400);
+
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/users?limit=101")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(400);
+    });
+
+    it("возвращает 400 при отрицательном offset", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/users?offset=-1")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(400);
+    });
+
+    it("возвращает 400 при пустом username", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/users?username=")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(400);
+    });
+
+    it("возвращает 403 для не-админа", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/users")
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(403);
+    });
+
+    it("возвращает 401 без токена", async () => {
+      await supertest(app.getHttpServer()).get("/v1/panel/users").expect(401);
+    });
+
+    it("не отдаёт удалённый эндпоинт unapproved", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/users/unapproved")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(404);
     });
   });
 
@@ -222,11 +371,11 @@ describe("V1 panel эндпоинты", (): void => {
         .expect(200);
 
       const res = await supertest(app.getHttpServer())
-        .get("/v1/panel/users/unapproved")
+        .get("/v1/panel/users?approved=false")
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(200);
 
-      expect(res.body.some((u: { username: string }) => u.username === "user")).toBe(false);
+      expect(res.body.items.some((u: { username: string }) => u.username === "user")).toBe(false);
     });
   });
 
@@ -243,7 +392,7 @@ describe("V1 panel эндпоинты", (): void => {
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(200);
 
-      const target = res.body.find((u: { username: string }) => u.username === "user");
+      const target = res.body.items.find((u: { username: string }) => u.username === "user");
       expect(target.banned).toBe(true);
 
       await supertest(app.getHttpServer())
@@ -276,7 +425,7 @@ describe("V1 panel эндпоинты", (): void => {
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(200);
 
-      const target = res.body.find((u: { username: string }) => u.username === "roleuser");
+      const target = res.body.items.find((u: { username: string }) => u.username === "roleuser");
       expect(target.role).toBe("moderator");
     });
 
@@ -309,14 +458,128 @@ describe("V1 panel эндпоинты", (): void => {
   });
 
   describe("GET /v1/panel/users/deleted", () => {
-    it("возвращает список удалённых пользователей", async () => {
+    beforeAll(async () => {
+      const store = app.get(AdminMapStoreToken, { strict: false });
+      for (const username of ["dana", "dave", "derek"]) {
+        await store.saveUser({
+          uuid: `${username}-uuid`,
+          username,
+          role: "user",
+          approved: true,
+          banned: false,
+        });
+        await store.deleteUser(username);
+      }
+    });
+
+    it("возвращает удалённых пользователей с пагинацией для владельца", async () => {
       const res = await supertest(app.getHttpServer())
         .get("/v1/panel/users/deleted")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .expect(200);
 
-      expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.some((u: { username: string }) => u.username === "roleuser")).toBe(true);
+      expect(res.body.items.map((u: { username: string }) => u.username)).toEqual([
+        "dana",
+        "dave",
+        "derek",
+        "roleuser",
+      ]);
+      expect(res.body.total).toBe(4);
+      expect(res.body.limit).toBe(10);
+      expect(res.body.offset).toBe(0);
+      expect(res.body.items[0]).toHaveProperty("role");
+      expect(res.body.items[0]).toHaveProperty("approved");
+      expect(res.body.items[0]).toHaveProperty("banned");
+      expect(res.body.items[0]).toHaveProperty("deletedAt");
+    });
+
+    it("пагинрует через limit и offset", async () => {
+      const firstPage = await supertest(app.getHttpServer())
+        .get("/v1/panel/users/deleted?limit=2")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      expect(firstPage.body.items.map((u: { username: string }) => u.username)).toEqual([
+        "dana",
+        "dave",
+      ]);
+      expect(firstPage.body.total).toBe(4);
+
+      const secondPage = await supertest(app.getHttpServer())
+        .get("/v1/panel/users/deleted?limit=2&offset=2")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      expect(secondPage.body.items.map((u: { username: string }) => u.username)).toEqual([
+        "derek",
+        "roleuser",
+      ]);
+      expect(secondPage.body.offset).toBe(2);
+      expect(secondPage.body.total).toBe(4);
+    });
+
+    it("ищет по username с начала имени без учёта регистра", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users/deleted?username=DA")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      expect(res.body.items.map((u: { username: string }) => u.username)).toEqual(["dana", "dave"]);
+      expect(res.body.total).toBe(2);
+    });
+
+    it("не ищет по подстроке в середине юзернейма", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users/deleted?username=ana")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      expect(res.body.items).toEqual([]);
+      expect(res.body.total).toBe(0);
+    });
+
+    it("возвращает 403 для админа", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/users/deleted")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(403);
+    });
+
+    it("возвращает 403 для не-админа", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/users/deleted")
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(403);
+    });
+
+    it("возвращает 401 без токена", async () => {
+      await supertest(app.getHttpServer()).get("/v1/panel/users/deleted").expect(401);
+    });
+
+    it("возвращает 400 при limit вне диапазона", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/users/deleted?limit=0")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(400);
+
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/users/deleted?limit=101")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(400);
+    });
+
+    it("возвращает 400 при отрицательном offset", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/users/deleted?offset=-1")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(400);
+    });
+
+    it("возвращает 400 при пустом username", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/users/deleted?username=")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(400);
     });
   });
 
@@ -329,6 +592,36 @@ describe("V1 panel эндпоинты", (): void => {
 
       expect(res.body.success).toBe(true);
       expect(res.body.username).toBe("roleuser");
+    });
+  });
+
+  describe("POST /v1/panel/server/restart", () => {
+    it("принимает команду и отправляет сигнал остановки", async () => {
+      const technicalService = app.get(TechnicalService);
+      let shutdownSignalled = false;
+      technicalService.sendShutdownSignal = () => {
+        shutdownSignalled = true;
+      };
+
+      const res = await supertest(app.getHttpServer())
+        .post("/v1/panel/server/restart")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(201);
+
+      expect(res.body.success).toBe(true);
+      await Bun.sleep(500);
+      expect(shutdownSignalled).toBe(true);
+    });
+
+    it("возвращает 403 для не-админа", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/panel/server/restart")
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(403);
+    });
+
+    it("возвращает 401 без токена", async () => {
+      await supertest(app.getHttpServer()).post("/v1/panel/server/restart").expect(401);
     });
   });
 
@@ -545,6 +838,15 @@ describe("V1 panel эндпоинты", (): void => {
         .patch("/v1/panel/launcher")
         .set("Authorization", `Bearer ${adminToken}`)
         .field("version", "bad-version")
+        .expect(400);
+    });
+
+    it("возвращает 400 при неизвестном имени файлового поля", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .field("version", "9.9.9")
+        .attach("linux_x64", Buffer.from("zip-content"), "launcher.zip")
         .expect(400);
     });
 

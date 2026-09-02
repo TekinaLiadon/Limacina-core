@@ -1,20 +1,14 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { OLD_VERSIONS_DIR, SUPPORTED_PLATFORMS } from "../src/launcher/launcher-files";
 
 const PUBLIC_DIR = join(import.meta.dir, "..", "public");
 
-const DIRECTORIES = [
-  "launcher",
-  "launcher/mods",
-  "linux/x86_64",
-  "linux/x86_64/old",
-  "linux/aarch64",
-  "linux/aarch64/old",
-  "windows/x86_64",
-  "windows/x86_64/old",
-  "textures",
-  "models",
-];
+const PLATFORM_DIRECTORIES = Object.entries(SUPPORTED_PLATFORMS).flatMap(([os, archs]) =>
+  archs.flatMap((arch) => [join(os, arch), join(os, arch, OLD_VERSIONS_DIR)]),
+);
+
+const DIRECTORIES = ["launcher", "launcher/mods", ...PLATFORM_DIRECTORIES, "textures", "models"];
 
 const VERSION_FILE = join(PUBLIC_DIR, "version.json");
 const DEFAULT_VERSION = { version: "0.0.0" };

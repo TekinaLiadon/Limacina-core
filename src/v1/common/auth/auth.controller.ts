@@ -19,7 +19,7 @@ export class V1AuthController {
     description: "Пользователь зарегистрирован, возвращает токены и данные пользователя",
     type: AuthResponseDto,
   })
-  @ApiResponse({ status: 401, description: "Юзернейм уже занят" })
+  @ApiResponse({ status: 409, description: "Юзернейм уже занят" })
   async postRegistration(@Body() dto: AuthDto): Promise<AuthResponseDto> {
     return this.authService.register(dto.username, dto.password);
   }

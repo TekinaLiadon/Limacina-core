@@ -8,12 +8,20 @@ import {
   HttpStatus,
   NotFoundException,
   Param,
+  ParseEnumPipe,
   Post,
   Put,
   Query,
 } from "@nestjs/common";
-import { ApiBody, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
-import { IsOptional, IsString } from "class-validator";
+import {
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiSecurity,
+  ApiTags,
+} from "@nestjs/swagger";
 import { Public } from "../common/public.decorator";
 import { YggdrasilService } from "./service/yggdrasil.service";
 import {
@@ -29,18 +37,10 @@ import {
   SessionProfileDto,
   ApiMetadataResponseDto,
   GameProfileDto,
+  UploadTextureDto,
 } from "./dto/dto";
 
-class UploadTextureDto {
-  @IsOptional()
-  @IsString()
-  model?: string;
-
-  @IsString()
-  file!: string;
-}
-
-@ApiTags("yggdrasil", "legacy")
+@ApiTags("yggdrasil")
 @Public()
 @Controller("")
 export class YggdrasilController {
@@ -56,7 +56,7 @@ export class YggdrasilController {
   @Post("authserver/authenticate")
   @ApiOperation({ summary: "Login with credentials" })
   @ApiBody({ type: AuthenticateDto })
-  @ApiResponse({ status: 200, type: AuthenticateResponseDto })
+  @ApiResponse({ status: 201, type: AuthenticateResponseDto })
   @ApiResponse({ status: 403, type: YggdrasilErrorDto })
   async postAuthenticate(@Body() dto: AuthenticateDto): Promise<AuthenticateResponseDto> {
     return this.yggdrasilService.authenticate(dto);
@@ -65,7 +65,7 @@ export class YggdrasilController {
   @Post("authserver/refresh")
   @ApiOperation({ summary: "Refresh token" })
   @ApiBody({ type: RefreshDto })
-  @ApiResponse({ status: 200, type: RefreshResponseDto })
+  @ApiResponse({ status: 201, type: RefreshResponseDto })
   @ApiResponse({ status: 403, type: YggdrasilErrorDto })
   async postRefresh(@Body() dto: RefreshDto): Promise<RefreshResponseDto> {
     return this.yggdrasilService.refresh(dto);
@@ -154,6 +154,7 @@ export class YggdrasilController {
 
   @Put("api/user/profile/:uuid/:textureType")
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiSecurity("bearer")
   @ApiOperation({ summary: "Upload texture (base64-encoded PNG in body)" })
   @ApiParam({ name: "uuid" })
   @ApiParam({ name: "textureType", enum: ["skin", "cape"] })
@@ -163,7 +164,7 @@ export class YggdrasilController {
   @ApiResponse({ status: 403, type: YggdrasilErrorDto })
   async putTexture(
     @Param("uuid") uuid: string,
-    @Param("textureType") textureType: "skin" | "cape",
+    @Param("textureType", new ParseEnumPipe(["skin", "cape"])) textureType: "skin" | "cape",
     @Body() body: UploadTextureDto,
     @Headers("authorization") authorization?: string,
   ): Promise<void> {
@@ -173,6 +174,7 @@ export class YggdrasilController {
 
   @Delete("api/user/profile/:uuid/:textureType")
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiSecurity("bearer")
   @ApiOperation({ summary: "Delete texture" })
   @ApiParam({ name: "uuid" })
   @ApiParam({ name: "textureType", enum: ["skin", "cape"] })
@@ -181,7 +183,7 @@ export class YggdrasilController {
   @ApiResponse({ status: 403, type: YggdrasilErrorDto })
   async deleteTexture(
     @Param("uuid") uuid: string,
-    @Param("textureType") textureType: "skin" | "cape",
+    @Param("textureType", new ParseEnumPipe(["skin", "cape"])) textureType: "skin" | "cape",
     @Headers("authorization") authorization?: string,
   ): Promise<void> {
     await this.yggdrasilService.deleteTexture(uuid, textureType, authorization);

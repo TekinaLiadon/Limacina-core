@@ -16,10 +16,16 @@ const configSchema = z
     RATE_LIMIT_AUTH_MAX: z.coerce.number().int().min(1).default(10),
     RATE_LIMIT_AUTH_WINDOW: z.coerce.number().int().min(1000).default(60000),
     TRUST_PROXY: z.string().optional(),
+    KEYS_DIR: z.string().optional(),
+    DATABASE_URL: z.string().min(1).optional(),
   })
   .refine((config) => config.NODE_ENV !== "production" || config.DB_DRIVER !== "map", {
     message: "DB_DRIVER=map is not allowed in production — use DB_DRIVER=postgres",
     path: ["DB_DRIVER"],
+  })
+  .refine((config) => config.DB_DRIVER !== "postgres" || config.DATABASE_URL !== undefined, {
+    message: "DATABASE_URL is required when DB_DRIVER=postgres",
+    path: ["DATABASE_URL"],
   });
 
 const AppConfig = new ZodEnvConfig("app", configSchema);

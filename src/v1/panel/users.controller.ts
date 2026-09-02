@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import {
   ApiBearerAuth,
   ApiBody,
@@ -10,21 +10,21 @@ import {
 } from "@nestjs/swagger";
 import { Public } from "../../common/public.decorator";
 import { Roles } from "../../common/roles.decorator";
+import { CurrentUser, type RequestUser } from "../../common/current-user.decorator";
 import { SuccessResponseDto, UserSuccessResponseDto } from "../../common/dto/dto";
 import { AdminService } from "../../admin/admin.service";
 import { TechnicalService } from "../../technical/technical.service";
 import { InitOwnerDto, InitOwnerResponseDto } from "../../technical/dto/dto";
 import {
   ApproveUserDto,
-  AllUsersQueryDto,
   BanUserDto,
-  DeletedUserListItemDto,
-  DeletedUsersQueryDto,
+  DeletedUsersListResponseDto,
   SetRoleDto,
-  UnapprovedUsersQueryDto,
-  UserListItemDto,
+  UsersListResponseDto,
+  UsersQueryDto,
+  V1DeletedUsersQueryDto,
 } from "../../admin/dto/dto";
-import type { FastifyRequest } from "fastify";
+import type { UsersFilter } from "../../admin/admin.store";
 
 @ApiTags("panel_users")
 @ApiBearerAuth()
@@ -55,39 +55,106 @@ export class V1PanelUsersController {
   }
 
   @Get()
-  @ApiOperation({ summary: "Получить список всех пользователей" })
-  @ApiQuery({ name: "limit", required: false, default: 10, maximum: 100 })
+  @ApiOperation({
+    summary: "Получить список пользователей",
+    description:
+      "Возвращает страницу пользователей с пагинацией (сортировка по юзернейму). " +
+      "Поддерживается поиск по началу юзернейма (без учёта регистра) и фильтр по статусу одобрения.\n\nПримеры:\n" +
+      "- `GET /v1/panel/users` — первая страница\n" +
+      "- `GET /v1/panel/users?limit=20&offset=20` — вторая страница\n" +
+      '- `GET /v1/panel/users?username=joh` — юзернеймы, начинающиеся с "joh"\n' +
+      "- `GET /v1/panel/users?approved=false` — только неодобренные\n" +
+      '- `GET /v1/panel/users?username=o&approved=true&limit=5` — одобренные, чей юзернейм начинается с "o"',
+  })
+  @ApiQuery({
+    name: "limit",
+    required: false,
+    example: 10,
+    description: "Пользователей на страницу (1–100)",
+  })
+  @ApiQuery({
+    name: "offset",
+    required: false,
+    example: 0,
+    description: "Смещение от начала списка",
+  })
+  @ApiQuery({
+    name: "username",
+    required: false,
+    example: "john",
+    description: "Поиск по началу юзернейма (без учёта регистра)",
+  })
+  @ApiQuery({
+    name: "approved",
+    required: false,
+    example: false,
+    description: "Фильтр по статусу одобрения (false — только неодобренные)",
+  })
   @ApiResponse({
     status: 200,
-    description: "Список пользователей (юзернейм, роль, одобрение, бан)",
-    type: [UserListItemDto],
+    description: "Страница пользователей с пагинацией",
+    type: UsersListResponseDto,
   })
-  async getAllUsers(@Query() query: AllUsersQueryDto): Promise<UserListItemDto[]> {
-    return this.adminService.findAllUsers(query.limit);
-  }
-
-  @Get("unapproved")
-  @ApiOperation({ summary: "Получить список неодобренных пользователей" })
-  @ApiQuery({ name: "limit", required: false, default: 10, maximum: 50 })
-  @ApiResponse({
-    status: 200,
-    description: "Список неодобренных пользователей",
-    type: [UserListItemDto],
-  })
-  async getUnapprovedUsers(@Query() query: UnapprovedUsersQueryDto): Promise<UserListItemDto[]> {
-    return this.adminService.findUnapprovedUsers(query.limit);
+  async getUsers(@Query() query: UsersQueryDto): Promise<UsersListResponseDto> {
+    const limit = query.limit ?? 10;
+    const offset = query.offset ?? 0;
+    const filter: UsersFilter = {
+      limit,
+      offset,
+      username: query.username,
+      approved: query.approved,
+    };
+    const { items, total } = await this.adminService.searchUsers(filter);
+    return { items, total, limit, offset };
   }
 
   @Get("deleted")
-  @ApiOperation({ summary: "Получить список удалённых пользователей" })
-  @ApiQuery({ name: "limit", required: false, default: 10, maximum: 100 })
+  @Roles("owner")
+  @ApiOperation({
+    summary: "Получить список удалённых пользователей",
+    description:
+      "Возвращает страницу удалённых пользователей с пагинацией (сортировка по юзернейму) " +
+      "и поиском по началу юзернейма (без учёта регистра). Доступно только владельцу.\n\nПримеры:\n" +
+      "- `GET /v1/panel/users/deleted` — первая страница\n" +
+      "- `GET /v1/panel/users/deleted?limit=20&offset=20` — вторая страница\n" +
+      '- `GET /v1/panel/users/deleted?username=joh` — юзернеймы, начинающиеся с "joh"',
+  })
+  @ApiQuery({
+    name: "limit",
+    required: false,
+    example: 10,
+    description: "Пользователей на страницу (1–100)",
+  })
+  @ApiQuery({
+    name: "offset",
+    required: false,
+    example: 0,
+    description: "Смещение от начала списка",
+  })
+  @ApiQuery({
+    name: "username",
+    required: false,
+    example: "john",
+    description: "Поиск по началу юзернейма (без учёта регистра)",
+  })
   @ApiResponse({
     status: 200,
-    description: "Список удалённых пользователей",
-    type: [DeletedUserListItemDto],
+    description: "Страница удалённых пользователей с пагинацией",
+    type: DeletedUsersListResponseDto,
   })
-  async getDeletedUsers(@Query() query: DeletedUsersQueryDto): Promise<DeletedUserListItemDto[]> {
-    return this.adminService.findDeletedUsers(query.limit);
+  @ApiResponse({ status: 403, description: "Доступно только владельцу" })
+  async getDeletedUsers(
+    @Query() query: V1DeletedUsersQueryDto,
+  ): Promise<DeletedUsersListResponseDto> {
+    const limit = query.limit ?? 10;
+    const offset = query.offset ?? 0;
+    const filter: UsersFilter = {
+      limit,
+      offset,
+      username: query.username,
+    };
+    const { items, total } = await this.adminService.searchDeletedUsers(filter);
+    return { items, total, limit, offset };
   }
 
   @Patch("approve")
@@ -97,11 +164,10 @@ export class V1PanelUsersController {
   @ApiResponse({ status: 403, description: "Невозможно изменить owner" })
   @ApiResponse({ status: 404, description: "Пользователь не найден" })
   async setApproved(
-    @Req() request: FastifyRequest,
+    @CurrentUser() user: RequestUser,
     @Body() dto: ApproveUserDto,
   ): Promise<SuccessResponseDto> {
-    const callerRole = (request as FastifyRequest & { user: { role: string } }).user.role;
-    await this.adminService.setApproved(dto.username, dto.approved, callerRole);
+    await this.adminService.setApproved(dto.username, dto.approved, user.role);
     return { success: true };
   }
 
@@ -112,11 +178,10 @@ export class V1PanelUsersController {
   @ApiResponse({ status: 403, description: "Невозможно изменить owner" })
   @ApiResponse({ status: 404, description: "Пользователь не найден" })
   async setBanned(
-    @Req() request: FastifyRequest,
+    @CurrentUser() user: RequestUser,
     @Body() dto: BanUserDto,
   ): Promise<SuccessResponseDto> {
-    const callerRole = (request as FastifyRequest & { user: { role: string } }).user.role;
-    await this.adminService.setBanned(dto.username, dto.banned, callerRole);
+    await this.adminService.setBanned(dto.username, dto.banned, user.role);
     return { success: true };
   }
 
@@ -128,11 +193,10 @@ export class V1PanelUsersController {
   @ApiResponse({ status: 403, description: "Невозможно изменить owner" })
   @ApiResponse({ status: 404, description: "Пользователь не найден" })
   async setRole(
-    @Req() request: FastifyRequest,
+    @CurrentUser() user: RequestUser,
     @Body() dto: SetRoleDto,
   ): Promise<SuccessResponseDto> {
-    const callerRole = (request as FastifyRequest & { user: { role: string } }).user.role;
-    await this.adminService.setRole(dto.username, dto.role, callerRole);
+    await this.adminService.setRole(dto.username, dto.role, user.role);
     return { success: true };
   }
 
@@ -147,11 +211,10 @@ export class V1PanelUsersController {
   @ApiResponse({ status: 403, description: "Невозможно удалить owner" })
   @ApiResponse({ status: 404, description: "Пользователь не найден" })
   async deleteUser(
-    @Req() request: FastifyRequest,
+    @CurrentUser() user: RequestUser,
     @Param("username") username: string,
   ): Promise<UserSuccessResponseDto> {
-    const callerRole = (request as FastifyRequest & { user: { role: string } }).user.role;
-    const deleted = await this.adminService.deleteUser(username, callerRole);
+    const deleted = await this.adminService.deleteUser(username, user.role);
     return { success: true, username: deleted.username };
   }
 

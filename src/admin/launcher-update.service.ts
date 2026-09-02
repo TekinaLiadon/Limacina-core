@@ -13,6 +13,7 @@ import type { LauncherUpdateResponseDto } from "./dto/dto";
 import {
   LAUNCHER_VERSION_REGEX,
   OLD_VERSIONS_DIR,
+  SUPPORTED_PLATFORMS,
   buildLauncherZipName,
   parseLauncherZipName,
 } from "../launcher/launcher-files";
@@ -20,16 +21,11 @@ import {
 const PUBLIC_DIR = "public";
 const VERSION_FILE = join(PUBLIC_DIR, "version.json");
 
-const SUPPORTED_PLATFORMS: Record<string, string[]> = {
-  linux: ["x86_64", "aarch64"],
-  windows: ["x86_64"],
-};
-
 interface VersionData {
   version: string;
 }
 
-interface PlatformFile {
+export interface LauncherPlatformFile {
   os: string;
   arch: string;
   buffer: Buffer;
@@ -39,19 +35,20 @@ interface PlatformFile {
 export class LauncherUpdateService {
   private readonly logger = new Logger(LauncherUpdateService.name);
 
-  update(version: string, files: PlatformFile[]): LauncherUpdateResponseDto {
-    this.validateVersion(version);
-    this.writeVersion(version);
+  update(version: string, files: LauncherPlatformFile[]): LauncherUpdateResponseDto {
+    const targetVersion = version || this.getCurrentVersion();
+    this.validateVersion(targetVersion);
+    this.writeVersion(targetVersion);
 
     const updated: string[] = [];
     for (const file of files) {
-      this.replaceZip(version, file.os, file.arch, file.buffer);
+      this.replaceZip(targetVersion, file.os, file.arch, file.buffer);
       updated.push(`${file.os}/${file.arch}`);
     }
 
-    this.logger.log({ version, platforms: updated }, "Лаунчер обновлён");
+    this.logger.log({ version: targetVersion, platforms: updated }, "Лаунчер обновлён");
 
-    return { version, updated };
+    return { version: targetVersion, updated };
   }
 
   private validateVersion(version: string): void {

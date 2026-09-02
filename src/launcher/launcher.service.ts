@@ -14,6 +14,7 @@ import type { FastifyReply } from "fastify";
 import {
   LAUNCHER_VERSION_REGEX,
   OLD_VERSIONS_DIR,
+  SUPPORTED_PLATFORMS,
   buildLauncherZipName,
   compareVersions,
   parseLauncherZipName,
@@ -22,11 +23,6 @@ import {
 const PUBLIC_DIR = "public";
 const VERSION_FILE = join(PUBLIC_DIR, "version.json");
 const CONFIG_FILE = "config.toml";
-
-const SUPPORTED_PLATFORMS: Record<string, string[]> = {
-  linux: ["x86_64", "aarch64"],
-  windows: ["x86_64"],
-};
 
 interface VersionData {
   version: string;

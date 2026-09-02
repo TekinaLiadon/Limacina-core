@@ -5,6 +5,7 @@ import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 import { AuthMapStoreToken } from "../auth/service/auth_store.service";
 import type { IAuthStore } from "../auth/service/auth_store.service";
+import type { RequestUser } from "./current-user.decorator";
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -19,11 +20,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: { sub: string; username: string; role: string }): Promise<{
-    uuid: string;
-    username: string;
-    role: string;
-  }> {
+  async validate(payload: { sub: string; username: string; role: string }): Promise<RequestUser> {
     const user = await this.authStore.findByUsername(payload.username);
     if (!user || user.banned || user.uuid !== payload.sub) {
       throw new UnauthorizedException();

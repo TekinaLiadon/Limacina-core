@@ -3,6 +3,7 @@ import type { FastifyReply } from "fastify";
 import { ApiOkResponse, ApiOperation, ApiParam, ApiTags } from "@nestjs/swagger";
 import { Public } from "../common/public.decorator";
 import { LauncherService } from "./launcher.service";
+import { SUPPORTED_ARCHS, SUPPORTED_OS } from "./launcher-files";
 import { LauncherConfigCreateDto, LauncherConfigDto, LauncherVersionDto } from "./dto/dto";
 
 @ApiTags("launcher", "legacy")
@@ -34,8 +35,8 @@ export class LauncherController {
 
   @Get(":os/:arch/download")
   @ApiOperation({ summary: "Скачать лаунчер" })
-  @ApiParam({ name: "os", enum: ["linux", "windows"] })
-  @ApiParam({ name: "arch", enum: ["x86_64", "aarch64"] })
+  @ApiParam({ name: "os", enum: SUPPORTED_OS })
+  @ApiParam({ name: "arch", enum: SUPPORTED_ARCHS })
   async download(
     @Param("os") os: string,
     @Param("arch") arch: string,

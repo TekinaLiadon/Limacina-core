@@ -30,8 +30,7 @@ import { UserContentMapStoreToken } from "../../user-content/user-content.store"
 import { AppConfigToken } from "../../config/app-config.provider";
 import type { AppConfigType } from "../../config/global-config";
 
-export function resolveKeysDir(): string {
-  const envKeysDir = process.env["KEYS_DIR"];
+export function resolveKeysDir(envKeysDir?: string): string {
   if (envKeysDir) return resolve(envKeysDir);
 
   if (import.meta.dir.startsWith("/$bunfs")) return join(process.cwd(), "keys");
@@ -39,20 +38,8 @@ export function resolveKeysDir(): string {
   return join(import.meta.dir, "..", "..", "..", "keys");
 }
 
-const KEYS_DIR = resolveKeysDir();
-const privateKeyPath = join(KEYS_DIR, "private.pem");
-const publicKeyPath = join(KEYS_DIR, "public.pem");
-
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_TEXTURE_BYTES = 512 * 1024;
-
-let privateKey = "";
-let publicKeyPem = "";
-
-if (existsSync(privateKeyPath) && existsSync(publicKeyPath)) {
-  privateKey = readFileSync(privateKeyPath, "utf-8");
-  publicKeyPem = readFileSync(publicKeyPath, "utf-8");
-}
 
 type Textures = {
   skinUrl?: string | null;
@@ -64,6 +51,8 @@ export class YggdrasilService {
   private readonly logger = new Logger(YggdrasilService.name);
   private readonly defaultSkinUrl: string;
   private readonly jwtSecret: string;
+  private readonly privateKey: string;
+  private readonly publicKeyPem: string;
 
   constructor(
     @Inject(YggdrasilStoreToken) private readonly store: IYggdrasilStore,
@@ -75,9 +64,15 @@ export class YggdrasilService {
     this.defaultSkinUrl = `${config.BASE_URL}/textures/default.png`;
     this.jwtSecret = config.JWT_ACCESS;
 
-    if (!publicKeyPem || !privateKey) {
+    const keysDir = resolveKeysDir(config.KEYS_DIR);
+    const privateKeyPath = join(keysDir, "private.pem");
+    const publicKeyPath = join(keysDir, "public.pem");
+    this.privateKey = existsSync(privateKeyPath) ? readFileSync(privateKeyPath, "utf-8") : "";
+    this.publicKeyPem = existsSync(publicKeyPath) ? readFileSync(publicKeyPath, "utf-8") : "";
+
+    if (!this.publicKeyPem || !this.privateKey) {
       this.logger.error(
-        { keysDir: KEYS_DIR },
+        { keysDir },
         "Yggdrasil texture signing keys not found — texture signatures are disabled. Run `bun run generate:keypair` or set KEYS_DIR.",
       );
     }
@@ -545,7 +540,7 @@ export class YggdrasilService {
         "feature.non_email_login": true,
       },
       skinDomains,
-      signaturePublickey: publicKeyPem,
+      signaturePublickey: this.publicKeyPem,
     };
   }
 
@@ -618,8 +613,8 @@ export class YggdrasilService {
       value: texturesValue,
     };
 
-    if (privateKey) {
-      const sig = sign("sha1", new Uint8Array(Buffer.from(texturesValue)), privateKey);
+    if (this.privateKey) {
+      const sig = sign("sha1", new Uint8Array(Buffer.from(texturesValue)), this.privateKey);
       property.signature = sig.toString("base64");
     }
 

@@ -68,7 +68,7 @@ describe("Auth эндпоинты", (): void => {
       await supertest(app.getHttpServer())
         .post("/auth/registration")
         .send({ username: "testuser", password: "pass123" })
-        .expect(401);
+        .expect(409);
     });
   });
 
