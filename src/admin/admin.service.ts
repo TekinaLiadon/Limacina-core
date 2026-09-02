@@ -46,8 +46,21 @@ export class AdminService {
   }
 
   async setRole(username: string, role: string, callerRole: string): Promise<void> {
-    await this.findMutableUser(username, callerRole);
+    const user = await this.findMutableUser(username, callerRole);
     await this.adminStore.setRole(username, role);
+    await this.authStore.updateRole(user.uuid, role);
+  }
+
+  async setOwnerRole(username: string, callerRole: string): Promise<void> {
+    if (callerRole !== "owner") {
+      throw new ForbiddenException("Назначать владельца может только владелец");
+    }
+
+    const user = await this.adminStore.findByUsername(username);
+    if (!user) throw new NotFoundException(`Пользователь ${username} не найден`);
+
+    await this.adminStore.setRole(username, "owner");
+    await this.authStore.updateRole(user.uuid, "owner");
   }
 
   async setUserPassword(username: string, password: string, callerRole: string): Promise<void> {

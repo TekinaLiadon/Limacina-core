@@ -19,6 +19,7 @@ import {
   ApproveUserDto,
   BanUserDto,
   DeletedUsersListResponseDto,
+  SetOwnerDto,
   SetRoleDto,
   SetUserPasswordDto,
   UsersListResponseDto,
@@ -198,6 +199,30 @@ export class V1PanelUsersController {
     @Body() dto: SetRoleDto,
   ): Promise<SuccessResponseDto> {
     await this.adminService.setRole(dto.username, dto.role, user.role);
+    return { success: true };
+  }
+
+  @Patch("owner")
+  @Roles("owner")
+  @ApiOperation({
+    summary: "Назначить пользователя владельцем",
+    description:
+      "Повышает роль пользователя до owner. Текущий владелец сохраняет свои права — система допускает " +
+      "нескольких владельцев. Доступно только владельцу.",
+  })
+  @ApiBody({ type: SetOwnerDto })
+  @ApiResponse({
+    status: 200,
+    description: "Пользователь назначен владельцем",
+    type: SuccessResponseDto,
+  })
+  @ApiResponse({ status: 403, description: "Доступно только владельцу" })
+  @ApiResponse({ status: 404, description: "Пользователь не найден" })
+  async setOwner(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: SetOwnerDto,
+  ): Promise<SuccessResponseDto> {
+    await this.adminService.setOwnerRole(dto.username, user.role);
     return { success: true };
   }
 

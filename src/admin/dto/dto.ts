@@ -135,6 +135,12 @@ export class SetUserPasswordDto {
   password!: string;
 }
 
+export class SetOwnerDto {
+  @ApiProperty({ example: "john" })
+  @IsString()
+  username!: string;
+}
+
 export class UserListItemDto {
   @ApiProperty({ example: "a1b2c3d4e5f6" })
   uuid!: string;

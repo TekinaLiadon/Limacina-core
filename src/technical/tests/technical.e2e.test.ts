@@ -4,6 +4,7 @@ process.env["NODE_ENV"] = "test";
 process.env["DB_DRIVER"] = "map";
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { existsSync } from "node:fs";
 import { TechnicalController } from "../technical.controller";
 import { TechnicalService } from "../technical.service";
 import { AdminMapStore, AdminMapStoreToken } from "../../admin/admin.store";
@@ -114,6 +115,14 @@ describe("Technical эндпоинты", (): void => {
         .post("/technical/init-owner")
         .send({ username: "test", password: "123" })
         .expect(400);
+    });
+  });
+
+  describe("TechnicalService.buildBinary", () => {
+    it("собирает бинарник через bun run build", async () => {
+      const service = app.get(TechnicalService);
+      await service.buildBinary();
+      expect(existsSync("dist/Limacina")).toBe(true);
     });
   });
 });

@@ -103,6 +103,16 @@ export class AuthPostgresStore implements IAuthStore {
     await execute(query.sql, query.values);
   }
 
+  async updateRole(uuid: string, role: string): Promise<void> {
+    const query = updateQuery()
+      .from(TABLES.users)
+      .set("role", role)
+      .where("uuid = $1", uuid)
+      .build();
+
+    await execute(query.sql, query.values);
+  }
+
   private async findSkinByUuid(uuid: string): Promise<boolean> {
     const query = selectQuery("1").from(TABLES.user_textures).where("uuid = $1", uuid).build();
     const { rows } = await execute<UserRow>(query.sql, query.values);

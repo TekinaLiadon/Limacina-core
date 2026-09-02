@@ -1,5 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsString, MinLength } from "class-validator";
+import { IsBoolean, IsOptional, IsString, MinLength } from "class-validator";
 
 export class InitOwnerDto {
   @ApiProperty({ example: "owner", description: "Юзернейм владельца" })
@@ -18,4 +18,16 @@ export class InitOwnerResponseDto {
 
   @ApiProperty({ example: "owner" })
   username!: string;
+}
+
+export class RestartServerDto {
+  @ApiProperty({
+    example: true,
+    required: false,
+    default: false,
+    description: "Пересобрать бинарник (bun run build) перед перезапуском",
+  })
+  @IsOptional()
+  @IsBoolean()
+  rebuild?: boolean;
 }

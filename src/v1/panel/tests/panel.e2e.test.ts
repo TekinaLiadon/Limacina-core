@@ -14,7 +14,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
+import {
+  INestApplication,
+  Injectable,
+  InternalServerErrorException,
+  ValidationPipe,
+} from "@nestjs/common";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { Reflector } from "@nestjs/core";
 import { Test, TestingModule } from "@nestjs/testing";
@@ -521,6 +526,76 @@ describe("V1 panel эндпоинты", (): void => {
     });
   });
 
+  describe("PATCH /v1/panel/users/owner", () => {
+    beforeAll(async () => {
+      const adminStore = app.get(AdminMapStoreToken, { strict: false });
+      const authStore = app.get(AuthMapStoreToken, { strict: false });
+      await adminStore.saveUser({
+        uuid: "futureowner-uuid",
+        username: "futureowner",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      await authStore.saveUser({
+        uuid: "futureowner-uuid",
+        username: "futureowner",
+        passwordHash: "placeholder-hash",
+        skin: null,
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+    });
+
+    it("владелец назначает пользователя овнером, роли синхронны в обоих сторах", async () => {
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/owner")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ username: "futureowner" })
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+
+      const adminStore = app.get(AdminMapStoreToken, { strict: false });
+      const authStore = app.get(AuthMapStoreToken, { strict: false });
+      expect((await adminStore.findByUsername("futureowner"))?.role).toBe("owner");
+      expect((await authStore.findByUsername("futureowner"))?.role).toBe("owner");
+      expect((await adminStore.findByUsername("owner"))?.role).toBe("owner");
+    });
+
+    it("возвращает 403 для админа", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/owner")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "futureowner" })
+        .expect(403);
+    });
+
+    it("возвращает 403 для не-админа", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/owner")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ username: "futureowner" })
+        .expect(403);
+    });
+
+    it("возвращает 401 без токена", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/owner")
+        .send({ username: "futureowner" })
+        .expect(401);
+    });
+
+    it("возвращает 404 для несуществующего пользователя", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/owner")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ username: "nonexistent" })
+        .expect(404);
+    });
+  });
+
   describe("DELETE /v1/panel/users/:username", () => {
     beforeAll(async () => {
       const store = app.get(AdminMapStoreToken, { strict: false });
@@ -775,11 +850,15 @@ describe("V1 panel эндпоинты", (): void => {
   });
 
   describe("POST /v1/panel/server/restart", () => {
-    it("принимает команду и отправляет сигнал остановки", async () => {
+    it("без body перезапускает сервер без пересборки", async () => {
       const technicalService = app.get(TechnicalService);
       let shutdownSignalled = false;
+      let buildRuns = 0;
       technicalService.sendShutdownSignal = () => {
         shutdownSignalled = true;
+      };
+      technicalService.buildBinary = async () => {
+        buildRuns += 1;
       };
 
       const res = await supertest(app.getHttpServer())
@@ -790,6 +869,57 @@ describe("V1 panel эндпоинты", (): void => {
       expect(res.body.success).toBe(true);
       await Bun.sleep(500);
       expect(shutdownSignalled).toBe(true);
+      expect(buildRuns).toBe(0);
+    });
+
+    it("rebuild: true собирает бинарник и перезапускает", async () => {
+      const technicalService = app.get(TechnicalService);
+      let shutdownSignalled = false;
+      let buildRuns = 0;
+      technicalService.sendShutdownSignal = () => {
+        shutdownSignalled = true;
+      };
+      technicalService.buildBinary = async () => {
+        buildRuns += 1;
+      };
+
+      await supertest(app.getHttpServer())
+        .post("/v1/panel/server/restart")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ rebuild: true })
+        .expect(201);
+
+      expect(buildRuns).toBe(1);
+      await Bun.sleep(500);
+      expect(shutdownSignalled).toBe(true);
+    });
+
+    it("rebuild: true при упавшей сборке возвращает 500 без перезапуска", async () => {
+      const technicalService = app.get(TechnicalService);
+      let shutdownSignalled = false;
+      technicalService.sendShutdownSignal = () => {
+        shutdownSignalled = true;
+      };
+      technicalService.buildBinary = async () => {
+        throw new InternalServerErrorException("Пересборка не удалась");
+      };
+
+      await supertest(app.getHttpServer())
+        .post("/v1/panel/server/restart")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ rebuild: true })
+        .expect(500);
+
+      await Bun.sleep(500);
+      expect(shutdownSignalled).toBe(false);
+    });
+
+    it("возвращает 400 при не-булевом rebuild", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/panel/server/restart")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ rebuild: "yes" })
+        .expect(400);
     });
 
     it("возвращает 403 для не-админа", async () => {
