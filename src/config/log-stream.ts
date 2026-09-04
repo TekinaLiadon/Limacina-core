@@ -1,5 +1,11 @@
-import { createWriteStream, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
-import type { WriteStream } from "node:fs";
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  unlinkSync,
+  type WriteStream,
+} from "node:fs";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 

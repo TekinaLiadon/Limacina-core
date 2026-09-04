@@ -47,7 +47,7 @@ export class YggdrasilPostgresStore implements IYggdrasilStore {
   async findProfileByUuid(uuid: string): Promise<YggdrasilProfile | undefined> {
     const q = profileBase().where("u.uuid = $1", uuid).build();
     const { rows } = await execute<ProfileRow>(q.sql, q.values);
-    const row = rows[0];
+    const [row] = rows;
     if (!row) return undefined;
     return rowToProfile(row);
   }
@@ -55,7 +55,7 @@ export class YggdrasilPostgresStore implements IYggdrasilStore {
   async findProfileByUsername(username: string): Promise<YggdrasilProfile | undefined> {
     const q = profileBase().where("u.username = $1", username).build();
     const { rows } = await execute<ProfileRow>(q.sql, q.values);
-    const row = rows[0];
+    const [row] = rows;
     if (!row) return undefined;
     return rowToProfile(row);
   }
@@ -118,7 +118,7 @@ export class YggdrasilPostgresStore implements IYggdrasilStore {
       .where("username = $1", username)
       .build();
     const { rows } = await execute<UserRow>(q.sql, q.values);
-    const row = rows[0];
+    const [row] = rows;
     if (!row) return undefined;
 
     return { uuid: row.uuid, passwordHash: row.password_hash };

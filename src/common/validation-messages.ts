@@ -1,0 +1,18 @@
+export const validationMessages = {
+  string: (field: string) => `${field}: ожидается строка`,
+  number: (field: string) => `${field}: ожидается число`,
+  boolean: (field: string) => `${field}: ожидается true или false`,
+  int: (field: string) => `${field}: ожидается целое число`,
+  date: (field: string) => `${field}: ожидается дата в формате ISO 8601`,
+  array: (field: string) => `${field}: ожидается массив`,
+  arrayItemString: (field: string) => `${field}: каждый элемент должен быть строкой`,
+  notEmpty: (field: string) => `${field}: не должно быть пустым`,
+  minLength: (field: string, min: number) => `${field}: минимум ${min} символов`,
+  maxLength: (field: string, max: number) => `${field}: максимум ${max} символов`,
+  min: (field: string, min: number) => `${field}: минимум ${min}`,
+  max: (field: string, max: number) => `${field}: максимум ${max}`,
+  enum: (field: string, values: string) => `${field}: допустимые значения: ${values}`,
+  nestedObject: (field: string) => `${field}: ожидается объект`,
+  nestedArrayItem: (field: string) => `${field}: каждый элемент должен быть объектом`,
+  usernamePattern: "username: только латиница, цифры и _",
+} as const;

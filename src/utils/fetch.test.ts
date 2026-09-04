@@ -20,9 +20,9 @@ function handleRequest(req: Request): Response | Promise<Response> {
   }
 
   if (url.pathname === "/slow") {
-    return new Promise((resolve) =>
-      setTimeout(() => resolve(new Response("slow", { status: 200 })), 5000),
-    );
+    return new Promise((resolve) => {
+      setTimeout(() => resolve(new Response("slow", { status: 200 })), 5000);
+    });
   }
 
   return new Response("Unknown", { status: 404 });

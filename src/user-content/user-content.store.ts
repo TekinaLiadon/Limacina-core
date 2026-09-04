@@ -80,7 +80,7 @@ export class UserContentPostgresStore implements IUserContentStore {
       .where("id = $1", id)
       .build();
     const { rows: found } = await execute<ContentRow>(findQ.sql, findQ.values);
-    const item = found[0];
+    const [item] = found;
     if (!item) return undefined;
 
     const delQ = deleteQuery().from(table).where("id = $1", id).build();

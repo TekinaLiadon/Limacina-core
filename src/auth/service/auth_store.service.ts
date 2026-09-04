@@ -8,6 +8,7 @@ export interface StoredUser {
   role: string;
   approved: boolean;
   banned: boolean;
+  passwordChangedAt?: Date;
 }
 
 export interface RefreshEntry {
@@ -23,7 +24,7 @@ export interface IAuthStore {
   approveUser(uuid: string): Promise<void>;
   userExists(username: string): Promise<boolean>;
   updateSkin(uuid: string, skin: string): Promise<void>;
-  updatePasswordHash(uuid: string, passwordHash: string): Promise<void>;
+  updatePasswordHash(uuid: string, passwordHash: string, changedAt: Date): Promise<void>;
   updateRole(uuid: string, role: string): Promise<void>;
   saveRefresh(jti: string, entry: RefreshEntry): Promise<void>;
   findRefresh(jti: string): Promise<RefreshEntry | undefined>;
@@ -66,10 +67,11 @@ export class AuthMapStore implements IAuthStore {
     }
   }
 
-  async updatePasswordHash(uuid: string, passwordHash: string): Promise<void> {
+  async updatePasswordHash(uuid: string, passwordHash: string, changedAt: Date): Promise<void> {
     for (const user of this.users.values()) {
       if (user.uuid === uuid) {
         user.passwordHash = passwordHash;
+        user.passwordChangedAt = changedAt;
         return;
       }
     }

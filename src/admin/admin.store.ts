@@ -51,7 +51,7 @@ function userMatchesFilter(user: AdminUser, filter: UsersFilter): boolean {
     return false;
   }
 
-  const username = filter.username;
+  const { username } = filter;
   if (username !== undefined && !user.username.toLowerCase().startsWith(username.toLowerCase())) {
     return false;
   }

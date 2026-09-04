@@ -4,7 +4,13 @@ import { Public } from "../../../common/public.decorator";
 import { CurrentUser, type RequestUser } from "../../../common/current-user.decorator";
 import { SuccessResponseDto } from "../../../common/dto/dto";
 import { AuthService } from "../../../auth/service/auth.service";
-import { AuthDto, AuthResponseDto, AuthRefreshDto, ChangePasswordDto } from "../../../auth/dto/dto";
+import {
+  AuthDto,
+  AuthResponseDto,
+  AuthRefreshDto,
+  ChangePasswordDto,
+  RegisterDto,
+} from "../../../auth/dto/dto";
 
 @ApiTags("common_auth")
 @Controller("v1/common/auth")
@@ -14,14 +20,14 @@ export class V1AuthController {
   @Post("registration")
   @Public()
   @ApiOperation({ summary: "Регистрация нового пользователя" })
-  @ApiBody({ type: AuthDto })
+  @ApiBody({ type: RegisterDto })
   @ApiResponse({
     status: 201,
     description: "Пользователь зарегистрирован, возвращает токены и данные пользователя",
     type: AuthResponseDto,
   })
   @ApiResponse({ status: 409, description: "Юзернейм уже занят" })
-  async postRegistration(@Body() dto: AuthDto): Promise<AuthResponseDto> {
+  async postRegistration(@Body() dto: RegisterDto): Promise<AuthResponseDto> {
     return this.authService.register(dto.username, dto.password);
   }
 

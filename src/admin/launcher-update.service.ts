@@ -59,7 +59,7 @@ export class LauncherUpdateService {
 
   private writeVersion(version: string): void {
     const data: VersionData = { version };
-    writeFileSync(VERSION_FILE, JSON.stringify(data, null, 2) + "\n");
+    writeFileSync(VERSION_FILE, `${JSON.stringify(data, null, 2)}\n`);
   }
 
   private replaceZip(version: string, os: string, arch: string, buffer: Buffer): void {

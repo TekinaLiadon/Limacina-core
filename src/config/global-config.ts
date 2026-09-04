@@ -1,4 +1,4 @@
-import z from "zod";
+import { z } from "zod";
 import { ZodEnvConfig } from "./zod-env";
 
 const configSchema = z
@@ -18,6 +18,9 @@ const configSchema = z
     TRUST_PROXY: z.string().optional(),
     KEYS_DIR: z.string().optional(),
     DATABASE_URL: z.string().min(1).optional(),
+    REDIS_URL: z.string().url().optional(),
+    CACHE_PREFIX: z.string().optional(),
+    MINECRAFT_HOST: z.string().optional(),
   })
   .refine((config) => config.NODE_ENV !== "production" || config.DB_DRIVER !== "map", {
     message: "DB_DRIVER=map is not allowed in production — use DB_DRIVER=postgres",

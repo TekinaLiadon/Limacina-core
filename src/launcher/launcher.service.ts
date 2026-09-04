@@ -8,7 +8,7 @@ import {
   OnModuleDestroy,
 } from "@nestjs/common";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
-import chokidar, { type FSWatcher } from "chokidar";
+import { watch, type FSWatcher } from "chokidar";
 import type { LauncherConfigDto, LauncherVersionsDto } from "./dto/dto";
 import type { FastifyReply } from "fastify";
 import {
@@ -65,7 +65,7 @@ export class LauncherService implements OnModuleDestroy {
   }
 
   private watchVersion(): void {
-    this.versionWatcher = chokidar.watch(VERSION_FILE, { ignoreInitial: true });
+    this.versionWatcher = watch(VERSION_FILE, { ignoreInitial: true });
 
     this.versionWatcher.on("change", () => {
       this.handleVersionChange();
@@ -94,7 +94,7 @@ export class LauncherService implements OnModuleDestroy {
       archs.map((arch) => join(PUBLIC_DIR, os, arch)),
     );
 
-    this.platformsWatcher = chokidar.watch(dirs, {
+    this.platformsWatcher = watch(dirs, {
       ignoreInitial: true,
       awaitWriteFinish: { stabilityThreshold: 200 },
     });
@@ -202,7 +202,7 @@ export class LauncherService implements OnModuleDestroy {
     if (existsSync(CONFIG_FILE)) return this.getConfig();
 
     const content = stringifyToml(dto as unknown as Record<string, unknown>);
-    writeFileSync(CONFIG_FILE, content + "\n");
+    writeFileSync(CONFIG_FILE, `${content}\n`);
 
     this.logger.log({ projectName: dto.projectName }, "Конфиг лаунчера создан");
 

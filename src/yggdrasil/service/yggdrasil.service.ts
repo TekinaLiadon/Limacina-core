@@ -14,19 +14,19 @@ import type {
   GameProfileDto,
   SessionProfileDto,
 } from "../dto/dto";
-import type {
-  IYggdrasilStore,
-  IYggdrasilTokenStore,
-  IYggdrasilSessionStore,
-  YggdrasilProfile,
-} from "./yggdrasil_store";
 import {
   YggdrasilStoreToken,
   YggdrasilTokenStoreToken,
   YggdrasilSessionStoreToken,
+  type IYggdrasilStore,
+  type IYggdrasilTokenStore,
+  type IYggdrasilSessionStore,
+  type YggdrasilProfile,
 } from "./yggdrasil_store";
-import type { IUserContentStore } from "../../user-content/user-content.store";
-import { UserContentMapStoreToken } from "../../user-content/user-content.store";
+import {
+  UserContentMapStoreToken,
+  type IUserContentStore,
+} from "../../user-content/user-content.store";
 import { AppConfigToken } from "../../config/app-config.provider";
 import type { AppConfigType } from "../../config/global-config";
 
@@ -316,9 +316,7 @@ export class YggdrasilService {
       const parts = token.split(".");
       if (parts.length !== 3) return null;
 
-      const headerB64 = parts[0];
-      const payloadB64 = parts[1];
-      const sigB64 = parts[2];
+      const [headerB64, payloadB64, sigB64] = parts;
       if (!headerB64 || !payloadB64 || !sigB64) return null;
       const expectedSig = createHmac("sha256", this.jwtSecret)
         .update(`${headerB64}.${payloadB64}`)
@@ -597,7 +595,7 @@ export class YggdrasilService {
   ): Promise<Array<{ name: string; value: string; signature?: string }>> {
     const properties: Array<{ name: string; value: string; signature?: string }> = [];
 
-    let skinUrl = profile.skinUrl;
+    let { skinUrl } = profile;
     if (!skinUrl) {
       const userSkins = await this.contentStore.findByUserUuid(profile.userId, "skin");
       const latestSkin = userSkins.toSorted((a, b) => a.id - b.id).at(-1);

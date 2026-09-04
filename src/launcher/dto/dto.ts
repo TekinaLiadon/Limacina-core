@@ -1,5 +1,6 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { IsArray, IsBoolean, IsString } from "class-validator";
+import { validationMessages } from "../../common/validation-messages";
 
 export class LauncherPlatformDto {
   @ApiProperty()
@@ -70,35 +71,35 @@ export class LauncherConfigDto {
 
 export class LauncherConfigCreateDto {
   @ApiProperty({ description: "Название проекта", example: "Cordelia" })
-  @IsString()
+  @IsString({ message: validationMessages.string("projectName") })
   projectName!: string;
 
   @ApiProperty({ description: "Версия Minecraft", example: "1.21.1" })
-  @IsString()
+  @IsString({ message: validationMessages.string("mcVersion") })
   mcVersion!: string;
 
   @ApiProperty({ description: "Тип загрузчика модов", example: "neoforge" })
-  @IsString()
+  @IsString({ message: validationMessages.string("modLoader") })
   modLoader!: string;
 
   @ApiProperty({ description: "Версия загрузчика", example: "21.1.234" })
-  @IsString()
+  @IsString({ message: validationMessages.string("loaderVersion") })
   loaderVersion!: string;
 
   @ApiProperty({ description: "Аргументы JVM", type: [String], example: [] })
-  @IsArray()
-  @IsString({ each: true })
+  @IsArray({ message: validationMessages.array("jvmArgs") })
+  @IsString({ each: true, message: validationMessages.arrayItemString("jvmArgs") })
   jvmArgs!: string[];
 
   @ApiProperty({ description: "Минимальный объём памяти", example: "-Xms512M" })
-  @IsString()
+  @IsString({ message: validationMessages.string("minMemory") })
   minMemory!: string;
 
   @ApiProperty({ description: "Максимальный объём памяти", example: "-Xmx2560M" })
-  @IsString()
+  @IsString({ message: validationMessages.string("maxMemory") })
   maxMemory!: string;
 
   @ApiProperty({ description: "Онлайн-режим", example: true })
-  @IsBoolean()
+  @IsBoolean({ message: validationMessages.boolean("online") })
   online!: boolean;
 }

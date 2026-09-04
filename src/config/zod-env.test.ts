@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import z from "zod";
+import { z } from "zod";
 import { ZodEnvConfig } from "./zod-env";
 
 const schema = z.object({

@@ -13,6 +13,7 @@ import {
   MinLength,
 } from "class-validator";
 import { Transform, Type } from "class-transformer";
+import { validationMessages } from "../../common/validation-messages";
 
 export const AVAILABLE_ROLES = ["admin", "moderator", "user"] as const;
 export type AvailableRole = (typeof AVAILABLE_ROLES)[number];
@@ -54,16 +55,16 @@ export class UsersQueryDto {
   })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
+  @IsInt({ message: validationMessages.int("limit") })
+  @Min(1, { message: validationMessages.min("limit", 1) })
+  @Max(100, { message: validationMessages.max("limit", 100) })
   limit?: number;
 
   @ApiProperty({ default: 0, minimum: 0, description: "Смещение от начала списка" })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
-  @Min(0)
+  @IsInt({ message: validationMessages.int("offset") })
+  @Min(0, { message: validationMessages.min("offset", 0) })
   offset?: number;
 
   @ApiProperty({
@@ -72,8 +73,8 @@ export class UsersQueryDto {
     description: "Поиск по началу юзернейма (без учёта регистра)",
   })
   @IsOptional()
-  @IsString()
-  @IsNotEmpty()
+  @IsString({ message: validationMessages.string("username") })
+  @IsNotEmpty({ message: validationMessages.notEmpty("username") })
   username?: string;
 
   @ApiProperty({
@@ -88,17 +89,17 @@ export class UsersQueryDto {
     if (value === "false") return false;
     return value;
   })
-  @IsBoolean()
+  @IsBoolean({ message: validationMessages.boolean("approved") })
   approved?: boolean;
 }
 
 export class ApproveUserDto {
   @ApiProperty({ example: "john" })
-  @IsString()
+  @IsString({ message: validationMessages.string("username") })
   username!: string;
 
   @ApiProperty({ example: true })
-  @IsBoolean()
+  @IsBoolean({ message: validationMessages.boolean("approved") })
   approved!: boolean;
 }
 
@@ -114,12 +115,14 @@ export class BanUserDto {
 
 export class SetRoleDto {
   @ApiProperty({ example: "john" })
-  @IsString()
+  @IsString({ message: validationMessages.string("username") })
   username!: string;
 
   @ApiProperty({ example: "user", enum: AVAILABLE_ROLES })
-  @IsString()
-  @IsIn(AVAILABLE_ROLES)
+  @IsString({ message: validationMessages.string("role") })
+  @IsIn(AVAILABLE_ROLES, {
+    message: validationMessages.enum("role", AVAILABLE_ROLES.join(", ")),
+  })
   role!: AvailableRole;
 }
 
@@ -239,14 +242,14 @@ export class LogsQueryDto {
     required: false,
   })
   @IsOptional()
-  @IsDateString()
+  @IsDateString({}, { message: validationMessages.date("date") })
   date?: string;
 
   @ApiProperty({ default: 0, minimum: 0, description: "Смещение от начала файла (номер строки)" })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
-  @Min(0)
+  @IsInt({ message: validationMessages.int("offset") })
+  @Min(0, { message: validationMessages.min("offset", 0) })
   offset?: number;
 
   @ApiProperty({
@@ -257,9 +260,9 @@ export class LogsQueryDto {
   })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(1000)
+  @IsInt({ message: validationMessages.int("limit") })
+  @Min(1, { message: validationMessages.min("limit", 1) })
+  @Max(1000, { message: validationMessages.max("limit", 1000) })
   limit?: number;
 }
 
@@ -271,9 +274,9 @@ export class V1LogsQueryDto extends LogsQueryDto {
   })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
-  @Min(100)
-  @Max(599)
+  @IsInt({ message: validationMessages.int("statusCode") })
+  @Min(100, { message: validationMessages.min("statusCode", 100) })
+  @Max(599, { message: validationMessages.max("statusCode", 599) })
   statusCode?: number;
 
   @ApiProperty({
@@ -282,8 +285,8 @@ export class V1LogsQueryDto extends LogsQueryDto {
     description: "Фильтр по URL запроса (подстрока, без учёта регистра)",
   })
   @IsOptional()
-  @IsString()
-  @IsNotEmpty()
+  @IsString({ message: validationMessages.string("url") })
+  @IsNotEmpty({ message: validationMessages.notEmpty("url") })
   url?: string;
 
   @ApiProperty({
@@ -292,8 +295,8 @@ export class V1LogsQueryDto extends LogsQueryDto {
     description: "Фильтр по IP клиента (подстрока, без учёта регистра)",
   })
   @IsOptional()
-  @IsString()
-  @IsNotEmpty()
+  @IsString({ message: validationMessages.string("ip") })
+  @IsNotEmpty({ message: validationMessages.notEmpty("ip") })
   ip?: string;
 }
 

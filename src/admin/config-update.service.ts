@@ -11,7 +11,7 @@ export class ConfigUpdateService {
 
   update(dto: LauncherConfigUpdateDto): LauncherConfigUpdateDto {
     const content = stringifyToml(dto as unknown as Record<string, unknown>);
-    writeFileSync(CONFIG_FILE, content + "\n");
+    writeFileSync(CONFIG_FILE, `${content}\n`);
 
     this.logger.log({ projectName: dto.projectName }, "Конфиг лаунчера обновлён");
 

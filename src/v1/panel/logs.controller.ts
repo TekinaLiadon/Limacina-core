@@ -1,8 +1,7 @@
 import { Controller, Get, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { Roles } from "../../common/roles.decorator";
-import { LogsService } from "../../admin/logs.service";
-import type { LogsFilter } from "../../admin/logs.service";
+import { LogsService, type LogsFilter } from "../../admin/logs.service";
 import { LogsResponseDto, V1LogsQueryDto } from "../../admin/dto/dto";
 
 @ApiTags("panel_logs")

@@ -64,13 +64,13 @@ function withUsersFilter(query: SelectBuilder, filter: UsersFilter): SelectBuild
   let chained = query;
   let placeholders = 0;
 
-  const username = filter.username;
+  const { username } = filter;
   if (username !== undefined) {
     placeholders += 1;
     chained = chained.where(`username ILIKE $${placeholders}`, `${escapeLikePattern(username)}%`);
   }
 
-  const approved = filter.approved;
+  const { approved } = filter;
   if (approved !== undefined) {
     placeholders += 1;
     chained = chained.where(`approved = $${placeholders}`, approved);
@@ -88,7 +88,7 @@ export class AdminPostgresStore implements IAdminStore {
       .build();
 
     const { rows } = await execute<UserRow>(query.sql, query.values);
-    const row = rows[0];
+    const [row] = rows;
     if (!row) return undefined;
 
     return toAdminUser(row);
@@ -152,7 +152,7 @@ export class AdminPostgresStore implements IAdminStore {
       filter,
     ).build();
     const { rows: countRows } = await execute<CountRow>(countQuery.sql, countQuery.values);
-    const countRow = countRows[0];
+    const [countRow] = countRows;
     const total = countRow ? Number(countRow.total) : 0;
 
     return {
@@ -179,7 +179,7 @@ export class AdminPostgresStore implements IAdminStore {
       filter,
     ).build();
     const { rows: countRows } = await execute<CountRow>(countQuery.sql, countQuery.values);
-    const countRow = countRows[0];
+    const [countRow] = countRows;
     const total = countRow ? Number(countRow.total) : 0;
 
     return {
@@ -277,7 +277,7 @@ export class AdminPostgresStore implements IAdminStore {
       .build();
 
     const { rows } = await execute<DeletedUserRow>(query.sql, query.values);
-    const row = rows[0];
+    const [row] = rows;
     if (!row) return undefined;
 
     return toDeletedUser(row);

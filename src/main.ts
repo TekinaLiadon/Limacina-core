@@ -4,8 +4,7 @@ import { existsSync } from "node:fs";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
-import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
-import type { OpenAPIObject } from "@nestjs/swagger";
+import { DocumentBuilder, SwaggerModule, type OpenAPIObject } from "@nestjs/swagger";
 import { apiReference } from "@scalar/nestjs-api-reference";
 import { ValidationPipe, Logger as NestLogger } from "@nestjs/common";
 import { Logger, LoggerErrorInterceptor } from "nestjs-pino";
@@ -198,7 +197,7 @@ async function servePanelFallback(
   const isInsidePanel =
     !!relativeToPanel && !relativeToPanel.startsWith("..") && !isAbsolute(relativeToPanel);
   if (isInsidePanel && (await Bun.file(resolvedPath).exists())) {
-    return reply.sendFile("panel" + relativePath);
+    return reply.sendFile(`panel${relativePath}`);
   }
 
   if (!existsSync(panelIndexPath)) {

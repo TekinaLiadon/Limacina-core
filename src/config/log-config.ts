@@ -1,4 +1,4 @@
-import z from "zod";
+import { z } from "zod";
 import { ZodEnvConfig } from "./zod-env";
 
 const logSchema = z.object({

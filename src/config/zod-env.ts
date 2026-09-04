@@ -1,9 +1,7 @@
-import z from "zod";
+import { z } from "zod";
 
-import { Logger } from "@nestjs/common";
+import { Logger, type DynamicModule } from "@nestjs/common";
 import { ConfigModule, ConfigService, registerAs } from "@nestjs/config";
-
-import type { DynamicModule } from "@nestjs/common";
 
 export class ZodEnvConfig<T extends z.ZodType<Record<string, unknown>>> {
   readonly factory;

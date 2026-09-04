@@ -22,6 +22,28 @@ export interface SessionEntry {
   ip: string;
 }
 
+export interface YggdrasilUserCredentials {
+  uuid: string;
+  passwordHash: string;
+  banned: boolean;
+  approved: boolean;
+}
+
+export interface YggdrasilTokenRecord {
+  entry: TokenEntry;
+  issuedAt: number;
+  expiresAt: number;
+}
+
+export interface YggdrasilSessionRecord {
+  entry: SessionEntry;
+  expiresAt: number;
+}
+
+export const TOKEN_TTL_MS = 15 * 24 * 60 * 60 * 1000;
+export const SESSION_TTL_MS = 30 * 1000;
+export const MAX_TOKENS_PER_USER = 10;
+
 export const YggdrasilStoreToken = Symbol("YggdrasilStore");
 export const YggdrasilSessionStoreToken = Symbol("YggdrasilSessionStore");
 export const YggdrasilTokenStoreToken = Symbol("YggdrasilTokenStore");

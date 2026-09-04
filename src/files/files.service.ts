@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
-import chokidar, { type FSWatcher } from "chokidar";
+import { watch, type FSWatcher } from "chokidar";
 import { FileDto } from "./dto/dto";
 
 const LAUNCHER_DIR = "public/launcher";
@@ -68,7 +68,7 @@ export class FilesService implements OnModuleDestroy {
   }
 
   private createWatcher(dir: string, map: Map<string, string>): FSWatcher {
-    const watcher = chokidar.watch(dir, {
+    const watcher = watch(dir, {
       ignoreInitial: true,
       awaitWriteFinish: { stabilityThreshold: 200 },
     });

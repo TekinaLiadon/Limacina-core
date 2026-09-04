@@ -3,8 +3,7 @@ import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
-import { AuthMapStoreToken } from "../auth/service/auth_store.service";
-import type { IAuthStore } from "../auth/service/auth_store.service";
+import { AuthMapStoreToken, type IAuthStore } from "../auth/service/auth_store.service";
 import type { RequestUser } from "./current-user.decorator";
 
 @Injectable()

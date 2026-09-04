@@ -34,7 +34,7 @@ export class AuthPostgresStore implements IAuthStore {
       .build();
 
     const { rows } = await execute<UserRow>(query.sql, query.values);
-    const row = rows[0];
+    const [row] = rows;
     if (!row) return undefined;
 
     return {
@@ -93,10 +93,11 @@ export class AuthPostgresStore implements IAuthStore {
     }
   }
 
-  async updatePasswordHash(uuid: string, passwordHash: string): Promise<void> {
+  async updatePasswordHash(uuid: string, passwordHash: string, changedAt: Date): Promise<void> {
     const query = updateQuery()
       .from(TABLES.users)
       .set("password_hash", passwordHash)
+      .set("password_changed_at", changedAt)
       .where("uuid = $1", uuid)
       .build();
 
@@ -135,7 +136,7 @@ export class AuthPostgresStore implements IAuthStore {
       .build();
 
     const { rows } = await execute<RefreshRow>(query.sql, query.values);
-    const row = rows[0];
+    const [row] = rows;
     if (!row) return undefined;
 
     return { userId: row.user_id, username: row.username };

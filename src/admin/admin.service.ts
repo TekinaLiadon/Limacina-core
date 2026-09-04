@@ -66,7 +66,7 @@ export class AdminService {
   async setUserPassword(username: string, password: string, callerRole: string): Promise<void> {
     const user = await this.findMutableUser(username, callerRole);
     const passwordHash = await Bun.password.hash(password);
-    await this.authStore.updatePasswordHash(user.uuid, passwordHash);
+    await this.authStore.updatePasswordHash(user.uuid, passwordHash, new Date());
     await this.authStore.deleteRefreshByUserId(user.uuid);
   }
 

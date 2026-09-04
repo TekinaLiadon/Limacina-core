@@ -1,14 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { IsBoolean, IsNumber, IsOptional, IsString, ValidateNested } from "class-validator";
 import { Type } from "class-transformer";
+import { validationMessages } from "../../common/validation-messages";
 
 export class AgentDto {
   @ApiProperty({ example: "Minecraft" })
-  @IsString()
+  @IsString({ message: validationMessages.string("agent.name") })
   name!: string;
 
   @ApiProperty({ example: 1 })
-  @IsNumber()
+  @IsNumber({}, { message: validationMessages.number("agent.version") })
   version!: number;
 }
 
@@ -45,21 +46,21 @@ export class AuthenticateDto {
   agent?: AgentDto;
 
   @ApiProperty({ example: "player1" })
-  @IsString()
+  @IsString({ message: validationMessages.string("username") })
   username!: string;
 
   @ApiProperty({ example: "secret123" })
-  @IsString()
+  @IsString({ message: validationMessages.string("password") })
   password!: string;
 
   @ApiPropertyOptional({ example: "client-token-123" })
   @IsOptional()
-  @IsString()
+  @IsString({ message: validationMessages.string("clientToken") })
   clientToken?: string;
 
   @ApiPropertyOptional({ default: true })
   @IsOptional()
-  @IsBoolean()
+  @IsBoolean({ message: validationMessages.boolean("requestUser") })
   requestUser?: boolean;
 }
 
@@ -119,15 +120,15 @@ export class SignoutDto {
 
 export class JoinDto {
   @ApiProperty()
-  @IsString()
+  @IsString({ message: validationMessages.string("accessToken") })
   accessToken!: string;
 
   @ApiProperty()
-  @IsString()
+  @IsString({ message: validationMessages.string("selectedProfile") })
   selectedProfile!: string;
 
   @ApiProperty()
-  @IsString()
+  @IsString({ message: validationMessages.string("serverId") })
   serverId!: string;
 }
 

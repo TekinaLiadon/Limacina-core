@@ -1,13 +1,16 @@
 import { ConflictException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { v4 } from "uuid";
-import type { IAuthStore } from "./auth_store.service";
-import { AuthMapStore, AuthMapStoreToken } from "./auth_store.service";
+import {
+  AuthMapStore,
+  AuthMapStoreToken,
+  type IAuthStore,
+  type RefreshEntry,
+  type StoredUser,
+} from "./auth_store.service";
 import { AppConfigToken } from "../../config/app-config.provider";
 import type { AppConfigType } from "../../config/global-config";
 import type { AuthResponseDto, UserTokens } from "../dto/dto";
-import type { StoredUser } from "./auth_store.service";
-import type { RefreshEntry } from "./auth_store.service";
 import { AuthPostgresStore } from "./auth_postgres.service";
 
 export const useFactory = (db: string) => {
@@ -94,7 +97,7 @@ export class AuthService {
 
   private async replacePassword(uuid: string, newPassword: string): Promise<void> {
     const passwordHash = await Bun.password.hash(newPassword);
-    await this.authStore.updatePasswordHash(uuid, passwordHash);
+    await this.authStore.updatePasswordHash(uuid, passwordHash, new Date());
     await this.authStore.deleteRefreshByUserId(uuid);
   }
 
