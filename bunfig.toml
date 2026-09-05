@@ -1,2 +1,13 @@
 [test]
 root = "src"
+coverage = true
+coverageSkipTestFiles = true
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"
+coveragePathIgnorePatterns = [
+  "src/auth/service/auth_postgres.service.ts",
+  "src/admin/admin_postgres.store.ts",
+  "src/yggdrasil/service/yggdrasil_postgres.ts",
+  "src/config/log-stream.ts",
+  "src/files/files.controller.ts",
+]

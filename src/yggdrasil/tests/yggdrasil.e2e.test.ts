@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
-import { INestApplication } from "@nestjs/common";
+import { type INestApplication } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
 import { YggdrasilController } from "../yggdrasil.controller";
@@ -260,20 +260,24 @@ describe("Yggdrasil эндпоинты", () => {
         username: "testplayer2",
       });
 
-      const authRes = await supertest(app.getHttpServer())
-        .post("/authserver/authenticate")
-        .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+      try {
+        const authRes = await supertest(app.getHttpServer())
+          .post("/authserver/authenticate")
+          .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
+          .expect(201);
 
-      const refreshRes = await supertest(app.getHttpServer())
-        .post("/authserver/refresh")
-        .send({
-          accessToken: authRes.body.accessToken,
-          selectedProfile: { id: secondProfileUuid, name: "testplayer2", properties: [] },
-        })
-        .expect(201);
+        const refreshRes = await supertest(app.getHttpServer())
+          .post("/authserver/refresh")
+          .send({
+            accessToken: authRes.body.accessToken,
+            selectedProfile: { id: secondProfileUuid, name: "testplayer2", properties: [] },
+          })
+          .expect(201);
 
-      expect(refreshRes.body.selectedProfile.id).toBe(secondProfileUuid);
+        expect(refreshRes.body.selectedProfile.id).toBe(secondProfileUuid);
+      } finally {
+        await store.__test__deleteProfile(secondProfileUuid);
+      }
     });
   });
 

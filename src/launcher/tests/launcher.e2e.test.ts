@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { renameSync } from "node:fs";
 import { LauncherController } from "../launcher.controller";
 import { LauncherService } from "../launcher.service";
-import { INestApplication } from "@nestjs/common";
+import { type INestApplication } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
 

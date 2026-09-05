@@ -42,11 +42,7 @@ beforeEach(() => {
     }),
   );
 
-  mock.module("../../utils/fetch", () => ({
-    limaFetch: fetchMock,
-  }));
-
-  proxyStore = new YggdrasilProxyStore(UPSTREAM_URL);
+  proxyStore = new YggdrasilProxyStore(UPSTREAM_URL, fetchMock as never);
 });
 
 afterEach(() => {

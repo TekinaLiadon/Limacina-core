@@ -4,7 +4,7 @@ import { AuthService } from "../service/auth.service";
 import { AuthMapStore, AuthMapStoreToken } from "../service/auth_store.service";
 import GlobalConfig from "../../config/global-config";
 import { AppConfigToken } from "../../config/app-config.provider";
-import { INestApplication } from "@nestjs/common";
+import { type INestApplication } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtModule } from "@nestjs/jwt";
 import supertest from "supertest";
@@ -42,11 +42,20 @@ describe("Auth эндпоинты", (): void => {
     await app.close();
   });
 
+  beforeAll(async () => {
+    const registerRes = await supertest(app.getHttpServer())
+      .post("/auth/registration")
+      .send({ username: "testuser", password: "pass123" })
+      .expect(201);
+    registeredUuid = registerRes.body.uuid;
+    await authStore.approveUser(registeredUuid);
+  });
+
   describe("POST /auth/registration", () => {
     it("успешная регистрация нового пользователя", async () => {
       const res = await supertest(app.getHttpServer())
         .post("/auth/registration")
-        .send({ username: "testuser", password: "pass123" })
+        .send({ username: "newuser", password: "pass123" })
         .expect(201);
 
       expect(res.body).toHaveProperty("tokens");
@@ -55,13 +64,10 @@ describe("Auth эндпоинты", (): void => {
       expect(res.body).toHaveProperty("role");
       expect(res.body.tokens).toHaveProperty("access_token");
       expect(res.body.tokens).toHaveProperty("refresh_token");
-      expect(res.body.username).toBe("testuser");
+      expect(res.body.username).toBe("newuser");
       expect(typeof res.body.uuid).toBe("string");
       expect(res.body.uuid.length).toBeGreaterThan(0);
       expect(res.body.role).toBe("user");
-      registeredUuid = res.body.uuid;
-
-      await authStore.approveUser(registeredUuid);
     });
 
     it("ошибка при повторной регистрации", async () => {
@@ -166,14 +172,16 @@ describe("Auth эндпоинты", (): void => {
       const { refresh_token } = loginRes.body.tokens;
 
       const user = await authStore.findByUsername("testuser");
-      await authStore.saveUser({ ...user!, banned: true });
+      try {
+        await authStore.saveUser({ ...user!, banned: true });
 
-      await supertest(app.getHttpServer())
-        .post("/auth/refresh")
-        .send({ refresh_token })
-        .expect(401);
-
-      await authStore.saveUser({ ...user!, banned: false });
+        await supertest(app.getHttpServer())
+          .post("/auth/refresh")
+          .send({ refresh_token })
+          .expect(401);
+      } finally {
+        await authStore.saveUser({ ...user!, banned: false });
+      }
     });
 
     it("ошибка 401 после удаления пользователя", async () => {
@@ -185,6 +193,7 @@ describe("Auth эндпоинты", (): void => {
       const { refresh_token } = loginRes.body.tokens;
 
       const removedUserHash = await Bun.password.hash("pass123");
+      const originalUser = await authStore.findByUsername("testuser");
       await authStore.saveUser({
         uuid: "removed-user-uuid",
         username: "testuser",
@@ -195,20 +204,24 @@ describe("Auth эндпоинты", (): void => {
         banned: false,
       });
 
-      const newLogin = await supertest(app.getHttpServer())
-        .post("/auth/login")
-        .send({ username: "testuser", password: "pass123" })
-        .expect(201);
+      try {
+        const newLogin = await supertest(app.getHttpServer())
+          .post("/auth/login")
+          .send({ username: "testuser", password: "pass123" })
+          .expect(201);
 
-      await supertest(app.getHttpServer())
-        .post("/auth/refresh")
-        .send({ refresh_token: newLogin.body.tokens.refresh_token })
-        .expect(201);
+        await supertest(app.getHttpServer())
+          .post("/auth/refresh")
+          .send({ refresh_token: newLogin.body.tokens.refresh_token })
+          .expect(201);
 
-      await supertest(app.getHttpServer())
-        .post("/auth/refresh")
-        .send({ refresh_token })
-        .expect(401);
+        await supertest(app.getHttpServer())
+          .post("/auth/refresh")
+          .send({ refresh_token })
+          .expect(401);
+      } finally {
+        await authStore.saveUser(originalUser!);
+      }
     });
   });
 
@@ -243,15 +256,17 @@ describe("Auth эндпоинты", (): void => {
   describe("Инвалидация access-токена при бане", () => {
     it("логин забаненного пользователя отклоняется", async () => {
       const user = await authStore.findByUsername("testuser");
-      await authStore.saveUser({ ...user!, banned: true });
+      try {
+        await authStore.saveUser({ ...user!, banned: true });
 
-      const loginRes = await supertest(app.getHttpServer())
-        .post("/auth/login")
-        .send({ username: "testuser", password: "pass123" })
-        .expect(401);
-      expect(loginRes.body).toBeDefined();
-
-      await authStore.saveUser({ ...user!, banned: false });
+        const loginRes = await supertest(app.getHttpServer())
+          .post("/auth/login")
+          .send({ username: "testuser", password: "pass123" })
+          .expect(401);
+        expect(loginRes.body).toBeDefined();
+      } finally {
+        await authStore.saveUser({ ...user!, banned: false });
+      }
     });
   });
 });

@@ -5,7 +5,7 @@ process.env["DB_DRIVER"] = "map";
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
-import { INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
+import { type INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { Reflector } from "@nestjs/core";
 import { Test, TestingModule } from "@nestjs/testing";
@@ -89,6 +89,14 @@ describe("V1 common/content эндпоинты", (): void => {
 
     userToken = jwtService.sign({ sub: TEST_UUID, username: "v1user", role: "user" });
     otherUserToken = jwtService.sign({ sub: "other-uuid-0002", username: "other", role: "user" });
+
+    const uploadRes = await supertest(app.getHttpServer())
+      .post("/v1/common/content/skins")
+      .set("Authorization", `Bearer ${userToken}`)
+      .attach("file", pngBuffer(), "skin.png")
+      .expect(201);
+    uploadedSkinId = uploadRes.body.id;
+    trackUploadedFile(uploadRes.body.url);
   });
 
   afterAll(async () => {
@@ -106,19 +114,6 @@ describe("V1 common/content эндпоинты", (): void => {
   describe("POST /v1/common/content/skins", () => {
     it("возвращает 401 без токена", async () => {
       await supertest(app.getHttpServer()).post("/v1/common/content/skins").expect(401);
-    });
-
-    it("загружает скин", async () => {
-      const res = await supertest(app.getHttpServer())
-        .post("/v1/common/content/skins")
-        .set("Authorization", `Bearer ${userToken}`)
-        .attach("file", pngBuffer(), "skin.png")
-        .expect(201);
-
-      expect(res.body).toHaveProperty("id");
-      expect(res.body).toHaveProperty("url");
-      uploadedSkinId = res.body.id;
-      trackUploadedFile(res.body.url);
     });
 
     it("возвращает 400 если файл не загружен", async () => {
@@ -170,13 +165,21 @@ describe("V1 common/content эндпоинты", (): void => {
         .expect(403);
     });
 
-    it("удаляет свой скин", async () => {
+    it("удаляет свой скин и восстанавливает его для остальных тестов", async () => {
       const res = await supertest(app.getHttpServer())
         .delete(`/v1/common/content/skins/${uploadedSkinId}`)
         .set("Authorization", `Bearer ${userToken}`)
         .expect(200);
 
       expect(res.body.success).toBe(true);
+
+      const uploadRes = await supertest(app.getHttpServer())
+        .post("/v1/common/content/skins")
+        .set("Authorization", `Bearer ${userToken}`)
+        .attach("file", pngBuffer(), "skin.png")
+        .expect(201);
+      uploadedSkinId = uploadRes.body.id;
+      trackUploadedFile(uploadRes.body.url);
     });
 
     it("возвращает 404 если скин не найден", async () => {

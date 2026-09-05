@@ -30,7 +30,7 @@ function handleRequest(req: Request): Response | Promise<Response> {
 
 beforeAll(() => {
   server = Bun.serve({ port: 0, fetch: handleRequest });
-  baseUrl = `http://localhost:${server.port}`;
+  baseUrl = `http://127.0.0.1:${server.port}`;
 });
 
 afterAll(() => {
@@ -54,7 +54,7 @@ describe("yggFetch", () => {
   });
 
   it("возвращает ok=false при сетевой ошибке", async () => {
-    const res = await limaFetch("http://localhost:19999/nonexistent", {
+    const res = await limaFetch("http://127.0.0.1:19999/nonexistent", {
       timeout: 1000,
       silent: true,
     });

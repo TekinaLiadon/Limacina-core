@@ -172,6 +172,21 @@ export class YggdrasilMapStore implements IYggdrasilStore {
   async __test__addUser(username: string, uuid: string, passwordHash: string): Promise<void> {
     this.users.set(username, { uuid, passwordHash });
   }
+
+  async __test__deleteProfile(uuid: string): Promise<void> {
+    const profile = this.profilesByUuid.get(uuid);
+    if (!profile) return;
+
+    this.profilesByUuid.delete(uuid);
+    this.profilesByUsername.delete(profile.username);
+    const userIds = this.profilesByUserId.get(profile.userId);
+    if (userIds) {
+      this.profilesByUserId.set(
+        profile.userId,
+        userIds.filter((id) => id !== uuid),
+      );
+    }
+  }
 }
 
 @Injectable()
