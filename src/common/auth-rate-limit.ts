@@ -3,13 +3,12 @@ import rateLimit from "@fastify/rate-limit";
 
 type LoginRateLimitHook = (request: FastifyRequest, reply: FastifyReply) => Promise<void> | void;
 
-const AUTH_ROUTES_PREFIXES = ["/v1/common/auth", "/auth"];
+const AUTH_ROUTES_PREFIX = "/v1/common/auth";
 const LOGIN_ENDPOINTS = ["/login", "/registration"];
 
 export function isAuthLoginRoute(url: string): boolean {
   const path = url.split("?")[0] ?? url;
-  const prefixMatched = AUTH_ROUTES_PREFIXES.some((prefix) => path.startsWith(prefix));
-  if (!prefixMatched) return false;
+  if (!path.startsWith(AUTH_ROUTES_PREFIX)) return false;
   return LOGIN_ENDPOINTS.some((endpoint) => path.endsWith(endpoint));
 }
 

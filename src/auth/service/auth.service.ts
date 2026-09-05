@@ -12,8 +12,13 @@ import { AppConfigToken } from "../../config/app-config.provider";
 import type { AppConfigType } from "../../config/global-config";
 import type { AuthResponseDto, UserTokens } from "../dto/dto";
 import { AuthPostgresStore } from "./auth_postgres.service";
+import { AuthProxyStore } from "./auth_proxy.service";
 
-export const useFactory = (db: string) => {
+export const useFactory = (db: string, authProxyUrl?: string) => {
+  if (authProxyUrl) {
+    return new AuthProxyStore(authProxyUrl);
+  }
+
   return (
     {
       postgres: new AuthPostgresStore(),

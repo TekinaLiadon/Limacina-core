@@ -9,7 +9,7 @@ import { AuthMapStoreToken } from "./auth_store.service";
   providers: [
     {
       provide: AuthMapStoreToken,
-      useFactory: (config: AppConfigType) => useFactory(config.DB_DRIVER),
+      useFactory: (config: AppConfigType) => useFactory(config.DB_DRIVER, config.AUTH_PROXY_URL),
       inject: [AppConfigToken],
     },
   ],

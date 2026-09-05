@@ -796,6 +796,92 @@ describe("V1 panel эндпоинты", (): void => {
     });
   });
 
+  describe("Иерархия ролей при мутациях", () => {
+    it("admin не может забанить другого admin", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/ban")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "secondadmin", banned: true })
+        .expect(403);
+    });
+
+    it("admin не может изменить роль другого admin", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/role")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "secondadmin", role: "user" })
+        .expect(403);
+    });
+
+    it("admin не может изменить одобрение другого admin", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/approve")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "secondadmin", approved: false })
+        .expect(403);
+    });
+
+    it("owner может забанить и разбанить admin", async () => {
+      try {
+        await supertest(app.getHttpServer())
+          .patch("/v1/panel/users/ban")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .send({ username: "secondadmin", banned: true })
+          .expect(200);
+      } finally {
+        await supertest(app.getHttpServer())
+          .patch("/v1/panel/users/ban")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .send({ username: "secondadmin", banned: false });
+      }
+    });
+  });
+
+  describe("Повторное удаление пользователя", () => {
+    it("перезаписывает запись в удалённых при повторном удалении", async () => {
+      const store = app.get(AdminMapStoreToken, { strict: false });
+      await store.saveUser({
+        uuid: "repeatuser-uuid",
+        username: "repeatuser",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+
+      await supertest(app.getHttpServer())
+        .delete("/v1/panel/users/repeatuser")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/repeatuser/restore")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/ban")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ username: "repeatuser", banned: true })
+        .expect(200);
+
+      await supertest(app.getHttpServer())
+        .delete("/v1/panel/users/repeatuser")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      const deleted = await supertest(app.getHttpServer())
+        .get("/v1/panel/users/deleted?username=repeatuser")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      const matches = deleted.body.items.filter(
+        (u: { username: string }) => u.username === "repeatuser",
+      );
+      expect(matches.length).toBe(1);
+      expect(matches[0].banned).toBe(true);
+    });
+  });
+
   describe("POST /v1/panel/server/restart", () => {
     it("без body перезапускает сервер без пересборки", async () => {
       const technicalService = app.get(TechnicalService);
@@ -1067,6 +1153,22 @@ describe("V1 panel эндпоинты", (): void => {
         .set("Authorization", `Bearer ${userToken}`)
         .send(validConfig)
         .expect(403);
+    });
+
+    it("возвращает 400 при отсутствии обязательных полей", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher/config")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ projectName: "OnlyName" })
+        .expect(400);
+    });
+
+    it("возвращает 400 при невалидных данных", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher/config")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ ...validConfig, online: "not-a-bool" })
+        .expect(400);
     });
 
     it("возвращает 401 без токена", async () => {

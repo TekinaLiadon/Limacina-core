@@ -1,5 +1,4 @@
 import { Module } from "@nestjs/common";
-import { UserContentController } from "./user-content.controller";
 import { UserContentService } from "./user-content.service";
 import {
   UserContentMapStore,
@@ -18,7 +17,6 @@ const useFactory = (db: string) => {
 
 @Module({
   imports: [AppConfigModule],
-  controllers: [UserContentController],
   providers: [
     UserContentService,
     {

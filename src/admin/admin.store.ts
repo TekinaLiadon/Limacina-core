@@ -32,15 +32,12 @@ export interface DeletedUsersPage {
 export interface IAdminStore {
   findByUsername(username: string): Promise<AdminUser | undefined>;
   saveUser(user: AdminUser): Promise<void>;
-  findUnapprovedUsers(limit: number): Promise<AdminUser[]>;
-  findAllUsers(limit: number): Promise<AdminUser[]>;
   searchUsers(filter: UsersFilter): Promise<UsersPage>;
   searchDeletedUsers(filter: UsersFilter): Promise<DeletedUsersPage>;
   setApproved(username: string, approved: boolean): Promise<void>;
   setBanned(username: string, banned: boolean): Promise<void>;
   setRole(username: string, role: string): Promise<void>;
   deleteUser(username: string): Promise<AdminUser | undefined>;
-  findDeletedUsers(limit: number): Promise<DeletedUser[]>;
   findDeletedByUsername(username: string): Promise<DeletedUser | undefined>;
   restoreUser(username: string): Promise<void>;
   hasOwner(): Promise<boolean>;
@@ -75,26 +72,6 @@ export class AdminMapStore implements IAdminStore {
 
   async saveUser(user: AdminUser): Promise<void> {
     this.users.set(user.username, user);
-  }
-
-  async findUnapprovedUsers(limit: number): Promise<AdminUser[]> {
-    const result: AdminUser[] = [];
-    for (const user of this.users.values()) {
-      if (!user.approved) {
-        result.push(user);
-        if (result.length >= limit) break;
-      }
-    }
-    return result;
-  }
-
-  async findAllUsers(limit: number): Promise<AdminUser[]> {
-    const result: AdminUser[] = [];
-    for (const user of this.users.values()) {
-      result.push(user);
-      if (result.length >= limit) break;
-    }
-    return result;
   }
 
   async searchUsers(filter: UsersFilter): Promise<UsersPage> {
@@ -134,15 +111,6 @@ export class AdminMapStore implements IAdminStore {
     this.deletedUsers.set(username, { ...user, deletedAt: new Date() });
     this.cleanupOldDeleted();
     return user;
-  }
-
-  async findDeletedUsers(limit: number): Promise<DeletedUser[]> {
-    const result: DeletedUser[] = [];
-    for (const user of this.deletedUsers.values()) {
-      result.push(user);
-      if (result.length >= limit) break;
-    }
-    return result;
   }
 
   async searchDeletedUsers(filter: UsersFilter): Promise<DeletedUsersPage> {

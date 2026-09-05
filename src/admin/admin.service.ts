@@ -3,7 +3,6 @@ import {
   AdminMapStoreToken,
   type IAdminStore,
   type AdminUser,
-  type DeletedUser,
   type UsersFilter,
   type UsersPage,
   type DeletedUsersPage,
@@ -18,14 +17,6 @@ export class AdminService {
     @Inject(AdminMapStoreToken) private readonly adminStore: IAdminStore,
     @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
   ) {}
-
-  async findUnapprovedUsers(limit: number = 10): Promise<AdminUser[]> {
-    return this.adminStore.findUnapprovedUsers(limit);
-  }
-
-  async findAllUsers(limit: number = 10): Promise<AdminUser[]> {
-    return this.adminStore.findAllUsers(limit);
-  }
 
   async searchUsers(filter: UsersFilter): Promise<UsersPage> {
     return this.adminStore.searchUsers(filter);
@@ -75,10 +66,6 @@ export class AdminService {
     const deleted = await this.adminStore.deleteUser(username);
     if (!deleted) throw new NotFoundException(`Пользователь ${username} не найден`);
     return deleted;
-  }
-
-  async findDeletedUsers(limit: number = 10): Promise<DeletedUser[]> {
-    return this.adminStore.findDeletedUsers(limit);
   }
 
   async restoreUser(username: string, callerRole: string): Promise<void> {

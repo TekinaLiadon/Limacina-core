@@ -3,23 +3,19 @@ import { YggdrasilController } from "./yggdrasil.controller";
 import { YggdrasilService } from "./service/yggdrasil.service";
 import {
   YggdrasilMapStore,
-  YggdrasilMapSessionStore,
-  YggdrasilMapTokenStore,
   YggdrasilStoreToken,
   YggdrasilSessionStoreToken,
   YggdrasilTokenStoreToken,
 } from "./service/yggdrasil_store";
+import { YggdrasilMapSessionStore, YggdrasilMapTokenStore } from "../memory/yggdrasil-map.store";
+import { MemoryModule } from "../memory/memory.module";
+import { MemoryDb } from "../memory/memory-db";
 import { YggdrasilPostgresStore } from "./service/yggdrasil_postgres";
-import { YggdrasilProxyStore } from "./service/yggdrasil_proxy";
 import { UserContentModule } from "../user-content/user-content.module";
 import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 
-export const useProfileStore = (db: string, proxyUrl?: string) => {
-  if (proxyUrl) {
-    return new YggdrasilProxyStore(proxyUrl);
-  }
-
+export const useProfileStore = (db: string) => {
   if (db === "postgres") {
     return new YggdrasilPostgresStore();
   }
@@ -27,27 +23,25 @@ export const useProfileStore = (db: string, proxyUrl?: string) => {
   return new YggdrasilMapStore();
 };
 
-export const useTokenStore = () => new YggdrasilMapTokenStore();
-export const useSessionStore = () => new YggdrasilMapSessionStore();
-
 @Module({
-  imports: [AppConfigModule, UserContentModule],
+  imports: [AppConfigModule, UserContentModule, MemoryModule],
   controllers: [YggdrasilController],
   providers: [
     YggdrasilService,
     {
       provide: YggdrasilStoreToken,
-      useFactory: (config: AppConfigType) =>
-        useProfileStore(config.DB_DRIVER, config.YGGDRASIL_PROXY_URL),
+      useFactory: (config: AppConfigType) => useProfileStore(config.DB_DRIVER),
       inject: [AppConfigToken],
     },
     {
       provide: YggdrasilTokenStoreToken,
-      useFactory: useTokenStore,
+      useFactory: (db: MemoryDb) => new YggdrasilMapTokenStore(db),
+      inject: [MemoryDb],
     },
     {
       provide: YggdrasilSessionStoreToken,
-      useFactory: useSessionStore,
+      useFactory: (db: MemoryDb) => new YggdrasilMapSessionStore(db),
+      inject: [MemoryDb],
     },
   ],
   exports: [YggdrasilService],

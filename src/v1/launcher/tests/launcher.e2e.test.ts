@@ -4,7 +4,7 @@ process.env["NODE_ENV"] = "test";
 process.env["DB_DRIVER"] = "map";
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { type INestApplication } from "@nestjs/common";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { Test, TestingModule } from "@nestjs/testing";
@@ -20,6 +20,8 @@ const DOWNLOAD_DIR = "public/linux/x86_64";
 const TEST_ZIP = `${DOWNLOAD_DIR}/Limacina-9.9.9-linux-x86_64.zip`;
 const TEST_MOD_FILE = "public/launcher/mods/limacina-exclusion-test-mod.jar";
 const TEST_MOD_KEY = "mods/limacina-exclusion-test-mod.jar";
+const CONFIG_FILE = "config.toml";
+const CONFIG_BACKUP = "config.toml.bak";
 
 const binaryParser = (
   res: SuperagentResponse,
@@ -105,6 +107,24 @@ describe("V1 launcher эндпоинты", (): void => {
       expect(typeof res.body.projectName).toBe("string");
       expect(typeof res.body.mcVersion).toBe("string");
       expect(typeof res.body.online).toBe("boolean");
+    });
+
+    it("возвращает 404 если config.toml не найден", async () => {
+      const hadConfig = existsSync(CONFIG_FILE);
+      if (hadConfig) {
+        renameSync(CONFIG_FILE, CONFIG_BACKUP);
+      }
+
+      try {
+        const res = await supertest(app.getHttpServer()).get("/v1/launcher/config").expect(404);
+
+        expect(res.body.statusCode).toBe(404);
+        expect(res.body.message).toContain("config.toml");
+      } finally {
+        if (hadConfig) {
+          renameSync(CONFIG_BACKUP, CONFIG_FILE);
+        }
+      }
     });
   });
 
