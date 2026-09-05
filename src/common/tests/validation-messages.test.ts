@@ -3,7 +3,6 @@ import { plainToInstance } from "class-transformer";
 import { validateSync, type ValidationError } from "class-validator";
 import { RegisterDto, AuthDto, ChangePasswordDto, AuthRefreshDto } from "../../auth/dto/dto";
 import { ApproveUserDto, SetRoleDto, UsersQueryDto, V1LogsQueryDto } from "../../admin/dto/dto";
-import { LauncherConfigCreateDto } from "../../launcher/dto/dto";
 import { InitOwnerDto } from "../../technical/dto/dto";
 import { AuthenticateDto, JoinDto } from "../../yggdrasil/dto/dto";
 
@@ -100,21 +99,6 @@ describe("Сообщения валидации DTO на русском", () => 
     expect(errors).toContain("limit: максимум 1000");
   });
 
-  it("LauncherConfigCreateDto: jvmArgs не массив строк", () => {
-    const errors = validate(LauncherConfigCreateDto, {
-      projectName: "Cordelia",
-      mcVersion: "1.21.1",
-      modLoader: "neoforge",
-      loaderVersion: "21.1.234",
-      jvmArgs: ["ok", 5],
-      minMemory: "-Xms512M",
-      maxMemory: "-Xmx2560M",
-      online: "yes",
-    });
-    expect(errors).toContain("jvmArgs: каждый элемент должен быть строкой");
-    expect(errors).toContain("online: ожидается true или false");
-  });
-
   it("InitOwnerDto: границы полей", () => {
     const errors = validate(InitOwnerDto, { username: "", password: "123" });
     expect(errors).toContain("username: не должно быть пустым");
@@ -150,19 +134,6 @@ describe("Сообщения валидации DTO на русском", () => 
       [
         V1LogsQueryDto,
         { date: "not-a-date", statusCode: "x", url: "", ip: "", limit: "y", offset: "z" },
-      ],
-      [
-        LauncherConfigCreateDto,
-        {
-          projectName: 1,
-          mcVersion: 2,
-          modLoader: 3,
-          loaderVersion: 4,
-          jvmArgs: "nope",
-          minMemory: 5,
-          maxMemory: 6,
-          online: 7,
-        },
       ],
       [InitOwnerDto, { username: "owner", password: "securepassword" }],
       [

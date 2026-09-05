@@ -158,6 +158,30 @@ describe("V1 common/auth эндпоинты", (): void => {
         .send({ username: "loginuser", password: "" })
         .expect(400);
     });
+
+    it("логин забаненного пользователя отклоняется", async () => {
+      const passwordHash = await Bun.password.hash("pass123");
+      await authStore.saveUser({
+        uuid: "banned-login-uuid",
+        username: "bannedlogin",
+        passwordHash,
+        skin: null,
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      const user = await authStore.findByUsername("bannedlogin");
+      try {
+        await authStore.saveUser({ ...user!, banned: true });
+
+        await supertest(app.getHttpServer())
+          .post("/v1/common/auth/login")
+          .send({ username: "bannedlogin", password: "pass123" })
+          .expect(401);
+      } finally {
+        await authStore.saveUser({ ...user!, banned: false });
+      }
+    });
   });
 
   describe("POST /v1/common/auth/refresh", () => {
@@ -244,6 +268,44 @@ describe("V1 common/auth эндпоинты", (): void => {
         .post("/v1/common/auth/refresh")
         .send({ refresh_token })
         .expect(401);
+    });
+
+    it("ошибка 401 после удаления пользователя", async () => {
+      const passwordHash = await Bun.password.hash("pass123");
+      await authStore.saveUser({
+        uuid: "replaced-user-uuid",
+        username: "replaceduser",
+        passwordHash,
+        skin: null,
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      const originalUser = await authStore.findByUsername("replaceduser");
+
+      const loginRes = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "replaceduser", password: "pass123" })
+        .expect(201);
+
+      try {
+        await authStore.saveUser({
+          uuid: "replaced-user-new-uuid",
+          username: "replaceduser",
+          passwordHash: await Bun.password.hash("newpass456"),
+          skin: null,
+          role: "user",
+          approved: true,
+          banned: false,
+        });
+
+        await supertest(app.getHttpServer())
+          .post("/v1/common/auth/refresh")
+          .send({ refresh_token: loginRes.body.tokens.refresh_token })
+          .expect(401);
+      } finally {
+        await authStore.saveUser(originalUser!);
+      }
     });
   });
 

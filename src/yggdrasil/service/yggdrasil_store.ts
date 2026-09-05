@@ -42,26 +42,11 @@ export interface YggdrasilSessionRecord {
 
 export const TOKEN_TTL_MS = 15 * 24 * 60 * 60 * 1000;
 export const SESSION_TTL_MS = 30 * 1000;
-export const MAX_TOKENS_PER_USER = 10;
+export const MAX_TOKENS_PER_USER = 4;
 
 export const YggdrasilStoreToken = Symbol("YggdrasilStore");
 export const YggdrasilSessionStoreToken = Symbol("YggdrasilSessionStore");
 export const YggdrasilTokenStoreToken = Symbol("YggdrasilTokenStore");
-
-export interface ProxyAuthResult {
-  accessToken: string;
-  clientToken: string;
-  profiles: YggdrasilProfile[];
-  selectedProfile?: YggdrasilProfile | null;
-  userId?: string;
-}
-
-export interface ProxyRefreshResult {
-  accessToken: string;
-  clientToken: string;
-  selectedProfile?: YggdrasilProfile | null;
-  userId?: string;
-}
 
 export interface IYggdrasilSessionStore {
   saveSession(serverId: string, entry: SessionEntry): Promise<void>;
@@ -87,21 +72,6 @@ export interface IYggdrasilStore {
   ): Promise<void>;
 
   findUserByUsername(username: string): Promise<{ uuid: string; passwordHash: string } | undefined>;
-
-  authenticateViaProxy?(
-    username: string,
-    password: string,
-    clientToken?: string,
-  ): Promise<ProxyAuthResult | null>;
-
-  refreshViaProxy?(
-    accessToken: string,
-    clientToken?: string,
-    selectedProfile?: string,
-    requestUser?: boolean,
-  ): Promise<ProxyRefreshResult | null>;
-
-  signoutViaProxy?(username: string, password: string): Promise<boolean>;
 }
 
 @Injectable()
@@ -185,42 +155,6 @@ export class YggdrasilMapStore implements IYggdrasilStore {
         profile.userId,
         userIds.filter((id) => id !== uuid),
       );
-    }
-  }
-}
-
-@Injectable()
-export class YggdrasilMapSessionStore implements IYggdrasilSessionStore {
-  private readonly sessions = new Map<string, SessionEntry>();
-
-  async saveSession(serverId: string, entry: SessionEntry): Promise<void> {
-    this.sessions.set(serverId, entry);
-  }
-
-  async findSession(serverId: string): Promise<SessionEntry | undefined> {
-    return this.sessions.get(serverId);
-  }
-}
-
-@Injectable()
-export class YggdrasilMapTokenStore implements IYggdrasilTokenStore {
-  private readonly tokens = new Map<string, TokenEntry>();
-
-  async saveToken(accessToken: string, entry: TokenEntry): Promise<void> {
-    this.tokens.set(accessToken, entry);
-  }
-
-  async findToken(accessToken: string): Promise<TokenEntry | undefined> {
-    return this.tokens.get(accessToken);
-  }
-
-  async deleteToken(accessToken: string): Promise<void> {
-    this.tokens.delete(accessToken);
-  }
-
-  async deleteTokensByUserId(userId: string): Promise<void> {
-    for (const [key, val] of this.tokens) {
-      if (val.userId === userId) this.tokens.delete(key);
     }
   }
 }

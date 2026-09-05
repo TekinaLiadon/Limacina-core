@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
-import { DocumentBuilder, SwaggerModule, type OpenAPIObject } from "@nestjs/swagger";
+import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { apiReference } from "@scalar/nestjs-api-reference";
 import { ValidationPipe, Logger as NestLogger } from "@nestjs/common";
 import { Logger, LoggerErrorInterceptor } from "nestjs-pino";
@@ -91,8 +91,7 @@ async function bootstrap() {
         "Актуальные эндпоинты расположены под префиксом `/v1` и сгруппированы по потребителю: " +
         "`common_*` (общее для панели и лаунчера), `launcher_*` (лаунчер), `panel_*` (админ-панель). " +
         "Исключение — протокол Yggdrasil (`yggdrasil`): его пути диктуются протоколом authlib-injector " +
-        "и живут в корне сервера (`/authserver`, `/sessionserver`, `/api`, метадата — `GET /`). " +
-        "Остальные эндпоинты без префикса — legacy (помечены `deprecated`), сохранены для обратной совместимости и не развиваются.",
+        "и живут в корне сервера (`/authserver`, `/sessionserver`, `/api`, метадата — `GET /`).",
     )
     .setVersion("1.1")
     .addSecurity("bearer", { type: "apiKey", name: "Authorization", in: "header" })
@@ -112,19 +111,9 @@ async function bootstrap() {
       "yggdrasil",
       "Minecraft Yggdrasil protocol — пути диктуются протоколом authlib-injector, корень API совпадает с корнем сервера (/, /authserver, /sessionserver, /api)",
     )
-    .addTag(
-      "legacy",
-      "Устаревшие эндпоинты без префикса /v1 — только для обратной совместимости, будут удалены",
-    )
-    .addTag("auth", "Legacy: прежние /auth-эндпоинты (актуальные — common_auth)")
-    .addTag("admin", "Legacy: прежние /admin-эндпоинты (актуальные — panel_*)")
-    .addTag("launcher", "Legacy: прежние /launcher-эндпоинты (актуальные — launcher_*)")
-    .addTag("files", "Legacy: прежние /files-эндпоинты (актуальные — launcher_files)")
-    .addTag("user-content", "Legacy: прежние /user-content-эндпоинты (актуальные — common_content)")
-    .addTag("technical", "Legacy: прежние /technical-эндпоинты (актуальные — panel_users)")
     .build();
 
-  const documentFactory = () => markLegacyEndpoints(SwaggerModule.createDocument(app, config));
+  const documentFactory = () => SwaggerModule.createDocument(app, config);
   await instance.get("/openapi.json", async (_request: FastifyRequest, reply: FastifyReply) => {
     try {
       return documentFactory();
@@ -151,27 +140,6 @@ async function bootstrap() {
   });
 
   await app.listen(envConfig.PORT, "0.0.0.0");
-}
-
-function markLegacyEndpoints(document: OpenAPIObject): OpenAPIObject {
-  const httpMethods = ["get", "put", "post", "delete", "options", "head", "patch"] as const;
-  const yggdrasilPathPrefixes = ["/authserver", "/sessionserver", "/api"];
-
-  const isYggdrasilPath = (path: string): boolean =>
-    path === "/" || yggdrasilPathPrefixes.some((prefix) => path.startsWith(prefix));
-
-  for (const [path, pathItem] of Object.entries(document.paths)) {
-    if (path.startsWith("/v1") || isYggdrasilPath(path)) continue;
-
-    for (const method of httpMethods) {
-      const operation = pathItem?.[method];
-      if (operation) {
-        operation.deprecated = true;
-      }
-    }
-  }
-
-  return document;
 }
 
 function registerProcessErrorHandlers(logger: Logger): void {

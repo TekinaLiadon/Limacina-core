@@ -14,7 +14,6 @@ import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
 import { V1LauncherUpdateController } from "../update.controller";
-import { LauncherController } from "../../../launcher/launcher.controller";
 import { LauncherService } from "../../../launcher/launcher.service";
 
 const VERSION_FILE = "public/version.json";
@@ -76,7 +75,7 @@ describe("V1 launcher/update эндпоинты — версии и скачив
     writeFileSync(join(MACOS_PLATFORM_DIR, MACOS_ZIP), MACOS_ZIP_CONTENT);
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      controllers: [V1LauncherUpdateController, LauncherController],
+      controllers: [V1LauncherUpdateController],
       providers: [LauncherService],
     }).compile();
 
@@ -229,24 +228,6 @@ describe("V1 launcher/update эндпоинты — версии и скачив
       await supertest(app.getHttpServer())
         .get("/v1/launcher/update/macos/x86_64/download")
         .expect(400);
-    });
-  });
-
-  describe("Легаси-контракт не меняется", () => {
-    it("GET /launcher/version возвращает прежнюю форму без списка версий", async () => {
-      const res = await supertest(app.getHttpServer()).get("/launcher/version").expect(200);
-
-      expect(typeof res.body.version).toBe("string");
-      expect(Array.isArray(res.body.platforms)).toBe(true);
-      expect(res.body.versions).toBeUndefined();
-    });
-
-    it("GET /launcher/:os/:arch/download отдаёт последнюю версию без параметров", async () => {
-      const res = await supertest(app.getHttpServer())
-        .get("/launcher/linux/x86_64/download")
-        .expect(200);
-
-      expect(res.text).toBe(CURRENT_ZIP_CONTENT);
     });
   });
 });

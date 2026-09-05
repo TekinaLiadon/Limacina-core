@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   Injectable,
@@ -7,7 +7,7 @@ import {
   NotFoundException,
   type OnModuleDestroy,
 } from "@nestjs/common";
-import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { parse as parseToml } from "smol-toml";
 import { watch, type FSWatcher } from "chokidar";
 import type { LauncherConfigDto, LauncherVersionsDto } from "./dto/dto";
 import type { FastifyReply } from "fastify";
@@ -141,10 +141,6 @@ export class LauncherService implements OnModuleDestroy {
     this.logger.log({ platforms: this.platforms }, "Доступные платформы");
   }
 
-  getVersion(): { version: string; platforms: PlatformInfo[] } {
-    return { version: this.version, platforms: this.platforms };
-  }
-
   getVersions(): LauncherVersionsDto {
     const platformMap = new Map<string, PlatformInfo[]>();
 
@@ -196,17 +192,6 @@ export class LauncherService implements OnModuleDestroy {
     const parsed = parseToml(content) as unknown as LauncherConfigDto;
 
     return parsed;
-  }
-
-  createConfig(dto: LauncherConfigDto): LauncherConfigDto {
-    if (existsSync(CONFIG_FILE)) return this.getConfig();
-
-    const content = stringifyToml(dto as unknown as Record<string, unknown>);
-    writeFileSync(CONFIG_FILE, `${content}\n`);
-
-    this.logger.log({ projectName: dto.projectName }, "Конфиг лаунчера создан");
-
-    return dto;
   }
 
   onModuleDestroy(): void {

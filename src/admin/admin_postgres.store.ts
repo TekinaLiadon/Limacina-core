@@ -115,27 +115,6 @@ export class AdminPostgresStore implements IAdminStore {
     await execute(query.sql, query.values);
   }
 
-  async findUnapprovedUsers(limit: number): Promise<AdminUser[]> {
-    const query = selectQuery("uuid", "username", "role", "approved", "banned")
-      .from(TABLES.users)
-      .where("approved = $1", false)
-      .limit(limit)
-      .build();
-
-    const { rows } = await execute<UserRow>(query.sql, query.values);
-    return rows.map(toAdminUser);
-  }
-
-  async findAllUsers(limit: number): Promise<AdminUser[]> {
-    const query = selectQuery("uuid", "username", "role", "approved", "banned")
-      .from(TABLES.users)
-      .limit(limit)
-      .build();
-
-    const { rows } = await execute<UserRow>(query.sql, query.values);
-    return rows.map(toAdminUser);
-  }
-
   async searchUsers(filter: UsersFilter): Promise<UsersPage> {
     const itemsQuery = withUsersFilter(
       selectQuery("uuid", "username", "role", "approved", "banned").from(TABLES.users),
@@ -258,16 +237,6 @@ export class AdminPostgresStore implements IAdminStore {
     this.cleanupOldDeleted();
 
     return user;
-  }
-
-  async findDeletedUsers(limit: number): Promise<DeletedUser[]> {
-    const query = selectQuery("uuid", "username", "role", "approved", "banned", "deleted_at")
-      .from(TABLES.deleted_users)
-      .limit(limit)
-      .build();
-
-    const { rows } = await execute<DeletedUserRow>(query.sql, query.values);
-    return rows.map(toDeletedUser);
   }
 
   async findDeletedByUsername(username: string): Promise<DeletedUser | undefined> {

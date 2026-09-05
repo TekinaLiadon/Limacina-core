@@ -96,8 +96,6 @@ export class YggdrasilService {
   }
 
   async authenticate(dto: AuthenticateDto): Promise<AuthenticateResponseDto> {
-    if (this.store.authenticateViaProxy) return this.authenticateViaProxy(dto);
-
     const user = await this.store.findUserByUsername(dto.username);
     if (!user)
       throw this.createError(
@@ -125,56 +123,7 @@ export class YggdrasilService {
     return await this.createAuthResponse(user!.uuid, profiles, dto.clientToken, dto.requestUser);
   }
 
-  private async authenticateViaProxy(dto: AuthenticateDto): Promise<AuthenticateResponseDto> {
-    const result = await this.store.authenticateViaProxy!(
-      dto.username,
-      dto.password,
-      dto.clientToken,
-    );
-
-    if (!result)
-      throw this.createError(
-        { info: dto.username },
-        "user not found",
-        "Invalid credentials. Invalid username or password.",
-      );
-
-    for (const profile of result.profiles) {
-      await this.store.saveProfile(profile);
-    }
-
-    const resolvedClientToken = dto.clientToken ?? result.clientToken;
-    const selected = result.selectedProfile;
-    const availableProfiles = await Promise.all(
-      result.profiles.map((p) => this.buildGameProfile(p)),
-    );
-
-    this.tokenStore.saveToken(result.accessToken, {
-      profileId: selected?.uuid ?? null,
-      username: selected?.username ?? result.profiles[0]?.username ?? "",
-      clientToken: resolvedClientToken,
-      userId: result!.userId ?? selected?.userId ?? "",
-    });
-    const response: AuthenticateResponseDto = {
-      accessToken: result.accessToken,
-      clientToken: resolvedClientToken,
-      availableProfiles,
-    };
-
-    if (selected) response.selectedProfile = await this.buildGameProfile(selected);
-    if (dto.requestUser) {
-      response.user = {
-        id: result.userId ?? selected?.userId ?? "",
-        properties: [],
-      };
-    }
-    this.logger.debug({ username: dto.username }, "authenticated via proxy");
-    return response;
-  }
-
   async refresh(dto: RefreshDto): Promise<RefreshResponseDto> {
-    if (this.store.refreshViaProxy) return this.refreshViaProxy(dto);
-
     const entry = await this.tokenStore.findToken(dto.accessToken);
     if (!entry || (dto.clientToken && dto.clientToken !== entry.clientToken))
       throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
@@ -207,41 +156,6 @@ export class YggdrasilService {
     return response;
   }
 
-  private async refreshViaProxy(dto: RefreshDto): Promise<RefreshResponseDto> {
-    const result = await this.store.refreshViaProxy!(
-      dto.accessToken,
-      dto.clientToken,
-      dto.selectedProfile?.id,
-      dto.requestUser,
-    );
-
-    if (!result) throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
-    if (result.selectedProfile) await this.store.saveProfile(result.selectedProfile);
-
-    await this.tokenStore.deleteToken(dto.accessToken);
-    const resolvedClientToken = dto.clientToken ?? result.clientToken;
-    const selected = result.selectedProfile;
-    this.tokenStore.saveToken(result.accessToken, {
-      profileId: selected?.uuid ?? null,
-      username: selected?.username ?? "",
-      clientToken: resolvedClientToken,
-      userId: result.userId ?? selected?.userId ?? "",
-    });
-    const response: RefreshResponseDto = {
-      accessToken: result.accessToken,
-      clientToken: resolvedClientToken,
-    };
-
-    if (selected) response.selectedProfile = await this.buildGameProfile(selected);
-    if (dto.requestUser) {
-      response.user = {
-        id: result.userId ?? selected?.userId ?? "",
-        properties: [],
-      };
-    }
-    return response;
-  }
-
   async validate(dto: ValidateDto): Promise<void> {
     const entry = await this.tokenStore.findToken(dto.accessToken);
     if (!entry || (dto.clientToken && dto.clientToken !== entry?.clientToken))
@@ -253,8 +167,6 @@ export class YggdrasilService {
   }
 
   async signout(dto: SignoutDto): Promise<void> {
-    if (this.store.signoutViaProxy) return this.signoutViaProxy(dto);
-
     const user = await this.store.findUserByUsername(dto.username);
     if (!user)
       throw this.createError(
@@ -272,16 +184,6 @@ export class YggdrasilService {
       );
 
     await this.tokenStore.deleteTokensByUserId(user.uuid);
-  }
-
-  private async signoutViaProxy(dto: SignoutDto): Promise<void> {
-    const ok = await this.store.signoutViaProxy!(dto.username, dto.password);
-    if (!ok)
-      throw this.createError(
-        { info: dto.username },
-        "invalid credentials",
-        "Invalid credentials. Invalid username or password.",
-      );
   }
 
   async join(dto: JoinDto): Promise<void> {

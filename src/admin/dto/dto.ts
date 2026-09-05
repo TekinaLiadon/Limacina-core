@@ -26,26 +26,6 @@ export interface UserRow extends Record<string, unknown> {
   banned: boolean;
 }
 
-export class UnapprovedUsersQueryDto {
-  @ApiProperty({ default: 10, minimum: 1, maximum: 50 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(50)
-  limit?: number;
-}
-
-export class AllUsersQueryDto {
-  @ApiProperty({ default: 10, minimum: 1, maximum: 100 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  limit?: number;
-}
-
 export class UsersQueryDto {
   @ApiProperty({
     default: 10,
@@ -206,7 +186,7 @@ export class DeletedUsersListResponseDto {
   items!: DeletedUserListItemDto[];
 }
 
-export class DeletedUsersQueryDto {
+export class V1DeletedUsersQueryDto {
   @ApiProperty({ default: 10, minimum: 1, maximum: 100 })
   @IsOptional()
   @Type(() => Number)
@@ -214,9 +194,7 @@ export class DeletedUsersQueryDto {
   @Min(1)
   @Max(100)
   limit?: number;
-}
 
-export class V1DeletedUsersQueryDto extends DeletedUsersQueryDto {
   @ApiProperty({ default: 0, minimum: 0, description: "Смещение от начала списка" })
   @IsOptional()
   @Type(() => Number)
@@ -235,7 +213,7 @@ export class V1DeletedUsersQueryDto extends DeletedUsersQueryDto {
   username?: string;
 }
 
-export class LogsQueryDto {
+export class V1LogsQueryDto {
   @ApiProperty({
     example: "2026-07-08",
     description: "Дата логов в формате YYYY-MM-DD. По умолчанию — сегодня",
@@ -264,9 +242,7 @@ export class LogsQueryDto {
   @Min(1, { message: validationMessages.min("limit", 1) })
   @Max(1000, { message: validationMessages.max("limit", 1000) })
   limit?: number;
-}
 
-export class V1LogsQueryDto extends LogsQueryDto {
   @ApiProperty({
     example: 200,
     required: false,

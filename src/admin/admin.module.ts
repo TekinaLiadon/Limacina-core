@@ -1,5 +1,4 @@
 import { Module } from "@nestjs/common";
-import { AdminController } from "./admin.controller";
 import { AdminService } from "./admin.service";
 import { LogsService } from "./logs.service";
 import { LauncherUpdateService } from "./launcher-update.service";
@@ -20,7 +19,6 @@ const useFactory = (db: string) => {
 
 @Module({
   imports: [AppConfigModule, AuthStoreModule],
-  controllers: [AdminController],
   providers: [
     AdminService,
     LogsService,

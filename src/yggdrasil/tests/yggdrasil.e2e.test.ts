@@ -7,12 +7,13 @@ import { YggdrasilController } from "../yggdrasil.controller";
 import { YggdrasilService } from "../service/yggdrasil.service";
 import {
   YggdrasilMapStore,
-  YggdrasilMapTokenStore,
-  YggdrasilMapSessionStore,
   YggdrasilStoreToken,
   YggdrasilTokenStoreToken,
   YggdrasilSessionStoreToken,
 } from "../service/yggdrasil_store";
+import { YggdrasilMapTokenStore, YggdrasilMapSessionStore } from "../../memory/yggdrasil-map.store";
+import { MemoryModule } from "../../memory/memory.module";
+import { MemoryDb } from "../../memory/memory-db";
 import {
   UserContentMapStore,
   UserContentMapStoreToken,
@@ -40,6 +41,7 @@ describe("Yggdrasil эндпоинты", () => {
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [MemoryModule],
       controllers: [YggdrasilController],
       providers: [
         YggdrasilService,
@@ -50,11 +52,13 @@ describe("Yggdrasil эндпоинты", () => {
         },
         {
           provide: YggdrasilTokenStoreToken,
-          useClass: YggdrasilMapTokenStore,
+          useFactory: (db: MemoryDb) => new YggdrasilMapTokenStore(db),
+          inject: [MemoryDb],
         },
         {
           provide: YggdrasilSessionStoreToken,
-          useClass: YggdrasilMapSessionStore,
+          useFactory: (db: MemoryDb) => new YggdrasilMapSessionStore(db),
+          inject: [MemoryDb],
         },
         {
           provide: UserContentMapStoreToken,
