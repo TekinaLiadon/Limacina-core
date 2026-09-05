@@ -20,7 +20,7 @@ import { LauncherUpdateService } from "../launcher-update.service";
 import { ConfigUpdateService } from "../config-update.service";
 import { AdminMapStore, AdminMapStoreToken } from "../admin.store";
 import { AuthMapStore, AuthMapStoreToken } from "../../auth/service/auth_store.service";
-import { INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
+import { type INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtModule, JwtService } from "@nestjs/jwt";
@@ -211,6 +211,14 @@ describe("Admin эндпоинты", (): void => {
         .expect(200);
 
       expect(res.body.some((u: { username: string }) => u.username === "user")).toBe(false);
+
+      await store.saveUser({
+        uuid: "user-uuid",
+        username: "user",
+        role: "user",
+        approved: false,
+        banned: false,
+      });
     });
 
     it("возвращает 404 для несуществующего пользователя", async () => {
@@ -231,7 +239,7 @@ describe("Admin эндпоинты", (): void => {
   });
 
   describe("PATCH /admin/ban", () => {
-    it("банит пользователя", async () => {
+    it("банит и разбанивает пользователя", async () => {
       await supertest(app.getHttpServer())
         .patch("/admin/ban")
         .set("Authorization", `Bearer ${adminToken}`)
@@ -245,22 +253,22 @@ describe("Admin эндпоинты", (): void => {
 
       const user = res.body.find((u: { username: string }) => u.username === "user");
       expect(user.banned).toBe(true);
-    });
 
-    it("разбанивает пользователя", async () => {
       await supertest(app.getHttpServer())
         .patch("/admin/ban")
         .set("Authorization", `Bearer ${adminToken}`)
         .send({ username: "user", banned: false })
         .expect(200);
 
-      const res = await supertest(app.getHttpServer())
+      const resAfterUnban = await supertest(app.getHttpServer())
         .get("/admin/users")
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(200);
 
-      const user = res.body.find((u: { username: string }) => u.username === "user");
-      expect(user.banned).toBe(false);
+      const userAfterUnban = resAfterUnban.body.find(
+        (u: { username: string }) => u.username === "user",
+      );
+      expect(userAfterUnban.banned).toBe(false);
     });
 
     it("возвращает 404 для несуществующего пользователя", async () => {
@@ -458,7 +466,7 @@ describe("Admin эндпоинты", (): void => {
   });
 
   describe("DELETE /admin/users/:username", () => {
-    it("удаляет пользователя для админа", async () => {
+    it("удаляет пользователя для админа и восстанавливает его", async () => {
       const res = await supertest(app.getHttpServer())
         .delete("/admin/users/user")
         .set("Authorization", `Bearer ${adminToken}`)
@@ -473,6 +481,8 @@ describe("Admin эндпоинты", (): void => {
         .expect(200);
 
       expect(users.body.some((u: { username: string }) => u.username === "user")).toBe(false);
+
+      await store.restoreUser("user");
     });
 
     it("возвращает 404 для несуществующего пользователя", async () => {
@@ -496,13 +506,22 @@ describe("Admin эндпоинты", (): void => {
 
   describe("GET /admin/users/deleted", () => {
     it("возвращает список удалённых пользователей для админа", async () => {
+      await store.saveUser({
+        uuid: "deleted-viewer-uuid",
+        username: "deletedviewer",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      await store.deleteUser("deletedviewer");
+
       const res = await supertest(app.getHttpServer())
         .get("/admin/users/deleted")
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(200);
 
       expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.some((u: { username: string }) => u.username === "user")).toBe(true);
+      expect(res.body.some((u: { username: string }) => u.username === "deletedviewer")).toBe(true);
       expect(res.body[0]).toHaveProperty("deletedAt");
     });
 
@@ -516,20 +535,31 @@ describe("Admin эндпоинты", (): void => {
 
   describe("PATCH /admin/users/:username/restore", () => {
     it("восстанавливает удалённого пользователя", async () => {
+      await store.saveUser({
+        uuid: "restore-target-uuid",
+        username: "restoretarget",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      await store.deleteUser("restoretarget");
+
       const res = await supertest(app.getHttpServer())
-        .patch("/admin/users/user/restore")
+        .patch("/admin/users/restoretarget/restore")
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(200);
 
       expect(res.body.success).toBe(true);
-      expect(res.body.username).toBe("user");
+      expect(res.body.username).toBe("restoretarget");
 
       const users = await supertest(app.getHttpServer())
         .get("/admin/users")
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(200);
 
-      expect(users.body.some((u: { username: string }) => u.username === "user")).toBe(true);
+      expect(users.body.some((u: { username: string }) => u.username === "restoretarget")).toBe(
+        true,
+      );
     });
 
     it("возвращает 404 для несуществующего удалённого пользователя", async () => {
@@ -663,6 +693,14 @@ describe("Admin эндпоинты", (): void => {
         .set("Authorization", `Bearer ${ownerToken}`)
         .send({ username: "user", approved: true })
         .expect(200);
+
+      await store.saveUser({
+        uuid: "user-uuid",
+        username: "user",
+        role: "user",
+        approved: false,
+        banned: false,
+      });
     });
 
     it("admin не может забанить owner", async () => {

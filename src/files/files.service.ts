@@ -4,7 +4,7 @@ import {
   BadRequestException,
   Injectable,
   Logger,
-  OnModuleDestroy,
+  type OnModuleDestroy,
   NotFoundException,
 } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
@@ -12,6 +12,11 @@ import { watch, type FSWatcher } from "chokidar";
 import { FileDto } from "./dto/dto";
 
 const LAUNCHER_DIR = "public/launcher";
+
+export const FILES_LIST_EXCLUDED_FOLDERS: string[] = ["mods"];
+
+const isExcludedFolder = (key: string): boolean =>
+  FILES_LIST_EXCLUDED_FOLDERS.some((folder) => key.startsWith(`${folder}/`));
 
 @Injectable()
 export class FilesService implements OnModuleDestroy {
@@ -128,7 +133,8 @@ export class FilesService implements OnModuleDestroy {
   }
 
   getList(): Record<string, string> {
-    return Object.fromEntries(this.launcherHash);
+    const entries = [...this.launcherHash.entries()].filter(([key]) => !isExcludedFolder(key));
+    return Object.fromEntries(entries);
   }
 
   getExtraList(folder: string): Record<string, string> {

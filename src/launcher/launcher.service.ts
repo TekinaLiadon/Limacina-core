@@ -5,7 +5,7 @@ import {
   BadRequestException,
   Logger,
   NotFoundException,
-  OnModuleDestroy,
+  type OnModuleDestroy,
 } from "@nestjs/common";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { watch, type FSWatcher } from "chokidar";

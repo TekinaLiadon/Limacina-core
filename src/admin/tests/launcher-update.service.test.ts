@@ -84,23 +84,45 @@ describe("LauncherUpdateService — архивирование старых ве
     }
   });
 
+  const resetToBaseline = (): void => {
+    service.update("1.0.0", [
+      { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.0.0") },
+    ]);
+    for (const dir of [PLATFORM_DIR, OLD_DIR]) {
+      if (!existsSync(dir)) continue;
+      for (const file of readdirSync(dir)) {
+        if (!file.endsWith(".zip")) continue;
+        if (file === "Limacina-1.0.0-linux-x86_64.zip") continue;
+        const filePath = join(dir, file);
+        unlinkSync(filePath);
+        createdFiles.push(filePath);
+      }
+    }
+  };
+
   it("переносит старый zip в old/ при загрузке новой версии", () => {
     const result = service.update("1.1.0", [
       { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.1.0") },
     ]);
-    createdFiles.push(zipPath("1.1.0"), oldZipPath("1.0.0"));
+    createdFiles.push(zipPath("1.1.0"));
 
     expect(result).toEqual({ version: "1.1.0", updated: ["linux/x86_64"] });
     expect(readFileSync(zipPath("1.1.0"), "utf-8")).toBe("content-1.1.0");
     expect(readFileSync(oldZipPath("1.0.0"), "utf-8")).toBe("content-1.0.0");
     expect(JSON.parse(readFileSync(VERSION_FILE, "utf-8"))).toEqual({ version: "1.1.0" });
+
+    resetToBaseline();
   });
 
   it("копит несколько версий в old/", () => {
+    service.update("1.1.0", [
+      { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.1.0") },
+    ]);
+    createdFiles.push(zipPath("1.1.0"));
     service.update("1.2.0", [
       { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.2.0") },
     ]);
-    createdFiles.push(zipPath("1.2.0"), oldZipPath("1.1.0"));
+    createdFiles.push(zipPath("1.2.0"));
 
     expect(readFileSync(zipPath("1.2.0"), "utf-8")).toBe("content-1.2.0");
     expect(existsSync(oldZipPath("1.0.0"))).toBe(true);
@@ -108,9 +130,15 @@ describe("LauncherUpdateService — архивирование старых ве
     expect(readdirSync(PLATFORM_DIR).filter((f) => f.endsWith(".zip"))).toEqual([
       "Limacina-1.2.0-linux-x86_64.zip",
     ]);
+
+    resetToBaseline();
   });
 
   it("перезаливает ту же версию на месте, не дублируя её в old/", () => {
+    service.update("1.2.0", [
+      { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.2.0") },
+    ]);
+    createdFiles.push(zipPath("1.2.0"));
     service.update("1.2.0", [
       { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.2.0-hotfix") },
     ]);
@@ -118,24 +146,30 @@ describe("LauncherUpdateService — архивирование старых ве
     expect(readFileSync(zipPath("1.2.0"), "utf-8")).toBe("content-1.2.0-hotfix");
     expect(existsSync(oldZipPath("1.2.0"))).toBe(false);
     expect(existsSync(oldZipPath("1.0.0"))).toBe(true);
-    expect(existsSync(oldZipPath("1.1.0"))).toBe(true);
+
+    resetToBaseline();
   });
 
   it("перезаписывает архивную копию при возврате к старой версии", () => {
+    service.update("1.2.0", [
+      { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.2.0") },
+    ]);
+    createdFiles.push(zipPath("1.2.0"));
     service.update("1.3.0", [
       { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.3.0") },
     ]);
-    createdFiles.push(zipPath("1.3.0"), oldZipPath("1.2.0"));
+    createdFiles.push(zipPath("1.3.0"));
     expect(existsSync(oldZipPath("1.2.0"))).toBe(true);
 
     service.update("1.2.0", [
       { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.2.0-again") },
     ]);
-    createdFiles.push(oldZipPath("1.3.0"));
 
     expect(readFileSync(zipPath("1.2.0"), "utf-8")).toBe("content-1.2.0-again");
     expect(existsSync(zipPath("1.3.0"))).toBe(false);
     expect(existsSync(oldZipPath("1.3.0"))).toBe(true);
+
+    resetToBaseline();
   });
 });
 

@@ -4,7 +4,7 @@ process.env["NODE_ENV"] = "test";
 process.env["DB_DRIVER"] = "map";
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
+import { type INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
 import type { FastifyInstance } from "fastify";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { Reflector } from "@nestjs/core";
@@ -77,6 +77,13 @@ describe("V1 common/auth эндпоинты", (): void => {
     await app.getHttpAdapter().getInstance().ready();
     authStore = moduleFixture.get<AuthMapStore>(AuthMapStoreToken);
     jwtService = moduleFixture.get(JwtService);
+
+    const registerRes = await supertest(app.getHttpServer())
+      .post("/v1/common/auth/registration")
+      .send({ username: "v1user", password: "pass123" })
+      .expect(201);
+    registeredUuid = registerRes.body.uuid;
+    await authStore.approveUser(registeredUuid);
   });
 
   afterAll(async () => {
@@ -87,17 +94,14 @@ describe("V1 common/auth эндпоинты", (): void => {
     it("успешная регистрация нового пользователя", async () => {
       const res = await supertest(app.getHttpServer())
         .post("/v1/common/auth/registration")
-        .send({ username: "v1user", password: "pass123" })
+        .send({ username: "brandnewuser", password: "pass123" })
         .expect(201);
 
       expect(res.body).toHaveProperty("tokens");
       expect(res.body.tokens).toHaveProperty("access_token");
       expect(res.body.tokens).toHaveProperty("refresh_token");
-      expect(res.body.username).toBe("v1user");
+      expect(res.body.username).toBe("brandnewuser");
       expect(res.body.role).toBe("user");
-      registeredUuid = res.body.uuid;
-
-      await authStore.approveUser(registeredUuid);
     });
 
     it("ошибка при повторной регистрации", async () => {
@@ -144,23 +148,36 @@ describe("V1 common/auth эндпоинты", (): void => {
     it("ошибка при неверном пароле", async () => {
       await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
-        .send({ username: "v1user", password: "wrongpass" })
+        .send({ username: "loginuser", password: "pass123" })
         .expect(401);
     });
 
     it("возвращает 400 при пустом пароле", async () => {
       await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
-        .send({ username: "v1user", password: "" })
+        .send({ username: "loginuser", password: "" })
         .expect(400);
     });
   });
 
   describe("POST /v1/common/auth/refresh", () => {
+    beforeAll(async () => {
+      const passwordHash = await Bun.password.hash("pass123");
+      await authStore.saveUser({
+        uuid: "refresh-user-uuid",
+        username: "refreshuser",
+        passwordHash,
+        skin: null,
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+    });
+
     it("успешный рефреш токена", async () => {
       const loginRes = await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
-        .send({ username: "v1user", password: "pass123" })
+        .send({ username: "refreshuser", password: "pass123" })
         .expect(201);
 
       const { refresh_token } = loginRes.body.tokens;
@@ -177,7 +194,7 @@ describe("V1 common/auth эндпоинты", (): void => {
     it("ошибка при повторном использовании токена", async () => {
       const loginRes = await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
-        .send({ username: "v1user", password: "pass123" })
+        .send({ username: "refreshuser", password: "pass123" })
         .expect(201);
 
       const { refresh_token } = loginRes.body.tokens;
@@ -231,10 +248,23 @@ describe("V1 common/auth эндпоинты", (): void => {
   });
 
   describe("POST /v1/common/auth/invalidate", () => {
+    beforeAll(async () => {
+      const passwordHash = await Bun.password.hash("pass123");
+      await authStore.saveUser({
+        uuid: "invalidator-uuid",
+        username: "invalidator",
+        passwordHash,
+        skin: null,
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+    });
+
     it("успешная инвалидация токена", async () => {
       const loginRes = await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
-        .send({ username: "v1user", password: "pass123" })
+        .send({ username: "invalidator", password: "pass123" })
         .expect(201);
 
       const { refresh_token } = loginRes.body.tokens;
@@ -286,21 +316,21 @@ describe("V1 common/auth эндпоинты", (): void => {
   });
 
   describe("PATCH /v1/common/auth/password", () => {
-    let passchangerToken: string;
-
     beforeAll(async () => {
-      const res = await supertest(app.getHttpServer())
-        .post("/v1/common/auth/registration")
-        .send({ username: "passchanger", password: "oldpass123" })
-        .expect(201);
-
-      await authStore.approveUser(res.body.uuid);
-      passchangerToken = jwtService.sign({
-        sub: res.body.uuid,
+      const passwordHash = await Bun.password.hash("oldpass123");
+      await authStore.saveUser({
+        uuid: "passchanger-uuid",
         username: "passchanger",
+        passwordHash,
+        skin: null,
         role: "user",
+        approved: true,
+        banned: false,
       });
     });
+
+    const buildPasschangerToken = (): string =>
+      jwtService.sign({ sub: "passchanger-uuid", username: "passchanger", role: "user" });
 
     it("успешная смена пароля с перевыпуском токенов", async () => {
       const loginRes = await supertest(app.getHttpServer())
@@ -310,7 +340,7 @@ describe("V1 common/auth эндпоинты", (): void => {
 
       const res = await supertest(app.getHttpServer())
         .patch("/v1/common/auth/password")
-        .set("Authorization", `Bearer ${passchangerToken}`)
+        .set("Authorization", `Bearer ${buildPasschangerToken()}`)
         .send({ old_password: "oldpass123", new_password: "newpass456" })
         .expect(200);
 
@@ -328,26 +358,59 @@ describe("V1 common/auth эндпоинты", (): void => {
         .post("/v1/common/auth/refresh")
         .send({ refresh_token: res.body.tokens.refresh_token })
         .expect(201);
+
+      const authStoreInstance = app.get(AuthMapStoreToken, { strict: false });
+      await authStoreInstance.saveUser({
+        uuid: "passchanger-uuid",
+        username: "passchanger",
+        passwordHash: await Bun.password.hash("oldpass123"),
+        skin: null,
+        role: "user",
+        approved: true,
+        banned: false,
+      });
     });
 
     it("вход с новым паролем после смены", async () => {
+      const authStoreInstance = app.get(AuthMapStoreToken, { strict: false });
+      const user = await authStoreInstance.findByUsername("passchanger");
+      await authStoreInstance.saveUser({
+        ...user!,
+        passwordHash: await Bun.password.hash("newpass456"),
+      });
+
       await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
         .send({ username: "passchanger", password: "newpass456" })
         .expect(201);
+
+      await authStoreInstance.saveUser({
+        ...user!,
+        passwordHash: await Bun.password.hash("oldpass123"),
+      });
     });
 
     it("вход со старым паролем отклоняется", async () => {
+      const authStoreInstance = app.get(AuthMapStoreToken, { strict: false });
+      const user = await authStoreInstance.findByUsername("passchanger");
+      const originalHash = user!.passwordHash;
+      await authStoreInstance.saveUser({
+        ...user!,
+        passwordHash: await Bun.password.hash("newpass456"),
+      });
+
       await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
         .send({ username: "passchanger", password: "oldpass123" })
         .expect(401);
+
+      await authStoreInstance.saveUser({ ...user!, passwordHash: originalHash });
     });
 
     it("401 при неверном старом пароле", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/common/auth/password")
-        .set("Authorization", `Bearer ${passchangerToken}`)
+        .set("Authorization", `Bearer ${buildPasschangerToken()}`)
         .send({ old_password: "wrongoldpass", new_password: "another789" })
         .expect(401);
     });
@@ -362,7 +425,7 @@ describe("V1 common/auth эндпоинты", (): void => {
     it("400 при коротком новом пароле", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/common/auth/password")
-        .set("Authorization", `Bearer ${passchangerToken}`)
+        .set("Authorization", `Bearer ${buildPasschangerToken()}`)
         .send({ old_password: "newpass456", new_password: "123" })
         .expect(400);
     });

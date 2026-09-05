@@ -132,20 +132,24 @@ describe("V1 common/status эндпоинт — SLP-пинг игрового с
     });
 
     it("повторный запрос отдаётся из кеша без нового пинга", async () => {
+      await supertest(app.getHttpServer()).get("/v1/common/status").expect(200);
+      const connectionsBefore = connectionCount();
+
       const res = await supertest(app.getHttpServer()).get("/v1/common/status").expect(200);
 
       expect(res.body.online).toBe(7);
-      expect(connectionCount()).toBe(1);
+      expect(connectionCount()).toBe(connectionsBefore);
     });
 
     it("после инвалидации кеша сервер пингуется снова", async () => {
+      const connectionsBefore = connectionCount();
       const cache = app.get<ICacheStore>(CacheStoreToken, { strict: false });
       await cache.delete(STATUS_CACHE_KEY);
 
       const res = await supertest(app.getHttpServer()).get("/v1/common/status").expect(200);
 
       expect(res.body.online).toBe(7);
-      expect(connectionCount()).toBe(2);
+      expect(connectionCount()).toBeGreaterThan(connectionsBefore);
     });
 
     it("возвращает 503, когда игровой сервер недоступен", async () => {

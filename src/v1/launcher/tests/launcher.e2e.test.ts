@@ -5,7 +5,7 @@ process.env["DB_DRIVER"] = "map";
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { unlinkSync, writeFileSync } from "node:fs";
-import { INestApplication } from "@nestjs/common";
+import { type INestApplication } from "@nestjs/common";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
@@ -14,10 +14,12 @@ import { V1LauncherUpdateController } from "../update.controller";
 import { V1LauncherConfigController } from "../config.controller";
 import { V1LauncherFilesController } from "../files.controller";
 import { LauncherService } from "../../../launcher/launcher.service";
-import { FilesService } from "../../../files/files.service";
+import { FilesService, FILES_LIST_EXCLUDED_FOLDERS } from "../../../files/files.service";
 
 const DOWNLOAD_DIR = "public/linux/x86_64";
 const TEST_ZIP = `${DOWNLOAD_DIR}/Limacina-9.9.9-linux-x86_64.zip`;
+const TEST_MOD_FILE = "public/launcher/mods/limacina-exclusion-test-mod.jar";
+const TEST_MOD_KEY = "mods/limacina-exclusion-test-mod.jar";
 
 const binaryParser = (
   res: SuperagentResponse,
@@ -35,6 +37,7 @@ const binaryParser = (
 
 describe("V1 launcher эндпоинты", (): void => {
   let app: INestApplication;
+  let filesService: FilesService;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -49,6 +52,7 @@ describe("V1 launcher эндпоинты", (): void => {
     app = moduleFixture.createNestApplication(new FastifyAdapter());
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
+    filesService = app.get(FilesService);
   });
 
   afterAll(async () => {
@@ -111,10 +115,55 @@ describe("V1 launcher эндпоинты", (): void => {
       expect(typeof res.body).toBe("object");
     });
 
+    it("GET /v1/launcher/files/list не включает моды", async () => {
+      writeFileSync(TEST_MOD_FILE, "fake-mod-content");
+      try {
+        filesService.launcherHash.set(TEST_MOD_KEY, "d41d8cd98f00b204e9800998ecf8427e");
+
+        const res = await supertest(app.getHttpServer()).get("/v1/launcher/files/list").expect(200);
+
+        expect(Object.keys(res.body)).not.toContain(TEST_MOD_KEY);
+      } finally {
+        filesService.launcherHash.delete(TEST_MOD_KEY);
+        unlinkSync(TEST_MOD_FILE);
+      }
+    });
+
+    it("GET /v1/launcher/files/list не включает папки из FILES_LIST_EXCLUDED_FOLDERS", async () => {
+      const excludedKey = "resourcepacks/limacina-exclusion-test-pack.zip";
+      const backup = [...FILES_LIST_EXCLUDED_FOLDERS];
+      try {
+        FILES_LIST_EXCLUDED_FOLDERS.push("resourcepacks");
+        filesService.launcherHash.set(excludedKey, "d41d8cd98f00b204e9800998ecf8427e");
+
+        const res = await supertest(app.getHttpServer()).get("/v1/launcher/files/list").expect(200);
+
+        expect(Object.keys(res.body)).not.toContain(excludedKey);
+      } finally {
+        FILES_LIST_EXCLUDED_FOLDERS.length = 0;
+        FILES_LIST_EXCLUDED_FOLDERS.push(...backup);
+        filesService.launcherHash.delete(excludedKey);
+      }
+    });
+
     it("GET /v1/launcher/files/mods возвращает список модов", async () => {
       const res = await supertest(app.getHttpServer()).get("/v1/launcher/files/mods").expect(200);
 
       expect(typeof res.body).toBe("object");
+    });
+
+    it("GET /v1/launcher/files/mods возвращает только моды", async () => {
+      writeFileSync(TEST_MOD_FILE, "fake-mod-content");
+      try {
+        filesService.launcherHash.set(TEST_MOD_KEY, "d41d8cd98f00b204e9800998ecf8427e");
+
+        const res = await supertest(app.getHttpServer()).get("/v1/launcher/files/mods").expect(200);
+
+        expect(res.body[TEST_MOD_KEY]).toBe("d41d8cd98f00b204e9800998ecf8427e");
+      } finally {
+        filesService.launcherHash.delete(TEST_MOD_KEY);
+        unlinkSync(TEST_MOD_FILE);
+      }
     });
 
     it("POST /v1/launcher/files/download отдаёт файл по указанному пути", async () => {

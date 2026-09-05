@@ -5,7 +5,9 @@ import type {
   ProxyAuthResult,
   ProxyRefreshResult,
 } from "./yggdrasil_store";
-import { limaFetch } from "../../utils/fetch";
+import { limaFetch as defaultLimaFetch } from "../../utils/fetch";
+
+type LimaFetch = typeof defaultLimaFetch;
 
 interface UpstreamProfile {
   id: string;
@@ -27,9 +29,11 @@ export class YggdrasilProxyStore implements IYggdrasilStore {
   private readonly upstreamUrl: string;
 
   private readonly profiles = new Map<string, YggdrasilProfile>();
+  private readonly limaFetch: LimaFetch;
 
-  constructor(upstreamUrl: string) {
+  constructor(upstreamUrl: string, limaFetch: LimaFetch = defaultLimaFetch) {
     this.upstreamUrl = upstreamUrl.replace(/\/+$/, "");
+    this.limaFetch = limaFetch;
   }
 
   async authenticateViaProxy(
@@ -37,7 +41,7 @@ export class YggdrasilProxyStore implements IYggdrasilStore {
     password: string,
     clientToken?: string,
   ): Promise<ProxyAuthResult | null> {
-    const res = await limaFetch<UpstreamAuthResponse>(
+    const res = await this.limaFetch<UpstreamAuthResponse>(
       `${this.upstreamUrl}/authserver/authenticate`,
       {
         method: "POST",
@@ -77,10 +81,13 @@ export class YggdrasilProxyStore implements IYggdrasilStore {
     const body: Record<string, unknown> = { accessToken, requestUser: requestUser ?? true };
     if (clientToken) body["clientToken"] = clientToken;
 
-    const res = await limaFetch<UpstreamAuthResponse>(`${this.upstreamUrl}/authserver/refresh`, {
-      method: "POST",
-      body,
-    });
+    const res = await this.limaFetch<UpstreamAuthResponse>(
+      `${this.upstreamUrl}/authserver/refresh`,
+      {
+        method: "POST",
+        body,
+      },
+    );
 
     if (!res.ok || !res.data) {
       this.logger.warn({ status: res.status, error: res.error }, "upstream refresh failed");
@@ -101,7 +108,7 @@ export class YggdrasilProxyStore implements IYggdrasilStore {
   }
 
   async signoutViaProxy(username: string, password: string): Promise<boolean> {
-    const res = await limaFetch(`${this.upstreamUrl}/authserver/invalidate`, {
+    const res = await this.limaFetch(`${this.upstreamUrl}/authserver/invalidate`, {
       method: "POST",
       body: { username, password },
     });
@@ -113,7 +120,7 @@ export class YggdrasilProxyStore implements IYggdrasilStore {
     const cached = this.profiles.get(uuid);
     if (cached) return cached;
 
-    const res = await limaFetch<UpstreamProfile>(
+    const res = await this.limaFetch<UpstreamProfile>(
       `${this.upstreamUrl}/sessionserver/session/minecraft/profile/${uuid}`,
     );
     if (!res.ok || !res.data) return undefined;
@@ -128,10 +135,13 @@ export class YggdrasilProxyStore implements IYggdrasilStore {
       if (profile.username === username) return profile;
     }
 
-    const res = await limaFetch<UpstreamProfile[]>(`${this.upstreamUrl}/api/profiles/minecraft`, {
-      method: "POST",
-      body: [username],
-    });
+    const res = await this.limaFetch<UpstreamProfile[]>(
+      `${this.upstreamUrl}/api/profiles/minecraft`,
+      {
+        method: "POST",
+        body: [username],
+      },
+    );
 
     if (!res.ok || !res.data || res.data.length === 0) return undefined;
 

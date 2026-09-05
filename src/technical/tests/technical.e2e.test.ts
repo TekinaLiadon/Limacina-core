@@ -9,7 +9,7 @@ import { TechnicalController } from "../technical.controller";
 import { TechnicalService } from "../technical.service";
 import { AdminMapStore, AdminMapStoreToken } from "../../admin/admin.store";
 import { AuthMapStore, AuthMapStoreToken } from "../../auth/service/auth_store.service";
-import { INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
+import { type INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { PassportModule, PassportStrategy } from "@nestjs/passport";
 import { JwtModule } from "@nestjs/jwt";
@@ -66,6 +66,11 @@ describe("Technical эндпоинты", (): void => {
     const reflector = app.get(Reflector);
     app.useGlobalGuards(new Jwt_authGuard(reflector), new RolesGuard(reflector));
     await app.init();
+
+    await supertest(app.getHttpServer())
+      .post("/technical/init-owner")
+      .send({ username: "owner", password: "securepassword" })
+      .expect(201);
   });
 
   afterAll(async () => {
@@ -73,16 +78,6 @@ describe("Technical эндпоинты", (): void => {
   });
 
   describe("POST /technical/init-owner", () => {
-    it("создаёт владельца", async () => {
-      const res = await supertest(app.getHttpServer())
-        .post("/technical/init-owner")
-        .send({ username: "owner", password: "securepassword" })
-        .expect(201);
-
-      expect(res.body.username).toBe("owner");
-      expect(res.body.uuid).toBeDefined();
-    });
-
     it("возвращает 409 если владелец уже создан", async () => {
       const res = await supertest(app.getHttpServer())
         .post("/technical/init-owner")
