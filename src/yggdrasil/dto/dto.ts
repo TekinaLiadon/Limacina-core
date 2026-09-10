@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { IsBoolean, IsNumber, IsOptional, IsString, ValidateNested } from "class-validator";
+import {
+  IsBoolean,
+  IsNumber,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateNested,
+} from "class-validator";
 import { Type } from "class-transformer";
 import { validationMessages } from "../../common/validation-messages";
 
@@ -49,8 +56,9 @@ export class AuthenticateDto {
   @IsString({ message: validationMessages.string("username") })
   username!: string;
 
-  @ApiProperty({ example: "secret123" })
+  @ApiProperty({ example: "secret123", maxLength: 128 })
   @IsString({ message: validationMessages.string("password") })
+  @MaxLength(128, { message: validationMessages.maxLength("password", 128) })
   password!: string;
 
   @ApiPropertyOptional({ example: "client-token-123" })
@@ -113,8 +121,9 @@ export class SignoutDto {
   @IsString()
   username!: string;
 
-  @ApiProperty({ example: "secret123" })
-  @IsString()
+  @ApiProperty({ example: "secret123", maxLength: 128 })
+  @IsString({ message: validationMessages.string("password") })
+  @MaxLength(128, { message: validationMessages.maxLength("password", 128) })
   password!: string;
 }
 

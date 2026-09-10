@@ -160,6 +160,39 @@ describe("V1 launcher/update эндпоинты — версии и скачив
       expect(res.text).toBe(CURRENT_ZIP_CONTENT);
     });
 
+    it("без параметра version отдаёт zip версии из version.json, а не первый зип из каталога", async () => {
+      const FORGOTTEN_VERSION = "9.9.9";
+      const FORGOTTEN_ZIP = `Limacina-${FORGOTTEN_VERSION}-linux-x86_64.zip`;
+      const FORGOTTEN_CONTENT = "forgotten-zip-content";
+      writeFileSync(join(PLATFORM_DIR, FORGOTTEN_ZIP), FORGOTTEN_CONTENT);
+
+      try {
+        const res = await supertest(app.getHttpServer())
+          .get("/v1/launcher/update/linux/x86_64/download")
+          .expect(200)
+          .expect("Content-Type", "application/zip");
+
+        expect(res.text).toBe(CURRENT_ZIP_CONTENT);
+      } finally {
+        unlinkSync(join(PLATFORM_DIR, FORGOTTEN_ZIP));
+      }
+    });
+
+    it("возвращает 404 без параметра version, если zip текущей версии отсутствует", async () => {
+      const CURRENT_ZIP_PATH = join(PLATFORM_DIR, CURRENT_ZIP);
+      renameSync(CURRENT_ZIP_PATH, `${CURRENT_ZIP_PATH}.bak`);
+
+      try {
+        const res = await supertest(app.getHttpServer())
+          .get("/v1/launcher/update/linux/x86_64/download")
+          .expect(404);
+
+        expect(res.body.message).toContain(CURRENT_VERSION);
+      } finally {
+        renameSync(`${CURRENT_ZIP_PATH}.bak`, CURRENT_ZIP_PATH);
+      }
+    });
+
     it("отдаёт архивную версию по ?version=", async () => {
       const res = await supertest(app.getHttpServer())
         .get(`/v1/launcher/update/linux/x86_64/download?version=${ARCHIVED_VERSION}`)

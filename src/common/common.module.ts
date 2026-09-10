@@ -3,6 +3,7 @@ import { JwtModule } from "@nestjs/jwt";
 import { PassportModule } from "@nestjs/passport";
 import { JwtStrategy } from "./jwt.strategy";
 import { AuthStoreModule } from "../auth/service/auth_store.module";
+import { ACCESS_TOKEN_TTL_SECONDS } from "../auth/token.constants";
 import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 
@@ -16,7 +17,7 @@ import type { AppConfigType } from "../config/global-config";
       inject: [AppConfigToken],
       useFactory: (config: AppConfigType) => ({
         secret: config.JWT_ACCESS,
-        signOptions: { expiresIn: 31536000 },
+        signOptions: { expiresIn: ACCESS_TOKEN_TTL_SECONDS },
       }),
     }),
   ],

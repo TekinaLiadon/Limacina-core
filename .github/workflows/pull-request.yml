@@ -18,6 +18,7 @@ jobs:
       - name: Setup bun
         uses: oven-sh/setup-bun@v2
       - name: Install dependencies
+        # bun-локфайла нет в репо (лежит npm'овский package-lock) — каждый запуск резолвит версии заново
         run: bun install
 
       - name: Check types
@@ -44,6 +45,7 @@ jobs:
         run: bun audit --only-prod
 
       - name: Tests
+        # check-all обещает coverage:gate и test:randomize, но тут их нет; миграционные тесты (test:migrate) ci не гоняет вообще
         run: bun test
         env:
           JWT_ACCESS: ${{ secrets.JWT_ACCESS }}
@@ -68,6 +70,7 @@ jobs:
       - name: Update outdated dependencies
         run: |
           bun update
+          # bun.lockb не существует в репо — git diff падает с кодом 128, джоба умирает каждую неделю и пр не создается
           CHANGED=$(git diff --stat package.json bun.lockb)
           if [ -z "$CHANGED" ]; then
             echo "Nothing to update"

@@ -24,6 +24,7 @@ import {
   SetUserPasswordDto,
   UsersListResponseDto,
   UsersQueryDto,
+  UsersSearchQueryDto,
   V1DeletedUsersQueryDto,
 } from "../../admin/dto/dto";
 import type { UsersFilter } from "../../admin/admin.store";
@@ -98,16 +99,9 @@ export class V1PanelUsersController {
     type: UsersListResponseDto,
   })
   async getUsers(@Query() query: UsersQueryDto): Promise<UsersListResponseDto> {
-    const limit = query.limit ?? 10;
-    const offset = query.offset ?? 0;
-    const filter: UsersFilter = {
-      limit,
-      offset,
-      username: query.username,
-      approved: query.approved,
-    };
+    const filter: UsersFilter = { ...this.buildUsersFilter(query), approved: query.approved };
     const { items, total } = await this.adminService.searchUsers(filter);
-    return { items, total, limit, offset };
+    return { items, total, limit: filter.limit, offset: filter.offset };
   }
 
   @Get("deleted")
@@ -148,15 +142,9 @@ export class V1PanelUsersController {
   async getDeletedUsers(
     @Query() query: V1DeletedUsersQueryDto,
   ): Promise<DeletedUsersListResponseDto> {
-    const limit = query.limit ?? 10;
-    const offset = query.offset ?? 0;
-    const filter: UsersFilter = {
-      limit,
-      offset,
-      username: query.username,
-    };
+    const filter = this.buildUsersFilter(query);
     const { items, total } = await this.adminService.searchDeletedUsers(filter);
-    return { items, total, limit, offset };
+    return { items, total, limit: filter.limit, offset: filter.offset };
   }
 
   @Patch("approve")
@@ -169,7 +157,7 @@ export class V1PanelUsersController {
     @CurrentUser() user: RequestUser,
     @Body() dto: ApproveUserDto,
   ): Promise<SuccessResponseDto> {
-    await this.adminService.setApproved(dto.username, dto.approved, user.role);
+    await this.adminService.setApproved(dto.username, dto.approved, user);
     return { success: true };
   }
 
@@ -183,7 +171,7 @@ export class V1PanelUsersController {
     @CurrentUser() user: RequestUser,
     @Body() dto: BanUserDto,
   ): Promise<SuccessResponseDto> {
-    await this.adminService.setBanned(dto.username, dto.banned, user.role);
+    await this.adminService.setBanned(dto.username, dto.banned, user);
     return { success: true };
   }
 
@@ -198,7 +186,7 @@ export class V1PanelUsersController {
     @CurrentUser() user: RequestUser,
     @Body() dto: SetRoleDto,
   ): Promise<SuccessResponseDto> {
-    await this.adminService.setRole(dto.username, dto.role, user.role);
+    await this.adminService.setRole(dto.username, dto.role, user);
     return { success: true };
   }
 
@@ -222,7 +210,7 @@ export class V1PanelUsersController {
     @CurrentUser() user: RequestUser,
     @Body() dto: SetOwnerDto,
   ): Promise<SuccessResponseDto> {
-    await this.adminService.setOwnerRole(dto.username, user.role);
+    await this.adminService.setOwnerRole(dto.username, user);
     return { success: true };
   }
 
@@ -243,7 +231,7 @@ export class V1PanelUsersController {
     @CurrentUser() user: RequestUser,
     @Body() dto: SetUserPasswordDto,
   ): Promise<SuccessResponseDto> {
-    await this.adminService.setUserPassword(dto.username, dto.password, user.role);
+    await this.adminService.setUserPassword(dto.username, dto.password, user);
     return { success: true };
   }
 
@@ -261,7 +249,7 @@ export class V1PanelUsersController {
     @CurrentUser() user: RequestUser,
     @Param("username") username: string,
   ): Promise<UserSuccessResponseDto> {
-    const deleted = await this.adminService.deleteUser(username, user.role);
+    const deleted = await this.adminService.deleteUser(username, user);
     return { success: true, username: deleted.username };
   }
 
@@ -284,7 +272,15 @@ export class V1PanelUsersController {
     @CurrentUser() user: RequestUser,
     @Param("username") username: string,
   ): Promise<UserSuccessResponseDto> {
-    await this.adminService.restoreUser(username, user.role);
+    await this.adminService.restoreUser(username, user);
     return { success: true, username };
+  }
+
+  private buildUsersFilter(query: UsersSearchQueryDto): UsersFilter {
+    return {
+      limit: query.limit ?? 10,
+      offset: query.offset ?? 0,
+      username: query.username,
+    };
   }
 }

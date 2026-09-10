@@ -15,12 +15,16 @@ import cors from "@fastify/cors";
 import fastifyMultipart from "@fastify/multipart";
 import { registerAuthRateLimit } from "./common/auth-rate-limit";
 
+const DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
+
 async function bootstrap() {
   const envConfig = GlobalConfig.parseEnvOrExit();
-  const adapterOptions =
-    envConfig.TRUST_PROXY && envConfig.TRUST_PROXY.length > 0
-      ? { trustProxy: envConfig.TRUST_PROXY }
-      : {};
+  const adapterOptions: { trustProxy?: string; bodyLimit: number } = {
+    bodyLimit: DEFAULT_BODY_LIMIT_BYTES,
+  };
+  if (envConfig.TRUST_PROXY && envConfig.TRUST_PROXY.length > 0) {
+    adapterOptions.trustProxy = envConfig.TRUST_PROXY;
+  }
   const app = await NestFactory.create(AppModule, new FastifyAdapter(adapterOptions), {
     bufferLogs: true,
   });

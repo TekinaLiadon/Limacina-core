@@ -1,19 +1,20 @@
 import { generateKeyPairSync, createPublicKey } from "node:crypto";
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { resolveKeysDir } from "../src/yggdrasil/service/keys-dir";
 
-const KEYS_DIR = join(import.meta.dir, "..", "keys");
+const KEYS_DIR = resolveKeysDir(process.env["KEYS_DIR"]);
 
 function main() {
   if (!existsSync(KEYS_DIR)) {
-    mkdirSync(KEYS_DIR, { recursive: true });
+    mkdirSync(KEYS_DIR, { recursive: true, mode: 0o700 });
   }
 
   const privateKeyPath = join(KEYS_DIR, "private.pem");
   const publicKeyPath = join(KEYS_DIR, "public.pem");
 
   if (existsSync(privateKeyPath) || existsSync(publicKeyPath)) {
-    console.error("Keys already exist in keys/ directory. Delete them first to regenerate.");
+    console.error(`Keys already exist in ${KEYS_DIR}. Delete them first to regenerate.`);
     process.exit(1);
   }
 
@@ -23,8 +24,13 @@ function main() {
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
   });
 
-  writeFileSync(privateKeyPath, privateKey);
+  writeFileSync(privateKeyPath, privateKey, { mode: 0o600 });
   writeFileSync(publicKeyPath, publicKey);
+
+  chmodSync(privateKeyPath, 0o600);
+  if (statSync(KEYS_DIR).isDirectory() === false) {
+    process.exit(1);
+  }
 
   console.log(`Private key: ${privateKeyPath}`);
   console.log(`Public key: ${publicKeyPath}`);

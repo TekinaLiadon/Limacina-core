@@ -119,7 +119,7 @@ export class FilesService implements OnModuleDestroy {
   }
 
   async getHash(url: string): Promise<string | null> {
-    const hasher = new Bun.CryptoHasher("md5");
+    const hasher = new Bun.CryptoHasher("sha1");
     const file = Bun.file(url);
 
     if (!(await file.exists())) {
@@ -127,8 +127,10 @@ export class FilesService implements OnModuleDestroy {
       return null;
     }
 
-    const buffer = await file.arrayBuffer();
-    hasher.update(buffer);
+    const readable = file.stream();
+    for await (const chunk of readable) {
+      hasher.update(chunk);
+    }
     return hasher.digest("hex");
   }
 

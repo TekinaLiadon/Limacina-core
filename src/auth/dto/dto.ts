@@ -33,10 +33,11 @@ export class AuthDto {
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })
   username!: string;
 
-  @ApiProperty({ example: "secret123", minLength: 6 })
+  @ApiProperty({ example: "secret123", minLength: 6, maxLength: 128 })
   @IsString({ message: validationMessages.string("password") })
   @IsNotEmpty({ message: validationMessages.notEmpty("password") })
   @MinLength(6, { message: validationMessages.minLength("password", 6) })
+  @MaxLength(128, { message: validationMessages.maxLength("password", 128) })
   password!: string;
 }
 
@@ -47,16 +48,18 @@ export class AuthRefreshDto {
 }
 
 export class ChangePasswordDto {
-  @ApiProperty({ example: "secret123", minLength: 6 })
+  @ApiProperty({ example: "secret123", minLength: 6, maxLength: 128 })
   @IsString({ message: validationMessages.string("old_password") })
   @IsNotEmpty({ message: validationMessages.notEmpty("old_password") })
   @MinLength(6, { message: validationMessages.minLength("old_password", 6) })
+  @MaxLength(128, { message: validationMessages.maxLength("old_password", 128) })
   old_password!: string;
 
-  @ApiProperty({ example: "newsecret123", minLength: 6 })
+  @ApiProperty({ example: "newsecret123", minLength: 6, maxLength: 128 })
   @IsString({ message: validationMessages.string("new_password") })
   @IsNotEmpty({ message: validationMessages.notEmpty("new_password") })
   @MinLength(6, { message: validationMessages.minLength("new_password", 6) })
+  @MaxLength(128, { message: validationMessages.maxLength("new_password", 128) })
   new_password!: string;
 }
 

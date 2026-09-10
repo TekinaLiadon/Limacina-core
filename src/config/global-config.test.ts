@@ -3,8 +3,9 @@ import AppConfig from "./global-config";
 
 const baseEnv = {
   NODE_ENV: "development",
-  JWT_ACCESS: "test-access-secret",
-  JWT_REFRESH: "test-refresh-secret",
+  JWT_ACCESS: "test-access-secret-test-access-secret-32",
+  JWT_REFRESH: "test-refresh-secret-test-refresh-secret-32",
+  BASE_URL: "http://localhost:3005",
 };
 
 describe("AppConfig", () => {
@@ -70,5 +71,49 @@ describe("AppConfig", () => {
     const result = AppConfig.tryParseEnv({ ...baseEnv, DB_DRIVER: "sqlite" });
 
     expect(result.success).toBe(false);
+  });
+
+  it("отклоняет неизвестный NODE_ENV", () => {
+    const result = AppConfig.tryParseEnv({ ...baseEnv, NODE_ENV: "prod" });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("принимает test и production", () => {
+    const testResult = AppConfig.tryParseEnv({ ...baseEnv, NODE_ENV: "test" });
+    const productionResult = AppConfig.tryParseEnv({
+      ...baseEnv,
+      NODE_ENV: "production",
+      DB_DRIVER: "postgres",
+      DATABASE_URL: "postgres://localhost:5432/limacina",
+    });
+
+    expect(testResult.success).toBe(true);
+    expect(productionResult.success).toBe(true);
+  });
+
+  it("отклоняет короткие JWT-секреты", () => {
+    const result = AppConfig.tryParseEnv({
+      ...baseEnv,
+      JWT_ACCESS: "short",
+      JWT_REFRESH: "short",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path.includes("JWT_ACCESS"))).toBe(true);
+      expect(result.error.issues.some((issue) => issue.path.includes("JWT_REFRESH"))).toBe(true);
+    }
+  });
+
+  it("BASE_URL обязателен", () => {
+    const { BASE_URL: _, ...envWithoutBaseUrl } = baseEnv;
+
+    const result = AppConfig.tryParseEnv(envWithoutBaseUrl);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path.includes("BASE_URL"))).toBe(true);
+    }
   });
 });

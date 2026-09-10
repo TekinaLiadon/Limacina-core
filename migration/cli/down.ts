@@ -20,18 +20,9 @@ try {
   const mod = await import(path.join(listDir, file));
 
   if (typeof mod.down !== "function") {
-    log({ text: `${file} has no down() export`, type: "warn" });
-    const prompt = "Continue and remove tracking record? [y/N] ";
-    process.stdout.write(prompt);
-    const line = await new Promise<string>((resolve) => {
-      process.stdin.once("data", (data) => {
-        resolve(data.toString().trim());
-      });
-    });
-    if (line === "y") {
-      await driver.remove(file);
-      log({ text: `${file} tracking record removed`, type: "success" });
-    }
+    log({ text: `${file} has no down() export, removing tracking record`, type: "warn" });
+    await driver.remove(file);
+    log({ text: `${file} tracking record removed`, type: "success" });
     await driver.close();
     process.exit(0);
   }

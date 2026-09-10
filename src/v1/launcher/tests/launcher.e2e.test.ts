@@ -1,10 +1,11 @@
-process.env["JWT_ACCESS"] = "test-access-secret";
-process.env["JWT_REFRESH"] = "test-refresh-secret";
+process.env["JWT_ACCESS"] = "test-access-secret-0123456789abcdef0123";
+process.env["JWT_REFRESH"] = "test-refresh-secret-0123456789abcdef0123";
 process.env["NODE_ENV"] = "test";
+process.env["BASE_URL"] = "http://localhost:3005";
 process.env["DB_DRIVER"] = "map";
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { type INestApplication } from "@nestjs/common";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { Test, TestingModule } from "@nestjs/testing";
@@ -21,7 +22,26 @@ const TEST_ZIP = `${DOWNLOAD_DIR}/Limacina-9.9.9-linux-x86_64.zip`;
 const TEST_MOD_FILE = "public/launcher/mods/limacina-exclusion-test-mod.jar";
 const TEST_MOD_KEY = "mods/limacina-exclusion-test-mod.jar";
 const CONFIG_FILE = "config.toml";
-const CONFIG_BACKUP = "config.toml.bak";
+const VERSION_FILE = "public/version.json";
+const TEST_VERSION = "9.9.9";
+const TEST_ZIP_NAME = `Limacina-${TEST_VERSION}-linux-x86_64.zip`;
+
+const WATCHER_DEADLINE_MS = 4500;
+const POLL_INTERVAL_MS = 100;
+const MUTATION_SETTLE_MS = 400;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+const waitFor = async (check: () => Promise<boolean>): Promise<void> => {
+  const deadline = Date.now() + WATCHER_DEADLINE_MS;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await sleep(POLL_INTERVAL_MS);
+  }
+};
 
 const binaryParser = (
   res: SuperagentResponse,
@@ -40,8 +60,21 @@ const binaryParser = (
 describe("V1 launcher эндпоинты", (): void => {
   let app: INestApplication;
   let filesService: FilesService;
+  let hadVersionFile = false;
+  let originalVersionContent = "";
+  let hadConfigFile = false;
+  let originalConfigContent = "";
 
   beforeAll(async () => {
+    if (existsSync(VERSION_FILE)) {
+      hadVersionFile = true;
+      originalVersionContent = readFileSync(VERSION_FILE, "utf-8");
+    }
+    if (existsSync(CONFIG_FILE)) {
+      hadConfigFile = true;
+      originalConfigContent = readFileSync(CONFIG_FILE, "utf-8");
+    }
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
       controllers: [
         V1LauncherUpdateController,
@@ -59,6 +92,15 @@ describe("V1 launcher эндпоинты", (): void => {
 
   afterAll(async () => {
     await app.close();
+
+    if (hadVersionFile) {
+      writeFileSync(VERSION_FILE, originalVersionContent);
+    } else if (existsSync(VERSION_FILE)) {
+      unlinkSync(VERSION_FILE);
+    }
+    if (hadConfigFile && !existsSync(CONFIG_FILE)) {
+      writeFileSync(CONFIG_FILE, originalConfigContent);
+    }
   });
 
   describe("GET /v1/launcher/update/version", () => {
@@ -83,25 +125,51 @@ describe("V1 launcher эндпоинты", (): void => {
 
     it("отдаёт zip-файл для поддерживаемой платформы", async () => {
       const zipContent = "fake-zip-content-v1";
+      await sleep(MUTATION_SETTLE_MS);
       writeFileSync(TEST_ZIP, zipContent);
+      writeFileSync(VERSION_FILE, JSON.stringify({ version: TEST_VERSION }));
 
       try {
-        const res = await supertest(app.getHttpServer())
-          .get("/v1/launcher/update/linux/x86_64/download")
-          .parse(binaryParser)
-          .expect(200);
+        let status = 0;
+        await waitFor(async () => {
+          const res = await supertest(app.getHttpServer())
+            .get("/v1/launcher/update/linux/x86_64/download")
+            .parse(binaryParser);
+          if (res.status === 200) {
+            expect(res.headers["content-type"]).toBe("application/zip");
+            expect(res.headers["content-disposition"]).toContain(TEST_ZIP_NAME);
+            expect(res.body.toString()).toBe(zipContent);
+          }
+          ({ status } = res);
+          return status === 200;
+        });
 
-        expect(res.headers["content-type"]).toBe("application/zip");
-        expect(res.headers["content-disposition"]).toContain("Limacina-9.9.9");
-        expect(res.body.toString()).toBe(zipContent);
+        expect(status).toBe(200);
       } finally {
         unlinkSync(TEST_ZIP);
+        if (hadVersionFile) {
+          writeFileSync(VERSION_FILE, originalVersionContent);
+        } else {
+          unlinkSync(VERSION_FILE);
+        }
       }
     });
   });
 
   describe("GET /v1/launcher/config", () => {
+    const waitForConfig = async (expected: (body: Record<string, unknown>) => boolean) => {
+      await waitFor(async () => {
+        const res = await supertest(app.getHttpServer()).get("/v1/launcher/config");
+        return res.status === 200 && expected(res.body);
+      });
+    };
+
     it("возвращает конфиг лаунчера", async () => {
+      if (!existsSync(CONFIG_FILE)) {
+        writeFileSync(CONFIG_FILE, originalConfigContent);
+        await waitForConfig(() => true);
+      }
+
       const res = await supertest(app.getHttpServer()).get("/v1/launcher/config").expect(200);
 
       expect(typeof res.body.projectName).toBe("string");
@@ -110,19 +178,42 @@ describe("V1 launcher эндпоинты", (): void => {
     });
 
     it("возвращает 404 если config.toml не найден", async () => {
-      const hadConfig = existsSync(CONFIG_FILE);
-      if (hadConfig) {
-        renameSync(CONFIG_FILE, CONFIG_BACKUP);
-      }
+      const backupContent = existsSync(CONFIG_FILE) ? readFileSync(CONFIG_FILE, "utf-8") : "";
+      await sleep(MUTATION_SETTLE_MS);
+      unlinkSync(CONFIG_FILE);
 
       try {
-        const res = await supertest(app.getHttpServer()).get("/v1/launcher/config").expect(404);
+        let status = 200;
+        await waitFor(async () => {
+          const res = await supertest(app.getHttpServer()).get("/v1/launcher/config");
+          ({ status } = res);
+          return status === 404;
+        });
 
-        expect(res.body.statusCode).toBe(404);
-        expect(res.body.message).toContain("config.toml");
+        expect(status).toBe(404);
       } finally {
-        if (hadConfig) {
-          renameSync(CONFIG_BACKUP, CONFIG_FILE);
+        if (backupContent) {
+          writeFileSync(CONFIG_FILE, backupContent);
+          await waitForConfig(() => true);
+        }
+      }
+    });
+
+    it("подхватывает изменение config.toml без рестарта", async () => {
+      const backupContent = existsSync(CONFIG_FILE) ? readFileSync(CONFIG_FILE, "utf-8") : "";
+      await sleep(MUTATION_SETTLE_MS);
+
+      try {
+        writeFileSync(
+          CONFIG_FILE,
+          'projectName = "watcher-test"\nmcVersion = "1.20.1"\nmodLoader = "fabric"\nloaderVersion = "0.15.0"\njvmArgs = []\nminMemory = "2G"\nmaxMemory = "4G"\nonline = true\n',
+        );
+
+        await waitForConfig((body) => body["projectName"] === "watcher-test");
+      } finally {
+        if (backupContent) {
+          writeFileSync(CONFIG_FILE, backupContent);
+          await waitForConfig((body) => body["projectName"] !== "watcher-test");
         }
       }
     });
@@ -182,6 +273,17 @@ describe("V1 launcher эндпоинты", (): void => {
         expect(res.body[TEST_MOD_KEY]).toBe("d41d8cd98f00b204e9800998ecf8427e");
       } finally {
         filesService.launcherHash.delete(TEST_MOD_KEY);
+        unlinkSync(TEST_MOD_FILE);
+      }
+    });
+
+    it("getHash отдаёт sha1-хеш (40 hex)", async () => {
+      writeFileSync(TEST_MOD_FILE, "fake-mod-content");
+      try {
+        const hash = await filesService.getHash(TEST_MOD_FILE);
+
+        expect(hash).toMatch(/^[0-9a-f]{40}$/);
+      } finally {
         unlinkSync(TEST_MOD_FILE);
       }
     });

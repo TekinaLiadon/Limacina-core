@@ -1,6 +1,5 @@
 import { ConflictException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
-import { v4 } from "uuid";
 import {
   AuthMapStore,
   AuthMapStoreToken,
@@ -11,6 +10,8 @@ import {
 import { AppConfigToken } from "../../config/app-config.provider";
 import type { AppConfigType } from "../../config/global-config";
 import type { AuthResponseDto, UserTokens } from "../dto/dto";
+import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS } from "../token.constants";
+import { generateUuid } from "../../utils/uuid";
 import { AuthPostgresStore } from "./auth_postgres.service";
 import { AuthProxyStore } from "./auth_proxy.service";
 
@@ -36,18 +37,20 @@ export class AuthService {
   async register(username: string, password: string): Promise<AuthResponseDto> {
     await this.validateUsernameAvailable(username);
 
-    const uuid = this.generateUuid();
+    const uuid = generateUuid();
     const passwordHash = await Bun.password.hash(password);
 
-    await this.authStore.saveUser({
+    const saved = await this.authStore.saveUser({
       uuid,
       username,
       passwordHash,
-      skin: null,
       role: "user",
       approved: false,
       banned: false,
     });
+    if (!saved) {
+      throw new ConflictException("Юзернейм уже занят");
+    }
 
     const tokens = await this.createTokens(uuid, username, "user");
     return { tokens, uuid, username, role: "user" };
@@ -55,20 +58,15 @@ export class AuthService {
 
   async login(username: string, password: string): Promise<AuthResponseDto> {
     const user = await this.validateUserCredentials(username, password);
-    const tokens = await this.createTokens(user.uuid, user.username, user.role);
-    return { tokens, uuid: user.uuid, username: user.username, role: user.role };
+    return this.buildAuthResponse(user);
   }
 
   async refresh(refreshToken: string): Promise<AuthResponseDto> {
     const entry = await this.validateRefreshToken(refreshToken);
-    const user = await this.authStore.findByUsername(entry.username);
-    if (!user || user.banned || user.uuid !== entry.userId) {
-      throw new UnauthorizedException("Ваш аккаунт недоступен");
-    }
+    const user = await this.findActiveUserByUuid(entry.userId, entry.username);
 
     await this.authStore.deleteRefresh(entry.jti);
-    const tokens = await this.createTokens(entry.userId, entry.username, user.role);
-    return { tokens, uuid: entry.userId, username: entry.username, role: user.role };
+    return this.buildAuthResponse(user);
   }
 
   async invalidate(refreshToken: string): Promise<void> {
@@ -96,8 +94,7 @@ export class AuthService {
     }
 
     await this.replacePassword(user.uuid, newPassword);
-    const tokens = await this.createTokens(user.uuid, user.username, user.role);
-    return { tokens, uuid: user.uuid, username: user.username, role: user.role };
+    return this.buildAuthResponse(user);
   }
 
   private async replacePassword(uuid: string, newPassword: string): Promise<void> {
@@ -156,26 +153,37 @@ export class AuthService {
     return { ...entry, jti: payload.jti };
   }
 
+  private async buildAuthResponse(user: StoredUser): Promise<AuthResponseDto> {
+    const tokens = await this.createTokens(user.uuid, user.username, user.role);
+    return { tokens, uuid: user.uuid, username: user.username, role: user.role };
+  }
+
+  private async findActiveUserByUuid(uuid: string, username: string): Promise<StoredUser> {
+    const user = await this.authStore.findByUsername(username);
+    if (!user || user.banned || user.uuid !== uuid) {
+      throw new UnauthorizedException("Ваш аккаунт недоступен");
+    }
+    return user;
+  }
+
   private async createTokens(uuid: string, username: string, role: string): Promise<UserTokens> {
     const access_token = await this.jwtService.signAsync(
       { sub: uuid, username, role },
-      { expiresIn: 31536000 },
+      {
+        expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+      },
     );
-    const jti = this.generateUuid();
+    const jti = generateUuid();
     const refresh_token = await this.jwtService.signAsync(
       { sub: uuid, username, jti, role },
       {
         secret: this.config.JWT_REFRESH,
-        expiresIn: 31536000,
+        expiresIn: REFRESH_TOKEN_TTL_SECONDS,
       },
     );
 
     await this.authStore.saveRefresh(jti, { userId: uuid, username });
 
     return { access_token, refresh_token };
-  }
-
-  private generateUuid(): string {
-    return v4().replace(/-/g, "");
   }
 }

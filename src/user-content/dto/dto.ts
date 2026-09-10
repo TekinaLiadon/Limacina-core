@@ -6,6 +6,13 @@ export class UserContentItemDto {
 
   @ApiProperty({ example: "http://localhost:3005/textures/a1b2c3d4.png" })
   url!: string;
+
+  @ApiPropertyOptional({
+    example: "slim",
+    enum: ["classic", "slim"],
+    description: "Модель рук скина (только для скинов)",
+  })
+  model?: string | null;
 }
 
 export class UserContentUploadResponseDto {

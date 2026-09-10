@@ -7,13 +7,7 @@ import {
 import { Reflector } from "@nestjs/core";
 import { ROLES_KEY } from "./roles.decorator";
 import { IS_PUBLIC_KEY } from "./public.decorator";
-
-const ROLE_HIERARCHY: Record<string, number> = {
-  owner: 4,
-  admin: 3,
-  moderator: 2,
-  user: 1,
-};
+import { roleWeight } from "./roles";
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -38,8 +32,8 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException("Недостаточно прав");
     }
 
-    const userLevel = ROLE_HIERARCHY[user.role] ?? 0;
-    const hasAccess = requiredRoles.some((role) => userLevel >= (ROLE_HIERARCHY[role] ?? 0));
+    const userLevel = roleWeight(user.role);
+    const hasAccess = requiredRoles.some((role) => userLevel >= roleWeight(role));
     if (!hasAccess) {
       throw new ForbiddenException("Недостаточно прав");
     }

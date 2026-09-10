@@ -1,4 +1,5 @@
 process.env["NODE_ENV"] = "test";
+process.env["BASE_URL"] = "http://localhost:3005";
 process.env["LOG_LEVEL"] = "info";
 
 import pino from "pino";

@@ -56,24 +56,15 @@ export class V1PanelLogsController {
   })
   async getLogs(@Query() query: V1LogsQueryDto): Promise<LogsResponseDto> {
     const date = query.date ?? new Date().toISOString().slice(0, 10);
+    const offset = query.offset ?? 0;
+    const limit = query.limit ?? 100;
     const filter: LogsFilter = {
       statusCode: query.statusCode,
       url: query.url,
       ip: query.ip,
     };
-    const { lines, total } = this.logsService.getLines(
-      date,
-      query.offset ?? 0,
-      query.limit ?? 100,
-      filter,
-    );
-    return {
-      date,
-      offset: query.offset ?? 0,
-      limit: query.limit ?? 100,
-      total,
-      lines,
-    };
+    const { lines, total } = this.logsService.getLines(date, offset, limit, filter);
+    return { date, offset, limit, total, lines };
   }
 
   @Get("dates")

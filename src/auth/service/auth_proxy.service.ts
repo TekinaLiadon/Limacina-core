@@ -14,11 +14,12 @@ export class AuthProxyStore implements IAuthStore {
     return this.fetchUpstreamUser(username);
   }
 
-  async saveUser(user: StoredUser): Promise<void> {
+  async saveUser(user: StoredUser): Promise<boolean> {
     this.logger.warn(
       { username: user.username, upstreamUrl: this.upstreamUrl },
       "saveUser в прокси-режиме не реализован — запись не отправлена на upstream",
     );
+    return false;
   }
 
   async approveUser(uuid: string): Promise<void> {
@@ -30,13 +31,6 @@ export class AuthProxyStore implements IAuthStore {
 
   async userExists(username: string): Promise<boolean> {
     return (await this.fetchUpstreamUser(username)) !== undefined;
-  }
-
-  async updateSkin(uuid: string, _skin: string): Promise<void> {
-    this.logger.warn(
-      { uuid, upstreamUrl: this.upstreamUrl },
-      "updateSkin в прокси-режиме не реализован",
-    );
   }
 
   async updatePasswordHash(uuid: string, _passwordHash: string, _changedAt: Date): Promise<void> {

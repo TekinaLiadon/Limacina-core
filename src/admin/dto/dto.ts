@@ -2,21 +2,22 @@ import { ApiProperty } from "@nestjs/swagger";
 import {
   IsArray,
   IsBoolean,
-  IsDateString,
   IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   Max,
+  MaxLength,
   Min,
   MinLength,
 } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { validationMessages } from "../../common/validation-messages";
+import { ASSIGNABLE_ROLES, type AssignableRole } from "../../common/roles";
 
-export const AVAILABLE_ROLES = ["admin", "moderator", "user"] as const;
-export type AvailableRole = (typeof AVAILABLE_ROLES)[number];
+export const LOG_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface UserRow extends Record<string, unknown> {
   uuid: string;
@@ -26,7 +27,7 @@ export interface UserRow extends Record<string, unknown> {
   banned: boolean;
 }
 
-export class UsersQueryDto {
+export class UsersSearchQueryDto {
   @ApiProperty({
     default: 10,
     minimum: 1,
@@ -56,7 +57,9 @@ export class UsersQueryDto {
   @IsString({ message: validationMessages.string("username") })
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })
   username?: string;
+}
 
+export class UsersQueryDto extends UsersSearchQueryDto {
   @ApiProperty({
     example: false,
     required: false,
@@ -76,6 +79,7 @@ export class UsersQueryDto {
 export class ApproveUserDto {
   @ApiProperty({ example: "john" })
   @IsString({ message: validationMessages.string("username") })
+  @IsNotEmpty({ message: validationMessages.notEmpty("username") })
   username!: string;
 
   @ApiProperty({ example: true })
@@ -85,42 +89,47 @@ export class ApproveUserDto {
 
 export class BanUserDto {
   @ApiProperty({ example: "john" })
-  @IsString()
+  @IsString({ message: validationMessages.string("username") })
+  @IsNotEmpty({ message: validationMessages.notEmpty("username") })
   username!: string;
 
   @ApiProperty({ example: true })
-  @IsBoolean()
+  @IsBoolean({ message: validationMessages.boolean("banned") })
   banned!: boolean;
 }
 
 export class SetRoleDto {
   @ApiProperty({ example: "john" })
   @IsString({ message: validationMessages.string("username") })
+  @IsNotEmpty({ message: validationMessages.notEmpty("username") })
   username!: string;
 
-  @ApiProperty({ example: "user", enum: AVAILABLE_ROLES })
+  @ApiProperty({ example: "user", enum: ASSIGNABLE_ROLES })
   @IsString({ message: validationMessages.string("role") })
-  @IsIn(AVAILABLE_ROLES, {
-    message: validationMessages.enum("role", AVAILABLE_ROLES.join(", ")),
+  @IsIn(ASSIGNABLE_ROLES, {
+    message: validationMessages.enum("role", ASSIGNABLE_ROLES.join(", ")),
   })
-  role!: AvailableRole;
+  role!: AssignableRole;
 }
 
 export class SetUserPasswordDto {
   @ApiProperty({ example: "john" })
-  @IsString()
+  @IsString({ message: validationMessages.string("username") })
+  @IsNotEmpty({ message: validationMessages.notEmpty("username") })
   username!: string;
 
-  @ApiProperty({ example: "newsecret123", minLength: 6 })
-  @IsString()
-  @IsNotEmpty()
-  @MinLength(6)
+  @ApiProperty({ example: "newsecret123", minLength: 6, maxLength: 128 })
+  @IsString({ message: validationMessages.string("password") })
+  @IsNotEmpty({ message: validationMessages.notEmpty("password") })
+  @MinLength(6, { message: validationMessages.minLength("password", 6) })
+  @MaxLength(128, { message: validationMessages.maxLength("password", 128) })
   password!: string;
 }
 
 export class SetOwnerDto {
   @ApiProperty({ example: "john" })
-  @IsString()
+  @IsString({ message: validationMessages.string("username") })
+  @IsNotEmpty({ message: validationMessages.notEmpty("username") })
   username!: string;
 }
 
@@ -186,32 +195,7 @@ export class DeletedUsersListResponseDto {
   items!: DeletedUserListItemDto[];
 }
 
-export class V1DeletedUsersQueryDto {
-  @ApiProperty({ default: 10, minimum: 1, maximum: 100 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  limit?: number;
-
-  @ApiProperty({ default: 0, minimum: 0, description: "Смещение от начала списка" })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
-
-  @ApiProperty({
-    example: "john",
-    required: false,
-    description: "Поиск по началу юзернейма (без учёта регистра)",
-  })
-  @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  username?: string;
-}
+export class V1DeletedUsersQueryDto extends UsersSearchQueryDto {}
 
 export class V1LogsQueryDto {
   @ApiProperty({
@@ -220,10 +204,14 @@ export class V1LogsQueryDto {
     required: false,
   })
   @IsOptional()
-  @IsDateString({}, { message: validationMessages.date("date") })
+  @Matches(LOG_DATE_PATTERN, { message: validationMessages.dateYmd("date") })
   date?: string;
 
-  @ApiProperty({ default: 0, minimum: 0, description: "Смещение от начала файла (номер строки)" })
+  @ApiProperty({
+    default: 0,
+    minimum: 0,
+    description: "Смещение от начала списка отфильтрованных строк",
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt({ message: validationMessages.int("offset") })
@@ -301,36 +289,36 @@ export class LogsResponseDto {
 
 export class LauncherConfigUpdateDto {
   @ApiProperty({ description: "Название проекта", example: "Cordelia" })
-  @IsString()
+  @IsString({ message: validationMessages.string("projectName") })
   projectName!: string;
 
   @ApiProperty({ description: "Версия Minecraft", example: "1.21.1" })
-  @IsString()
+  @IsString({ message: validationMessages.string("mcVersion") })
   mcVersion!: string;
 
   @ApiProperty({ description: "Тип загрузчика модов", example: "neoforge" })
-  @IsString()
+  @IsString({ message: validationMessages.string("modLoader") })
   modLoader!: string;
 
   @ApiProperty({ description: "Версия загрузчика", example: "21.1.234" })
-  @IsString()
+  @IsString({ message: validationMessages.string("loaderVersion") })
   loaderVersion!: string;
 
   @ApiProperty({ description: "Аргументы JVM", type: [String], example: [] })
-  @IsArray()
-  @IsString({ each: true })
+  @IsArray({ message: validationMessages.array("jvmArgs") })
+  @IsString({ each: true, message: validationMessages.arrayItemString("jvmArgs") })
   jvmArgs!: string[];
 
   @ApiProperty({ description: "Минимальный объём памяти", example: "-Xms512M" })
-  @IsString()
+  @IsString({ message: validationMessages.string("minMemory") })
   minMemory!: string;
 
   @ApiProperty({ description: "Максимальный объём памяти", example: "-Xmx2560M" })
-  @IsString()
+  @IsString({ message: validationMessages.string("maxMemory") })
   maxMemory!: string;
 
   @ApiProperty({ description: "Онлайн-режим", example: true })
-  @IsBoolean()
+  @IsBoolean({ message: validationMessages.boolean("online") })
   online!: boolean;
 }
 

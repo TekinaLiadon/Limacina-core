@@ -8,7 +8,14 @@ const PLATFORM_DIRECTORIES = Object.entries(SUPPORTED_PLATFORMS).flatMap(([os, a
   archs.flatMap((arch) => [join(os, arch), join(os, arch, OLD_VERSIONS_DIR)]),
 );
 
-const DIRECTORIES = ["launcher", "launcher/mods", ...PLATFORM_DIRECTORIES, "textures", "models"];
+const DIRECTORIES = [
+  "launcher",
+  "launcher/mods",
+  ...PLATFORM_DIRECTORIES,
+  "textures",
+  "capes",
+  "models",
+];
 
 const VERSION_FILE = join(PUBLIC_DIR, "version.json");
 const DEFAULT_VERSION = { version: "0.0.0" };

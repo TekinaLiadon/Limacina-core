@@ -1,38 +1,19 @@
 import { Module } from "@nestjs/common";
 import { YggdrasilController } from "./yggdrasil.controller";
 import { YggdrasilService } from "./service/yggdrasil.service";
-import {
-  YggdrasilMapStore,
-  YggdrasilStoreToken,
-  YggdrasilSessionStoreToken,
-  YggdrasilTokenStoreToken,
-} from "./service/yggdrasil_store";
+import { YggdrasilSessionStoreToken, YggdrasilTokenStoreToken } from "./service/yggdrasil_store";
 import { YggdrasilMapSessionStore, YggdrasilMapTokenStore } from "../memory/yggdrasil-map.store";
 import { MemoryModule } from "../memory/memory.module";
 import { MemoryDb } from "../memory/memory-db";
-import { YggdrasilPostgresStore } from "./service/yggdrasil_postgres";
+import { YggdrasilProfileStoreModule } from "./service/yggdrasil_store.module";
 import { UserContentModule } from "../user-content/user-content.module";
-import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
-import type { AppConfigType } from "../config/global-config";
-
-export const useProfileStore = (db: string) => {
-  if (db === "postgres") {
-    return new YggdrasilPostgresStore();
-  }
-
-  return new YggdrasilMapStore();
-};
+import { AppConfigModule } from "../config/app-config.provider";
 
 @Module({
-  imports: [AppConfigModule, UserContentModule, MemoryModule],
+  imports: [AppConfigModule, UserContentModule, MemoryModule, YggdrasilProfileStoreModule],
   controllers: [YggdrasilController],
   providers: [
     YggdrasilService,
-    {
-      provide: YggdrasilStoreToken,
-      useFactory: (config: AppConfigType) => useProfileStore(config.DB_DRIVER),
-      inject: [AppConfigToken],
-    },
     {
       provide: YggdrasilTokenStoreToken,
       useFactory: (db: MemoryDb) => new YggdrasilMapTokenStore(db),

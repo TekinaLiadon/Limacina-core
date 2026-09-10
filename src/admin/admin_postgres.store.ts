@@ -25,6 +25,8 @@ interface DeletedUserRow extends Record<string, unknown> {
   username: string;
   password_hash: string;
   skin_url: string | null;
+  skin_model: string | null;
+  cape_url: string | null;
   role: string;
   approved: boolean;
   banned: boolean;
@@ -67,7 +69,10 @@ function withUsersFilter(query: SelectBuilder, filter: UsersFilter): SelectBuild
   const { username } = filter;
   if (username !== undefined) {
     placeholders += 1;
-    chained = chained.where(`username ILIKE $${placeholders}`, `${escapeLikePattern(username)}%`);
+    chained = chained.where(
+      `lower(username) LIKE $${placeholders}`,
+      `${escapeLikePattern(username.toLowerCase())}%`,
+    );
   }
 
   const { approved } = filter;
@@ -99,6 +104,7 @@ export class AdminPostgresStore implements IAdminStore {
     if (existing) {
       const query = updateQuery()
         .from(TABLES.users)
+        .set("uuid", user.uuid)
         .set("role", user.role)
         .set("approved", user.approved)
         .set("banned", user.banned)
@@ -214,6 +220,8 @@ export class AdminPostgresStore implements IAdminStore {
       "username",
       "password_hash",
       "skin_url",
+      "skin_model",
+      "cape_url",
       "role",
       "approved",
       "banned",
@@ -224,6 +232,8 @@ export class AdminPostgresStore implements IAdminStore {
         userRow.username,
         userRow.password_hash,
         userRow.skin_url,
+        userRow.skin_model,
+        userRow.cape_url,
         userRow.role,
         userRow.approved,
         userRow.banned,
@@ -275,11 +285,20 @@ export class AdminPostgresStore implements IAdminStore {
         .build(),
     );
 
-    if (fullDeleted.skin_url) {
+    const hasTextures =
+      fullDeleted.skin_url !== null ||
+      fullDeleted.skin_model !== null ||
+      fullDeleted.cape_url !== null;
+    if (hasTextures) {
       statements.push(
-        insertQuery("uuid", "skin_url")
+        insertQuery("uuid", "skin_url", "skin_model", "cape_url")
           .from(TABLES.user_textures)
-          .values(fullDeleted.uuid, fullDeleted.skin_url)
+          .values(
+            fullDeleted.uuid,
+            fullDeleted.skin_url,
+            fullDeleted.skin_model,
+            fullDeleted.cape_url,
+          )
           .build(),
       );
     }
@@ -304,6 +323,8 @@ export class AdminPostgresStore implements IAdminStore {
       "u.username",
       "u.password_hash",
       "t.skin_url",
+      "t.skin_model",
+      "t.cape_url",
       "u.role",
       "u.approved",
       "u.banned",
@@ -323,6 +344,8 @@ export class AdminPostgresStore implements IAdminStore {
       "username",
       "password_hash",
       "skin_url",
+      "skin_model",
+      "cape_url",
       "role",
       "approved",
       "banned",
