@@ -45,4 +45,33 @@ describe("ZodEnvConfig.tryParseEnv", () => {
       expect(result.error.issues.some((issue) => issue.path.includes("SECRETS"))).toBe(true);
     }
   });
+
+  it("отклоняет валидный JSON, не являющийся объектом", () => {
+    for (const raw of ["null", "42", '"text"', "[1,2]"]) {
+      const config = new ZodEnvConfig("test-secrets-non-object", schema);
+
+      const result = config.tryParseEnv({
+        NODE_ENV: "test",
+        JWT_ACCESS: "secret",
+        SECRETS: raw,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.some((issue) => issue.path.includes("SECRETS"))).toBe(true);
+      }
+    }
+  });
+
+  it("принимает пустой объект в SECRETS", () => {
+    const config = new ZodEnvConfig("test-secrets-empty-object", schema);
+
+    const result = config.tryParseEnv({
+      NODE_ENV: "test",
+      JWT_ACCESS: "secret",
+      SECRETS: "{}",
+    });
+
+    expect(result.success).toBe(true);
+  });
 });

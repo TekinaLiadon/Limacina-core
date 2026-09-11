@@ -57,14 +57,18 @@ export class AuthPostgresStore implements IAuthStore {
   }
 
   async saveUser(user: StoredUser): Promise<boolean> {
-    const insertSql = `INSERT INTO ${TABLES.users} (uuid, username, password_hash)
-      VALUES ($1, $2, $3)
+    const insertSql = `INSERT INTO ${TABLES.users} (uuid, username, password_hash, role, approved, banned, password_changed_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       ON CONFLICT (username) DO NOTHING
       RETURNING uuid`;
     const { rows } = await execute<{ uuid: string }>(insertSql, [
       user.uuid,
       user.username,
       user.passwordHash,
+      user.role,
+      user.approved,
+      user.banned,
+      user.passwordChangedAt ?? null,
     ]);
     if (rows.length > 0) return true;
 

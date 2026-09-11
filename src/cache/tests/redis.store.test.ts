@@ -2,6 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { DEFAULT_CACHE_TTL_MS } from "../cache.store";
 import { COMMAND_TIMEOUT_MS, RedisCacheStore, type RedisClientLike } from "../redis.store";
 
+function consecutiveFailuresOf(store: RedisCacheStore): number {
+  return (store as unknown as { consecutiveFailures: number }).consecutiveFailures;
+}
+
 class FakeRedisClient implements RedisClientLike {
   readonly stored = new Map<string, string>();
   lastSet: { key: string; value: string; px: string; milliseconds: number } | null = null;
@@ -45,6 +49,19 @@ describe("RedisCacheStore", (): void => {
     const store = new RedisCacheStore(new FakeRedisClient());
 
     expect(await store.get("missing")).toBeUndefined();
+  });
+
+  it("битый JSON под ключом — промах, а не сбой Redis", async (): Promise<void> => {
+    const client = new FakeRedisClient();
+    client.stored.set("status", "{broken");
+    const store = new RedisCacheStore(client);
+
+    expect(await store.get<{ online: number }>("status")).toBeUndefined();
+    expect(consecutiveFailuresOf(store)).toBe(0);
+
+    client.failMode = true;
+    await store.get("status");
+    expect(consecutiveFailuresOf(store)).toBe(1);
   });
 
   it("set сериализует значение и передаёт PX с дефолтным ttl", async (): Promise<void> => {
@@ -198,5 +215,99 @@ describe("RedisCacheStore — префикс ключей", (): void => {
     await store.set("status", 1);
 
     expect(client.lastSet?.key).toBe("status");
+  });
+});
+
+class ReconnectableRedisClient implements RedisClientLike {
+  readonly stored = new Map<string, string>();
+  closed = false;
+  connectCalls = 0;
+  connectShouldFail = false;
+  onconnect: (() => void) | null = null;
+  onclose: ((error: Error) => void) | null = null;
+
+  async get(key: string): Promise<string | null> {
+    return this.stored.get(key) ?? null;
+  }
+
+  async set(key: string, value: string): Promise<unknown> {
+    this.stored.set(key, value);
+    return "OK";
+  }
+
+  async del(key: string): Promise<number> {
+    return this.stored.delete(key) ? 1 : 0;
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+
+  async connect(): Promise<void> {
+    this.connectCalls += 1;
+    if (this.connectShouldFail) throw new Error("connection refused");
+    this.onconnect?.();
+  }
+
+  emitClose(): void {
+    this.onclose?.(new Error("connection lost"));
+  }
+}
+
+describe("RedisCacheStore — переподключение", (): void => {
+  const RECONNECT_DELAY_MS = 10;
+
+  it("после onclose клиент переподключается по таймеру", async (): Promise<void> => {
+    const client = new ReconnectableRedisClient();
+    const store = new RedisCacheStore(client, "", RECONNECT_DELAY_MS);
+
+    client.emitClose();
+    expect(client.connectCalls).toBe(0);
+
+    await Bun.sleep(RECONNECT_DELAY_MS * 5);
+    expect(client.connectCalls).toBe(1);
+    expect(await store.get("key")).toBeUndefined();
+  });
+
+  it("успешный onconnect останавливает цикл переподключения", async (): Promise<void> => {
+    const client = new ReconnectableRedisClient();
+    const store = new RedisCacheStore(client, "", RECONNECT_DELAY_MS);
+
+    client.emitClose();
+    await Bun.sleep(RECONNECT_DELAY_MS * 5);
+    expect(client.connectCalls).toBe(1);
+
+    await Bun.sleep(RECONNECT_DELAY_MS * 5);
+    expect(client.connectCalls).toBe(1);
+    await store.set("key", { online: 1 });
+    expect(await store.get<{ online: number }>("key")).toEqual({ online: 1 });
+  });
+
+  it("неудачное переподключение повторяется по таймеру", async (): Promise<void> => {
+    const client = new ReconnectableRedisClient();
+    client.connectShouldFail = true;
+    const store = new RedisCacheStore(client, "", RECONNECT_DELAY_MS);
+
+    client.emitClose();
+    await Bun.sleep(RECONNECT_DELAY_MS * 5);
+    const attemptsAfterFirstWindow = client.connectCalls;
+    expect(attemptsAfterFirstWindow).toBeGreaterThan(0);
+
+    await Bun.sleep(RECONNECT_DELAY_MS * 5);
+    expect(client.connectCalls).toBeGreaterThan(attemptsAfterFirstWindow);
+    client.connectShouldFail = false;
+    expect(await store.get("key")).toBeUndefined();
+  });
+
+  it("onModuleDestroy отменяет запланированное переподключение и закрывает клиент", async (): Promise<void> => {
+    const client = new ReconnectableRedisClient();
+    const store = new RedisCacheStore(client, "", RECONNECT_DELAY_MS);
+
+    client.emitClose();
+    store.onModuleDestroy();
+
+    await Bun.sleep(RECONNECT_DELAY_MS * 5);
+    expect(client.connectCalls).toBe(0);
+    expect(client.closed).toBe(true);
   });
 });

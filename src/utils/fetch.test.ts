@@ -125,6 +125,24 @@ describe("yggFetch", () => {
     expect(res.error).toContain("слишком большой");
   });
 
+  it("очищает таймер таймаута при отказе по content-length", async () => {
+    const original = globalThis.clearTimeout;
+    let cleared = 0;
+    globalThis.clearTimeout = ((id: Parameters<typeof original>[0]) => {
+      cleared += 1;
+      return original(id);
+    }) as typeof clearTimeout;
+
+    try {
+      const res = await limaFetch(`${baseUrl}/huge-body`, { silent: true });
+
+      expect(res.ok).toBe(false);
+      expect(cleared).toBeGreaterThan(0);
+    } finally {
+      globalThis.clearTimeout = original;
+    }
+  });
+
   it("отклоняет chunked-ответ, превысивший лимит при чтении", async () => {
     const res = await limaFetch(`${baseUrl}/huge-chunked`, { silent: true });
 

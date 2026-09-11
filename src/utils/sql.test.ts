@@ -176,6 +176,28 @@ describe("updateQuery", () => {
     expect(q.sql).toBe("UPDATE users SET username = $1 WHERE uuid = $2 RETURNING uuid, username");
     expect(q.values).toEqual(["jane", "u1"]);
   });
+
+  it("перенумеровывает плейсхолдеры условия с учётом set-параметров", () => {
+    const q = updateQuery()
+      .from(TABLES.users)
+      .set("username", "jane")
+      .where("role = $1 AND approved = $2", "admin", true)
+      .build();
+    expect(q.sql).toBe("UPDATE users SET username = $1 WHERE role = $2 AND approved = $3");
+    expect(q.values).toEqual(["jane", "admin", true]);
+  });
+
+  it("не трогает доллар-числа внутри строковых литералов условия", () => {
+    const q = updateQuery()
+      .from(TABLES.users)
+      .set("username", "jane")
+      .where("note = 'цена $1 и $2' AND approved = $1", true)
+      .build();
+    expect(q.sql).toBe(
+      "UPDATE users SET username = $1 WHERE note = 'цена $1 и $2' AND approved = $2",
+    );
+    expect(q.values).toEqual(["jane", true]);
+  });
 });
 
 describe("deleteQuery", () => {

@@ -34,7 +34,7 @@ export class ZodEnvConfig<T extends z.ZodType<Record<string, unknown>>> {
           {
             code: "custom",
             path: ["SECRETS"],
-            message: "SECRETS must be valid JSON",
+            message: "SECRETS must be a JSON object",
             input: env["SECRETS"],
           },
         ]),
@@ -66,7 +66,11 @@ function parseSecrets(
   if (raw === undefined) return { ok: true, value: {} };
 
   try {
-    return { ok: true, value: JSON.parse(raw) as Record<string, unknown> };
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return { ok: false };
+    }
+    return { ok: true, value: parsed as Record<string, unknown> };
   } catch {
     return { ok: false };
   }

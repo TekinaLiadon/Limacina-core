@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { open, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import {
   Injectable,
@@ -23,6 +24,15 @@ import {
 const PUBLIC_DIR = "public";
 const VERSION_FILE = join(PUBLIC_DIR, "version.json");
 const CONFIG_FILE = "config.toml";
+
+function isMissingFileError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code: unknown }).code === "ENOENT"
+  );
+}
 
 interface VersionData {
   version: string;
@@ -280,12 +290,39 @@ export class LauncherService implements OnModuleDestroy {
     }
 
     const filePath = join(dir, zipFile);
-    const file = Bun.file(filePath);
 
-    reply.header("Content-Type", "application/zip");
-    reply.header("Content-Disposition", `attachment; filename="${zipFile}"`);
-    reply.header("Content-Length", (await file.size).toString());
-    reply.send(file.stream());
+    let handle: FileHandle;
+    try {
+      handle = await open(filePath, "r");
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        throw new NotFoundException(`Файл лаунчера не найден: ${zipFile}`);
+      }
+      throw error;
+    }
+
+    let closed = false;
+    const closeHandle = (): void => {
+      if (closed) return;
+      closed = true;
+      void handle
+        .close()
+        .catch((closeError: unknown) =>
+          this.logger.error({ err: closeError, file: zipFile }, "Не удалось закрыть файл лаунчера"),
+        );
+    };
+
+    try {
+      const { size } = await handle.stat();
+      reply.header("Content-Type", "application/zip");
+      reply.header("Content-Disposition", `attachment; filename="${zipFile}"`);
+      reply.header("Content-Length", size.toString());
+      reply.raw.once("close", closeHandle);
+      reply.send(Bun.file(handle.fd).stream());
+    } catch (error) {
+      closeHandle();
+      throw error;
+    }
   }
 
   private findCurrentZip(dir: string, os: string, arch: string): string | null {

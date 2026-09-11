@@ -18,10 +18,14 @@ import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 import { YggdrasilStoreToken, type IYggdrasilStore } from "../yggdrasil/service/yggdrasil_store";
 
-const MAX_SKIN_BYTES = 512 * 1024;
+export const MAX_SKIN_BYTES = 512 * 1024;
+export const MAX_MODEL_BYTES = 256 * 1024;
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const SKIN_MODELS = ["classic", "slim"] as const;
 export type SkinModel = (typeof SKIN_MODELS)[number];
+
+const hasBinaryBytes = (file: Uint8Array): boolean =>
+  file.some((byte) => byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d);
 
 @Injectable()
 export class UserContentService {
@@ -38,7 +42,7 @@ export class UserContentService {
 
   async uploadSkin(
     userUuid: string,
-    file: Buffer,
+    file: Uint8Array,
     skinModel?: SkinModel,
   ): Promise<UserContentUploadResponseDto> {
     return this.upload(
@@ -52,24 +56,26 @@ export class UserContentService {
     );
   }
 
-  async uploadCape(userUuid: string, file: Buffer): Promise<UserContentUploadResponseDto> {
+  async uploadCape(userUuid: string, file: Uint8Array): Promise<UserContentUploadResponseDto> {
     return this.upload(userUuid, file, "cape", this.config.MAX_CAPES_PER_USER, "png", "capes");
   }
 
-  async uploadModel(userUuid: string, file: Buffer): Promise<UserContentUploadResponseDto> {
+  async uploadModel(userUuid: string, file: Uint8Array): Promise<UserContentUploadResponseDto> {
     return this.upload(userUuid, file, "model", this.config.MAX_MODELS_PER_USER, "txt", "models");
   }
 
   private async upload(
     userUuid: string,
-    file: Buffer,
+    file: Uint8Array,
     type: ContentType,
     maxPerUser: number,
     extension: string,
     directory: string,
     skinModel?: SkinModel,
   ): Promise<UserContentUploadResponseDto> {
-    if (type !== "model") {
+    if (type === "model") {
+      this.validateModelFile(file);
+    } else {
       this.validatePngFile(file, type);
     }
 
@@ -173,8 +179,11 @@ export class UserContentService {
     return filePath === this.defaultSkinUrl || filePath === "/textures/default.png";
   }
 
-  private validatePngFile(file: Buffer, type: ContentType): void {
+  private validatePngFile(file: Uint8Array, type: ContentType): void {
     const contentName = this.contentTypeName(type);
+    if (file.length === 0) {
+      throw new BadRequestException(`Файл ${contentName} пустой`);
+    }
     if (file.length > MAX_SKIN_BYTES) {
       throw new BadRequestException(
         `Файл ${contentName} слишком большой: ${file.length} байт (максимум ${MAX_SKIN_BYTES})`,
@@ -186,6 +195,27 @@ export class UserContentService {
       PNG_SIGNATURE.every((byte, index) => file[index] === byte);
     if (!hasPngSignature) {
       throw new BadRequestException(`Невалидный файл ${contentName}: отсутствует PNG-сигнатура`);
+    }
+  }
+
+  private validateModelFile(file: Uint8Array): void {
+    if (file.length === 0) {
+      throw new BadRequestException("Файл модели пустой");
+    }
+    if (file.length > MAX_MODEL_BYTES) {
+      throw new BadRequestException(
+        `Файл модели слишком большой: ${file.length} байт (максимум ${MAX_MODEL_BYTES})`,
+      );
+    }
+
+    try {
+      new TextDecoder("utf-8", { fatal: true }).decode(file);
+    } catch {
+      throw new BadRequestException("Файл модели должен быть текстом в кодировке UTF-8");
+    }
+
+    if (hasBinaryBytes(file)) {
+      throw new BadRequestException("Файл модели содержит недопустимые символы");
     }
   }
 

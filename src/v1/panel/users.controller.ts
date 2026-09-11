@@ -10,6 +10,7 @@ import {
 } from "@nestjs/swagger";
 import { Public } from "../../common/public.decorator";
 import { Roles } from "../../common/roles.decorator";
+import { UsernamePipe } from "../../common/username.pipe";
 import { CurrentUser, type RequestUser } from "../../common/current-user.decorator";
 import { SuccessResponseDto, UserSuccessResponseDto } from "../../common/dto/dto";
 import { AdminService } from "../../admin/admin.service";
@@ -247,7 +248,7 @@ export class V1PanelUsersController {
   @ApiResponse({ status: 404, description: "Пользователь не найден" })
   async deleteUser(
     @CurrentUser() user: RequestUser,
-    @Param("username") username: string,
+    @Param("username", UsernamePipe) username: string,
   ): Promise<UserSuccessResponseDto> {
     const deleted = await this.adminService.deleteUser(username, user);
     return { success: true, username: deleted.username };
@@ -270,7 +271,7 @@ export class V1PanelUsersController {
   @ApiResponse({ status: 404, description: "Удалённый пользователь не найден" })
   async restoreUser(
     @CurrentUser() user: RequestUser,
-    @Param("username") username: string,
+    @Param("username", UsernamePipe) username: string,
   ): Promise<UserSuccessResponseDto> {
     await this.adminService.restoreUser(username, user);
     return { success: true, username };

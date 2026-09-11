@@ -120,7 +120,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       expect(res.body).toHaveProperty("accessToken");
       expect(res.body).toHaveProperty("clientToken");
@@ -156,7 +156,7 @@ describe("Yggdrasil эндпоинты", () => {
           password: TEST_PASSWORD,
           clientToken: customToken,
         })
-        .expect(201);
+        .expect(200);
 
       expect(res.body.clientToken).toBe(customToken);
     });
@@ -165,7 +165,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       expect(typeof res.body.clientToken).toBe("string");
       expect(res.body.clientToken.length).toBeGreaterThan(0);
@@ -175,7 +175,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD, requestUser: true })
-        .expect(201);
+        .expect(200);
 
       expect(res.body.user).toBeDefined();
       expect(res.body.user.id).toBe(TEST_USER_UUID);
@@ -185,7 +185,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD, requestUser: false })
-        .expect(201);
+        .expect(200);
 
       expect(res.body.user).toBeUndefined();
     });
@@ -194,7 +194,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       expect(typeof res.body.accessToken).toBe("string");
       expect(res.body.accessToken.length).toBe(32);
@@ -209,14 +209,14 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       const oldToken = authRes.body.accessToken;
 
       const refreshRes = await supertest(app.getHttpServer())
         .post("/authserver/refresh")
         .send({ accessToken: oldToken })
-        .expect(201);
+        .expect(200);
 
       expect(refreshRes.body.accessToken).toBeTruthy();
       expect(refreshRes.body.accessToken).not.toBe(oldToken);
@@ -239,7 +239,7 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD, clientToken: "token-a" })
-        .expect(201);
+        .expect(200);
 
       await supertest(app.getHttpServer())
         .post("/authserver/refresh")
@@ -251,12 +251,12 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       const refreshRes = await supertest(app.getHttpServer())
         .post("/authserver/refresh")
         .send({ accessToken: authRes.body.accessToken, requestUser: true })
-        .expect(201);
+        .expect(200);
 
       expect(refreshRes.body.user).toBeDefined();
     });
@@ -273,7 +273,7 @@ describe("Yggdrasil эндпоинты", () => {
         const authRes = await supertest(app.getHttpServer())
           .post("/authserver/authenticate")
           .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-          .expect(201);
+          .expect(200);
 
         const refreshRes = await supertest(app.getHttpServer())
           .post("/authserver/refresh")
@@ -281,7 +281,7 @@ describe("Yggdrasil эндпоинты", () => {
             accessToken: authRes.body.accessToken,
             selectedProfile: { id: secondProfileUuid, name: "testplayer2", properties: [] },
           })
-          .expect(201);
+          .expect(200);
 
         expect(refreshRes.body.selectedProfile.id).toBe(secondProfileUuid);
       } finally {
@@ -297,7 +297,7 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       await supertest(app.getHttpServer())
         .post("/authserver/validate")
@@ -316,7 +316,7 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD, clientToken: "ct-1" })
-        .expect(201);
+        .expect(200);
 
       await supertest(app.getHttpServer())
         .post("/authserver/validate")
@@ -328,7 +328,7 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD, clientToken: "ct-1" })
-        .expect(201);
+        .expect(200);
 
       await supertest(app.getHttpServer())
         .post("/authserver/validate")
@@ -344,7 +344,7 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       const token = authRes.body.accessToken;
 
@@ -374,7 +374,7 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       const token = authRes.body.accessToken;
 
@@ -410,7 +410,7 @@ describe("Yggdrasil эндпоинты", () => {
     const authRes = await supertest(app.getHttpServer())
       .post("/authserver/authenticate")
       .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-      .expect(201);
+      .expect(200);
 
     const token = authRes.body.accessToken;
     if (authRes.body.selectedProfile) return token;
@@ -421,7 +421,7 @@ describe("Yggdrasil эндпоинты", () => {
         accessToken: token,
         selectedProfile: { id: TEST_UUID, name: TEST_USERNAME, properties: [] },
       })
-      .expect(201);
+      .expect(200);
 
     return refreshRes.body.accessToken;
   }
@@ -430,7 +430,7 @@ describe("Yggdrasil эндпоинты", () => {
     const authRes = await supertest(app.getHttpServer())
       .post("/authserver/authenticate")
       .send({ username, password: TEST_PASSWORD })
-      .expect(201);
+      .expect(200);
 
     return authRes.body.accessToken;
   }
@@ -497,15 +497,15 @@ describe("Yggdrasil эндпоинты", () => {
       expect(res.body.name).toBe(TEST_USERNAME);
     });
 
-    it("возвращает 404 при отсутствии сессии", async () => {
+    it("возвращает 204 при отсутствии сессии", async () => {
       await supertest(app.getHttpServer())
         .get(
           `/sessionserver/session/minecraft/hasJoined?username=${TEST_USERNAME}&serverId=nonexistent`,
         )
-        .expect(404);
+        .expect(204);
     });
 
-    it("возвращает 404 если username не совпадает", async () => {
+    it("возвращает 204 если username не совпадает", async () => {
       const token = await authenticateAndBindProfile();
 
       await supertest(app.getHttpServer())
@@ -521,7 +521,7 @@ describe("Yggdrasil эндпоинты", () => {
         .get(
           `/sessionserver/session/minecraft/hasJoined?username=wronguser&serverId=wrong-user-server`,
         )
-        .expect(404);
+        .expect(204);
     });
 
     it("возвращает свойства профиля (textures)", async () => {
@@ -569,10 +569,10 @@ describe("Yggdrasil эндпоинты", () => {
       expect(Array.isArray(res.body.properties)).toBe(true);
     });
 
-    it("возвращает 404 для несуществующего UUID", async () => {
+    it("возвращает 204 для несуществующего UUID", async () => {
       await supertest(app.getHttpServer())
         .get("/sessionserver/session/minecraft/profile/00000000000000000000000000000000")
-        .expect(404);
+        .expect(204);
     });
 
     it("корректно кодирует текстуры в base64", async () => {
@@ -694,7 +694,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/api/profiles/minecraft")
         .send([TEST_USERNAME, "nonexistent"])
-        .expect(201);
+        .expect(200);
 
       expect(Array.isArray(res.body)).toBe(true);
       expect(res.body.length).toBe(1);
@@ -706,7 +706,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/api/profiles/minecraft")
         .send(["nobody1", "nobody2"])
-        .expect(201);
+        .expect(200);
 
       expect(res.body).toEqual([]);
     });
@@ -715,7 +715,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/api/profiles/minecraft")
         .send([])
-        .expect(201);
+        .expect(200);
 
       expect(res.body).toEqual([]);
     });
@@ -724,7 +724,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/api/profiles/minecraft")
         .send([TEST_USERNAME])
-        .expect(201);
+        .expect(200);
 
       expect(res.body[0].properties).toEqual([]);
     });

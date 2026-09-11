@@ -8,12 +8,18 @@ import {
   ParseEnumPipe,
   ParseIntPipe,
   Patch,
+  PayloadTooLargeException,
   Post,
   Query,
   Req,
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from "@nestjs/swagger";
-import { UserContentService, type SkinModel } from "../../../user-content/user-content.service";
+import {
+  MAX_MODEL_BYTES,
+  MAX_SKIN_BYTES,
+  UserContentService,
+  type SkinModel,
+} from "../../../user-content/user-content.service";
 import { SuccessResponseDto } from "../../../common/dto/dto";
 import { CurrentUser, type RequestUser } from "../../../common/current-user.decorator";
 import {
@@ -22,6 +28,20 @@ import {
   UserContentUploadResponseDto,
 } from "../../../user-content/dto/dto";
 import type { FastifyRequest } from "fastify";
+
+const STREAM_LIMIT_MULTIPLIER = 2;
+const SKIN_STREAM_LIMIT_BYTES = MAX_SKIN_BYTES * STREAM_LIMIT_MULTIPLIER;
+const MODEL_STREAM_LIMIT_BYTES = MAX_MODEL_BYTES * STREAM_LIMIT_MULTIPLIER;
+
+const concatChunks = (chunks: Uint8Array[], total: number): Uint8Array => {
+  const merged = new Uint8Array(total);
+  let cursor = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, cursor);
+    cursor += chunk.length;
+  }
+  return merged;
+};
 
 @ApiTags("common_content")
 @ApiBearerAuth()
@@ -36,13 +56,14 @@ export class V1ContentController {
     status: 400,
     description: "Лимит загрузки скинов, невалидный PNG или превышен размер (512 КБ)",
   })
+  @ApiResponse({ status: 413, description: "Превышен стрим-лимит загрузки (1 МБ)" })
   async uploadSkin(
     @CurrentUser() user: RequestUser,
     @Req() request: FastifyRequest,
     @Query("model", new ParseEnumPipe(["classic", "slim"], { optional: true }))
     model?: SkinModel,
   ): Promise<UserContentUploadResponseDto> {
-    const buffer = await this.extractFile(request);
+    const buffer = await this.extractFile(request, SKIN_STREAM_LIMIT_BYTES);
     return this.userContentService.uploadSkin(user.uuid, buffer, model ?? undefined);
   }
 
@@ -90,11 +111,12 @@ export class V1ContentController {
     status: 400,
     description: "Лимит загрузки плащей, невалидный PNG или превышен размер (512 КБ)",
   })
+  @ApiResponse({ status: 413, description: "Превышен стрим-лимит загрузки (1 МБ)" })
   async uploadCape(
     @CurrentUser() user: RequestUser,
     @Req() request: FastifyRequest,
   ): Promise<UserContentUploadResponseDto> {
-    const buffer = await this.extractFile(request);
+    const buffer = await this.extractFile(request, SKIN_STREAM_LIMIT_BYTES);
     return this.userContentService.uploadCape(user.uuid, buffer);
   }
 
@@ -123,12 +145,13 @@ export class V1ContentController {
   @Post("models")
   @ApiOperation({ summary: "Загрузить модель (.txt)" })
   @ApiResponse({ status: 201, type: UserContentUploadResponseDto })
-  @ApiResponse({ status: 400, description: "Лимит загрузки моделей" })
+  @ApiResponse({ status: 400, description: "Лимит загрузки моделей, пустой или невалидный файл" })
+  @ApiResponse({ status: 413, description: "Превышен стрим-лимит загрузки (512 КБ)" })
   async uploadModel(
     @CurrentUser() user: RequestUser,
     @Req() request: FastifyRequest,
   ): Promise<UserContentUploadResponseDto> {
-    const buffer = await this.extractFile(request);
+    const buffer = await this.extractFile(request, MODEL_STREAM_LIMIT_BYTES);
     return this.userContentService.uploadModel(user.uuid, buffer);
   }
 
@@ -154,12 +177,24 @@ export class V1ContentController {
     return { success: true };
   }
 
-  private async extractFile(request: FastifyRequest): Promise<Buffer> {
+  private async extractFile(request: FastifyRequest, maxBytes: number): Promise<Uint8Array> {
     const parts = request.parts();
     for await (const part of parts) {
-      if (part.type === "file") {
-        return await part.toBuffer();
+      if (part.type !== "file") continue;
+
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+      for await (const chunk of part.file) {
+        received += chunk.length;
+        if (received > maxBytes) {
+          throw new PayloadTooLargeException(`Файл слишком большой: максимум ${maxBytes} байт`);
+        }
+        chunks.push(chunk);
       }
+      if (part.file.truncated) {
+        throw new PayloadTooLargeException(`Файл слишком большой: максимум ${maxBytes} байт`);
+      }
+      return concatChunks(chunks, received);
     }
     throw new BadRequestException("Файл не загружен");
   }

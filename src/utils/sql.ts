@@ -258,7 +258,11 @@ export function updateQuery(): {
           set: addSet,
           where: (condition: string, ...args: SqlValue[]) => {
             const offset = values.length;
-            const renumbered = condition.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + offset}`);
+            const renumbered = condition.replace(
+              /'(?:[^']|'')*'|\$(\d+)/g,
+              (match, placeholder?: string) =>
+                placeholder === undefined ? match : `$${Number(placeholder) + offset}`,
+            );
             addWhere(whereState, renumbered, ...args);
 
             return {

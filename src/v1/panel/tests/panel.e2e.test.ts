@@ -687,6 +687,20 @@ describe("V1 panel эндпоинты", (): void => {
       const store = app.get(AdminMapStoreToken, { strict: false });
       await store.restoreUser("modtarget");
     });
+
+    it("возвращает 400 для юзернейма длиннее 64 символов", async () => {
+      await supertest(app.getHttpServer())
+        .delete(`/v1/panel/users/${"a".repeat(65)}`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(400);
+    });
+
+    it("пропускает юзернейм длиной 64 символа к поиску пользователя", async () => {
+      await supertest(app.getHttpServer())
+        .delete(`/v1/panel/users/${"a".repeat(64)}`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(404);
+    });
   });
 
   describe("GET /v1/panel/users/deleted", () => {
@@ -853,6 +867,13 @@ describe("V1 panel эндпоинты", (): void => {
         .patch("/v1/panel/users/nonexistent/restore")
         .set("Authorization", `Bearer ${ownerToken}`)
         .expect(404);
+    });
+
+    it("возвращает 400 для юзернейма длиннее 64 символов", async () => {
+      await supertest(app.getHttpServer())
+        .patch(`/v1/panel/users/${"a".repeat(65)}/restore`)
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(400);
     });
 
     it("возвращает 409 если юзернейм занят живым пользователем", async () => {
