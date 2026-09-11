@@ -7,6 +7,7 @@ import {
 } from "./user-content.store";
 import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
+import { YggdrasilProfileStoreModule } from "../yggdrasil/service/yggdrasil_store.module";
 
 const useFactory = (db: string) => {
   if (db === "postgres") {
@@ -16,7 +17,7 @@ const useFactory = (db: string) => {
 };
 
 @Module({
-  imports: [AppConfigModule],
+  imports: [AppConfigModule, YggdrasilProfileStoreModule],
   providers: [
     UserContentService,
     {

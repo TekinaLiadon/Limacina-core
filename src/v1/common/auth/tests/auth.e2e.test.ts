@@ -1,6 +1,7 @@
-process.env["JWT_ACCESS"] = "test-access-secret";
-process.env["JWT_REFRESH"] = "test-refresh-secret";
+process.env["JWT_ACCESS"] = "test-access-secret-0123456789abcdef0123";
+process.env["JWT_REFRESH"] = "test-refresh-secret-0123456789abcdef0123";
 process.env["NODE_ENV"] = "test";
+process.env["BASE_URL"] = "http://localhost:3005";
 process.env["DB_DRIVER"] = "map";
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -15,12 +16,36 @@ import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
 import { V1AuthController } from "../auth.controller";
 import { AuthService } from "../../../../auth/service/auth.service";
-import { AuthMapStore, AuthMapStoreToken } from "../../../../auth/service/auth_store.service";
+import {
+  AuthMapStore,
+  AuthMapStoreToken,
+  type StoredUser,
+} from "../../../../auth/service/auth_store.service";
 import GlobalConfig from "../../../../config/global-config";
 import { AppConfigToken } from "../../../../config/app-config.provider";
 import { registerAuthRateLimit } from "../../../../common/auth-rate-limit";
 import { Jwt_authGuard } from "../../../../common/jwt_auth.guard";
 import { RolesGuard } from "../../../../common/roles.guard";
+
+const seedUser = async (
+  store: AuthMapStore,
+  username: string,
+  uuid: string,
+  password: string,
+  overrides: Partial<StoredUser> = {},
+): Promise<StoredUser> => {
+  const user: StoredUser = {
+    uuid,
+    username,
+    passwordHash: await Bun.password.hash(password),
+    role: "user",
+    approved: true,
+    banned: false,
+    ...overrides,
+  };
+  await store.saveUser(user);
+  return user;
+};
 
 @Injectable()
 class TestJwtStrategy extends PassportStrategy(Strategy) {
@@ -111,6 +136,38 @@ describe("V1 common/auth эндпоинты", (): void => {
         .expect(409);
     });
 
+    it("повторная регистрация не перезаписывает существующего пользователя", async () => {
+      const before = await authStore.findByUsername("v1user");
+      expect(before).toBeDefined();
+
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/registration")
+        .send({ username: "v1user", password: "otherpass123" })
+        .expect(409);
+
+      const after = await authStore.findByUsername("v1user");
+      expect(after?.uuid).toBe(before?.uuid);
+      expect(after?.passwordHash).toBe(before?.passwordHash);
+    });
+
+    it("параллельная регистрация одного юзернейма: один 201, второй 409", async () => {
+      const [first, second] = await Promise.all([
+        supertest(app.getHttpServer())
+          .post("/v1/common/auth/registration")
+          .send({ username: "raceruser", password: "pass123" }),
+        supertest(app.getHttpServer())
+          .post("/v1/common/auth/registration")
+          .send({ username: "raceruser", password: "pass123" }),
+      ]);
+
+      const statuses = [first.status, second.status].toSorted();
+      expect(statuses).toEqual([201, 409]);
+
+      const user = await authStore.findByUsername("raceruser");
+      expect(user).toBeDefined();
+      await authStore.__test__deleteUser("raceruser");
+    });
+
     it("возвращает 400 при пустом username", async () => {
       await supertest(app.getHttpServer())
         .post("/v1/common/auth/registration")
@@ -160,42 +217,23 @@ describe("V1 common/auth эндпоинты", (): void => {
     });
 
     it("логин забаненного пользователя отклоняется", async () => {
-      const passwordHash = await Bun.password.hash("pass123");
-      await authStore.saveUser({
-        uuid: "banned-login-uuid",
-        username: "bannedlogin",
-        passwordHash,
-        skin: null,
-        role: "user",
-        approved: true,
-        banned: false,
-      });
-      const user = await authStore.findByUsername("bannedlogin");
+      const user = await seedUser(authStore, "bannedlogin", "banned-login-uuid", "pass123");
       try {
-        await authStore.saveUser({ ...user!, banned: true });
+        await authStore.saveUser({ ...user, banned: true });
 
         await supertest(app.getHttpServer())
           .post("/v1/common/auth/login")
           .send({ username: "bannedlogin", password: "pass123" })
           .expect(401);
       } finally {
-        await authStore.saveUser({ ...user!, banned: false });
+        await authStore.saveUser({ ...user, banned: false });
       }
     });
   });
 
   describe("POST /v1/common/auth/refresh", () => {
     beforeAll(async () => {
-      const passwordHash = await Bun.password.hash("pass123");
-      await authStore.saveUser({
-        uuid: "refresh-user-uuid",
-        username: "refreshuser",
-        passwordHash,
-        skin: null,
-        role: "user",
-        approved: true,
-        banned: false,
-      });
+      await seedUser(authStore, "refreshuser", "refresh-user-uuid", "pass123");
     });
 
     it("успешный рефреш токена", async () => {
@@ -244,16 +282,7 @@ describe("V1 common/auth эндпоинты", (): void => {
 
   describe("POST /v1/common/auth/refresh при изменении статуса пользователя", () => {
     it("ошибка 401 после бана", async () => {
-      const passwordHash = await Bun.password.hash("pass123");
-      await authStore.saveUser({
-        uuid: "banned-user-uuid",
-        username: "banneduser",
-        passwordHash,
-        skin: null,
-        role: "user",
-        approved: true,
-        banned: false,
-      });
+      const user = await seedUser(authStore, "banneduser", "banned-user-uuid", "pass123");
 
       const loginRes = await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
@@ -261,8 +290,7 @@ describe("V1 common/auth эндпоинты", (): void => {
         .expect(201);
 
       const { refresh_token } = loginRes.body.tokens;
-      const user = await authStore.findByUsername("banneduser");
-      await authStore.saveUser({ ...user!, banned: true });
+      await authStore.saveUser({ ...user, banned: true });
 
       await supertest(app.getHttpServer())
         .post("/v1/common/auth/refresh")
@@ -271,17 +299,7 @@ describe("V1 common/auth эндпоинты", (): void => {
     });
 
     it("ошибка 401 после удаления пользователя", async () => {
-      const passwordHash = await Bun.password.hash("pass123");
-      await authStore.saveUser({
-        uuid: "replaced-user-uuid",
-        username: "replaceduser",
-        passwordHash,
-        skin: null,
-        role: "user",
-        approved: true,
-        banned: false,
-      });
-      const originalUser = await authStore.findByUsername("replaceduser");
+      await seedUser(authStore, "replaceduser", "replaced-user-uuid", "pass123");
 
       const loginRes = await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
@@ -289,38 +307,21 @@ describe("V1 common/auth эндпоинты", (): void => {
         .expect(201);
 
       try {
-        await authStore.saveUser({
-          uuid: "replaced-user-new-uuid",
-          username: "replaceduser",
-          passwordHash: await Bun.password.hash("newpass456"),
-          skin: null,
-          role: "user",
-          approved: true,
-          banned: false,
-        });
+        await authStore.__test__deleteUser("replaceduser");
 
         await supertest(app.getHttpServer())
           .post("/v1/common/auth/refresh")
           .send({ refresh_token: loginRes.body.tokens.refresh_token })
           .expect(401);
       } finally {
-        await authStore.saveUser(originalUser!);
+        await seedUser(authStore, "replaceduser", "replaced-user-uuid", "pass123");
       }
     });
   });
 
   describe("POST /v1/common/auth/invalidate", () => {
     beforeAll(async () => {
-      const passwordHash = await Bun.password.hash("pass123");
-      await authStore.saveUser({
-        uuid: "invalidator-uuid",
-        username: "invalidator",
-        passwordHash,
-        skin: null,
-        role: "user",
-        approved: true,
-        banned: false,
-      });
+      await seedUser(authStore, "invalidator", "invalidator-uuid", "pass123");
     });
 
     it("успешная инвалидация токена", async () => {
@@ -379,16 +380,7 @@ describe("V1 common/auth эндпоинты", (): void => {
 
   describe("PATCH /v1/common/auth/password", () => {
     beforeAll(async () => {
-      const passwordHash = await Bun.password.hash("oldpass123");
-      await authStore.saveUser({
-        uuid: "passchanger-uuid",
-        username: "passchanger",
-        passwordHash,
-        skin: null,
-        role: "user",
-        approved: true,
-        banned: false,
-      });
+      await seedUser(authStore, "passchanger", "passchanger-uuid", "oldpass123");
     });
 
     const buildPasschangerToken = (): string =>
@@ -422,51 +414,29 @@ describe("V1 common/auth эндпоинты", (): void => {
         .expect(201);
 
       const authStoreInstance = app.get(AuthMapStoreToken, { strict: false });
-      await authStoreInstance.saveUser({
-        uuid: "passchanger-uuid",
-        username: "passchanger",
-        passwordHash: await Bun.password.hash("oldpass123"),
-        skin: null,
-        role: "user",
-        approved: true,
-        banned: false,
-      });
+      await seedUser(authStoreInstance, "passchanger", "passchanger-uuid", "oldpass123");
     });
 
     it("вход с новым паролем после смены", async () => {
-      const authStoreInstance = app.get(AuthMapStoreToken, { strict: false });
-      const user = await authStoreInstance.findByUsername("passchanger");
-      await authStoreInstance.saveUser({
-        ...user!,
-        passwordHash: await Bun.password.hash("newpass456"),
-      });
+      await seedUser(authStore, "passchanger", "passchanger-uuid", "newpass456");
 
       await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
         .send({ username: "passchanger", password: "newpass456" })
         .expect(201);
 
-      await authStoreInstance.saveUser({
-        ...user!,
-        passwordHash: await Bun.password.hash("oldpass123"),
-      });
+      await seedUser(authStore, "passchanger", "passchanger-uuid", "oldpass123");
     });
 
     it("вход со старым паролем отклоняется", async () => {
-      const authStoreInstance = app.get(AuthMapStoreToken, { strict: false });
-      const user = await authStoreInstance.findByUsername("passchanger");
-      const originalHash = user!.passwordHash;
-      await authStoreInstance.saveUser({
-        ...user!,
-        passwordHash: await Bun.password.hash("newpass456"),
-      });
+      await seedUser(authStore, "passchanger", "passchanger-uuid", "newpass456");
 
       await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
         .send({ username: "passchanger", password: "oldpass123" })
         .expect(401);
 
-      await authStoreInstance.saveUser({ ...user!, passwordHash: originalHash });
+      await seedUser(authStore, "passchanger", "passchanger-uuid", "oldpass123");
     });
 
     it("401 при неверном старом пароле", async () => {
@@ -493,14 +463,7 @@ describe("V1 common/auth эндпоинты", (): void => {
     });
 
     it("401 для заблокированного пользователя", async () => {
-      const passwordHash = await Bun.password.hash("bannedpass1");
-      await authStore.saveUser({
-        uuid: "banned-passchanger-uuid",
-        username: "bannedpasschanger",
-        passwordHash,
-        skin: null,
-        role: "user",
-        approved: true,
+      await seedUser(authStore, "bannedpasschanger", "banned-passchanger-uuid", "bannedpass1", {
         banned: true,
       });
 

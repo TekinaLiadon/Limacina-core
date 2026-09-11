@@ -4,12 +4,14 @@ import {
   Delete,
   Get,
   Param,
+  ParseEnumPipe,
   ParseIntPipe,
   Post,
+  Query,
   Req,
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from "@nestjs/swagger";
-import { UserContentService } from "../../../user-content/user-content.service";
+import { UserContentService, type SkinModel } from "../../../user-content/user-content.service";
 import { SuccessResponseDto } from "../../../common/dto/dto";
 import { CurrentUser, type RequestUser } from "../../../common/current-user.decorator";
 import { UserContentItemDto, UserContentUploadResponseDto } from "../../../user-content/dto/dto";
@@ -31,9 +33,11 @@ export class V1ContentController {
   async uploadSkin(
     @CurrentUser() user: RequestUser,
     @Req() request: FastifyRequest,
+    @Query("model", new ParseEnumPipe(["classic", "slim"], { optional: true }))
+    model?: SkinModel,
   ): Promise<UserContentUploadResponseDto> {
     const buffer = await this.extractFile(request);
-    return this.userContentService.uploadSkin(user.uuid, buffer);
+    return this.userContentService.uploadSkin(user.uuid, buffer, model ?? undefined);
   }
 
   @Get("skins/:uuid")
@@ -55,6 +59,43 @@ export class V1ContentController {
     @Param("id", ParseIntPipe) id: number,
   ): Promise<SuccessResponseDto> {
     await this.userContentService.delete(user.uuid, id, "skin");
+    return { success: true };
+  }
+
+  @Post("capes")
+  @ApiOperation({ summary: "Загрузить плащ (.png)" })
+  @ApiResponse({ status: 201, type: UserContentUploadResponseDto })
+  @ApiResponse({
+    status: 400,
+    description: "Лимит загрузки плащей, невалидный PNG или превышен размер (512 КБ)",
+  })
+  async uploadCape(
+    @CurrentUser() user: RequestUser,
+    @Req() request: FastifyRequest,
+  ): Promise<UserContentUploadResponseDto> {
+    const buffer = await this.extractFile(request);
+    return this.userContentService.uploadCape(user.uuid, buffer);
+  }
+
+  @Get("capes/:uuid")
+  @ApiOperation({ summary: "Получить список плащей пользователя" })
+  @ApiParam({ name: "uuid", description: "UUID пользователя" })
+  @ApiResponse({ status: 200, type: [UserContentItemDto] })
+  async listCapes(@Param("uuid") uuid: string): Promise<UserContentItemDto[]> {
+    return this.userContentService.listCapes(uuid);
+  }
+
+  @Delete("capes/:id")
+  @ApiOperation({ summary: "Удалить плащ по ID" })
+  @ApiParam({ name: "id", description: "ID плаща" })
+  @ApiResponse({ status: 200, description: "Плащ удалён", type: SuccessResponseDto })
+  @ApiResponse({ status: 403, description: "Нет прав на удаление" })
+  @ApiResponse({ status: 404, description: "Плащ не найден" })
+  async deleteCape(
+    @CurrentUser() user: RequestUser,
+    @Param("id", ParseIntPipe) id: number,
+  ): Promise<SuccessResponseDto> {
+    await this.userContentService.delete(user.uuid, id, "cape");
     return { success: true };
   }
 

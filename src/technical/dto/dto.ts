@@ -1,16 +1,21 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, MinLength } from "class-validator";
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { validationMessages } from "../../common/validation-messages";
-
 export class InitOwnerDto {
   @ApiProperty({ example: "owner", description: "Юзернейм владельца" })
   @IsString({ message: validationMessages.string("username") })
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })
   username!: string;
 
-  @ApiProperty({ example: "securepassword", description: "Пароль владельца", minLength: 6 })
+  @ApiProperty({
+    example: "securepassword",
+    description: "Пароль владельца",
+    minLength: 6,
+    maxLength: 128,
+  })
   @IsString({ message: validationMessages.string("password") })
   @MinLength(6, { message: validationMessages.minLength("password", 6) })
+  @MaxLength(128, { message: validationMessages.maxLength("password", 128) })
   password!: string;
 }
 
@@ -30,6 +35,6 @@ export class RestartServerDto {
     description: "Пересобрать бинарник (bun run build) перед перезапуском",
   })
   @IsOptional()
-  @IsBoolean()
+  @IsBoolean({ message: validationMessages.boolean("rebuild") })
   rebuild?: boolean;
 }

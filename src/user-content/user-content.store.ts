@@ -1,12 +1,13 @@
 import { Injectable } from "@nestjs/common";
 import { selectQuery, insertQuery, deleteQuery, execute, TABLES } from "../utils/sql";
 
-export type ContentType = "skin" | "model";
+export type ContentType = "skin" | "cape" | "model";
 
 export interface UserContentItem {
   id: number;
   userUuid: string;
   filePath: string;
+  skinModel?: string | null;
 }
 
 export const UserContentMapStoreToken = Symbol("UserContentMapStore");
@@ -15,22 +16,35 @@ export interface IUserContentStore {
   countByUserUuid(userUuid: string, type: ContentType): Promise<number>;
   findByUserUuid(userUuid: string, type: ContentType): Promise<UserContentItem[]>;
   findById(id: number, type: ContentType): Promise<UserContentItem | undefined>;
-  save(userUuid: string, filePath: string, type: ContentType): Promise<UserContentItem>;
+  save(
+    userUuid: string,
+    filePath: string,
+    type: ContentType,
+    skinModel?: string | null,
+  ): Promise<UserContentItem>;
   deleteById(id: number, type: ContentType): Promise<UserContentItem | undefined>;
 }
 
-function getTable(type: ContentType): "user_skins" | "user_models" {
-  return type === "skin" ? TABLES.user_skins : TABLES.user_models;
+function getTable(type: ContentType): "user_skins" | "user_capes" | "user_models" {
+  if (type === "skin") return TABLES.user_skins;
+  if (type === "cape") return TABLES.user_capes;
+  return TABLES.user_models;
 }
 
 interface ContentRow extends Record<string, unknown> {
   id: number;
   user_uuid: string;
   file_path: string;
+  skin_model?: string | null;
 }
 
 function rowToItem(row: ContentRow): UserContentItem {
-  return { id: row.id, userUuid: row.user_uuid, filePath: row.file_path };
+  return {
+    id: row.id,
+    userUuid: row.user_uuid,
+    filePath: row.file_path,
+    skinModel: row.skin_model ?? null,
+  };
 }
 
 @Injectable()
@@ -47,7 +61,11 @@ export class UserContentPostgresStore implements IUserContentStore {
 
   async findByUserUuid(userUuid: string, type: ContentType): Promise<UserContentItem[]> {
     const table = getTable(type);
-    const q = selectQuery("id", "user_uuid", "file_path")
+    const columns =
+      type === "skin"
+        ? ["id", "user_uuid", "file_path", "skin_model"]
+        : ["id", "user_uuid", "file_path"];
+    const q = selectQuery(...columns)
       .from(table)
       .where("user_uuid = $1", userUuid)
       .build();
@@ -57,18 +75,37 @@ export class UserContentPostgresStore implements IUserContentStore {
 
   async findById(id: number, type: ContentType): Promise<UserContentItem | undefined> {
     const table = getTable(type);
-    const q = selectQuery("id", "user_uuid", "file_path").from(table).where("id = $1", id).build();
+    const columns =
+      type === "skin"
+        ? ["id", "user_uuid", "file_path", "skin_model"]
+        : ["id", "user_uuid", "file_path"];
+    const q = selectQuery(...columns)
+      .from(table)
+      .where("id = $1", id)
+      .build();
     const { rows } = await execute<ContentRow>(q.sql, q.values);
     return rows[0] ? rowToItem(rows[0]) : undefined;
   }
 
-  async save(userUuid: string, filePath: string, type: ContentType): Promise<UserContentItem> {
+  async save(
+    userUuid: string,
+    filePath: string,
+    type: ContentType,
+    skinModel?: string | null,
+  ): Promise<UserContentItem> {
     const table = getTable(type);
-    const q = insertQuery("user_uuid", "file_path")
-      .from(table)
-      .values(userUuid, filePath)
-      .returning("id", "user_uuid", "file_path")
-      .build();
+    const q =
+      type === "skin"
+        ? insertQuery("user_uuid", "file_path", "skin_model")
+            .from(table)
+            .values(userUuid, filePath, skinModel ?? null)
+            .returning("id", "user_uuid", "file_path", "skin_model")
+            .build()
+        : insertQuery("user_uuid", "file_path")
+            .from(table)
+            .values(userUuid, filePath)
+            .returning("id", "user_uuid", "file_path")
+            .build();
     const { rows } = await execute<ContentRow>(q.sql, q.values);
     return rowToItem(rows[0]!);
   }
@@ -92,16 +129,21 @@ export class UserContentPostgresStore implements IUserContentStore {
 @Injectable()
 export class UserContentMapStore implements IUserContentStore {
   private readonly skins = new Map<number, UserContentItem>();
+  private readonly capes = new Map<number, UserContentItem>();
   private readonly models = new Map<number, UserContentItem>();
   private nextSkinId = 1;
+  private nextCapeId = 1;
   private nextModelId = 1;
 
   private getStore(type: ContentType): Map<number, UserContentItem> {
-    return type === "skin" ? this.skins : this.models;
+    if (type === "skin") return this.skins;
+    if (type === "cape") return this.capes;
+    return this.models;
   }
 
   private getNextId(type: ContentType): number {
     if (type === "skin") return this.nextSkinId++;
+    if (type === "cape") return this.nextCapeId++;
     return this.nextModelId++;
   }
 
@@ -125,9 +167,14 @@ export class UserContentMapStore implements IUserContentStore {
     return this.getStore(type).get(id);
   }
 
-  async save(userUuid: string, filePath: string, type: ContentType): Promise<UserContentItem> {
+  async save(
+    userUuid: string,
+    filePath: string,
+    type: ContentType,
+    skinModel?: string | null,
+  ): Promise<UserContentItem> {
     const id = this.getNextId(type);
-    const item: UserContentItem = { id, userUuid, filePath };
+    const item: UserContentItem = { id, userUuid, filePath, skinModel: skinModel ?? null };
     this.getStore(type).set(id, item);
     return item;
   }

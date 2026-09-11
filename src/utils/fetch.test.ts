@@ -4,6 +4,8 @@ import { limaFetch } from "./fetch";
 let server: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
 
+const MEGABYTE = 1024 * 1024;
+
 function handleRequest(req: Request): Response | Promise<Response> {
   const url = new URL(req.url);
 
@@ -23,6 +25,40 @@ function handleRequest(req: Request): Response | Promise<Response> {
     return new Promise((resolve) => {
       setTimeout(() => resolve(new Response("slow", { status: 200 })), 5000);
     });
+  }
+
+  if (url.pathname === "/huge-body") {
+    return new Response(new Uint8Array(11 * MEGABYTE), {
+      status: 200,
+      headers: { "content-type": "text/plain" },
+    });
+  }
+
+  if (url.pathname === "/huge-chunked") {
+    const stream = new ReadableStream({
+      async start(controller) {
+        for (let i = 0; i < 15; i++) {
+          controller.enqueue(new Uint8Array(MEGABYTE).fill(0x61));
+        }
+        controller.close();
+      },
+    });
+    return new Response(stream, { status: 200, headers: { "content-type": "text/plain" } });
+  }
+
+  if (url.pathname === "/slow-body") {
+    const encoder = new TextEncoder();
+    let interval: ReturnType<typeof setInterval> | undefined;
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode("partial"));
+        interval = setInterval(() => controller.enqueue(encoder.encode(".")), 20);
+      },
+      cancel() {
+        if (interval) clearInterval(interval);
+      },
+    });
+    return new Response(stream, { status: 200, headers: { "content-type": "text/plain" } });
   }
 
   return new Response("Unknown", { status: 404 });
@@ -76,6 +112,29 @@ describe("yggFetch", () => {
 
   it("корректно обрабатывает timeout", async () => {
     const res = await limaFetch(`${baseUrl}/slow`, { timeout: 100, silent: true });
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("Request timeout");
+  });
+
+  it("отклоняет ответ с content-length больше лимита", async () => {
+    const res = await limaFetch(`${baseUrl}/huge-body`, { silent: true });
+
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(0);
+    expect(res.error).toContain("слишком большой");
+  });
+
+  it("отклоняет chunked-ответ, превысивший лимит при чтении", async () => {
+    const res = await limaFetch(`${baseUrl}/huge-chunked`, { silent: true });
+
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(0);
+    expect(res.error).toContain("слишком большой");
+  });
+
+  it("таймаут покрывает чтение зависшего тела, а не только заголовки", async () => {
+    const res = await limaFetch(`${baseUrl}/slow-body`, { timeout: 150, silent: true });
 
     expect(res.ok).toBe(false);
     expect(res.error).toBe("Request timeout");

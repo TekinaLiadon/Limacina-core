@@ -1,6 +1,7 @@
 import { Injectable, Logger, BadRequestException } from "@nestjs/common";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { LOG_DATE_PATTERN } from "./dto/dto";
 
 const LOGS_DIR = join(process.cwd(), "logs");
 const CACHE_TTL_MS = 10_000;
@@ -133,7 +134,7 @@ export class LogsService {
   }
 
   private validateDate(date: string): void {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    if (!LOG_DATE_PATTERN.test(date)) {
       throw new BadRequestException("Дата должна быть в формате YYYY-MM-DD");
     }
   }

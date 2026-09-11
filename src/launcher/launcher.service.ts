@@ -39,14 +39,18 @@ export class LauncherService implements OnModuleDestroy {
 
   private version = "0.0.0";
   private platforms: PlatformInfo[] = [];
+  private config: LauncherConfigDto | undefined;
   private versionWatcher?: FSWatcher;
   private platformsWatcher?: FSWatcher;
+  private configWatcher?: FSWatcher;
 
   async onApplicationBootstrap() {
     this.loadVersion();
     this.watchVersion();
     this.scanPlatforms();
     this.watchPlatforms();
+    this.loadConfig();
+    this.watchConfig();
 
     this.logger.log(
       { version: this.version, platforms: this.platforms.length },
@@ -65,15 +69,70 @@ export class LauncherService implements OnModuleDestroy {
   }
 
   private watchVersion(): void {
-    this.versionWatcher = watch(VERSION_FILE, { ignoreInitial: true });
+    this.versionWatcher = watch(PUBLIC_DIR, {
+      depth: 0,
+      ignoreInitial: true,
+    });
 
-    this.versionWatcher.on("change", () => {
+    this.versionWatcher.on("all", (_event: string, filePath: string) => {
+      if (filePath !== VERSION_FILE) return;
       this.handleVersionChange();
     });
 
     this.versionWatcher.on("error", (error: unknown) => {
       this.logger.error({ err: error }, "Ошибка watcher version.json");
     });
+  }
+
+  private loadConfig(): void {
+    if (!existsSync(CONFIG_FILE)) {
+      this.config = undefined;
+      return;
+    }
+
+    try {
+      const content = readFileSync(CONFIG_FILE, "utf-8");
+      this.config = parseToml(content) as unknown as LauncherConfigDto;
+    } catch (error) {
+      this.logger.error({ err: error }, "Ошибка чтения config.toml");
+      this.config = undefined;
+    }
+  }
+
+  private watchConfig(): void {
+    this.configWatcher = watch(".", {
+      depth: 0,
+      ignoreInitial: true,
+      ignored: (path: string) => path !== "." && path !== CONFIG_FILE,
+      awaitWriteFinish: { stabilityThreshold: 200 },
+    });
+
+    this.configWatcher.on("add", (filePath: string) => {
+      if (filePath !== CONFIG_FILE) return;
+      this.handleConfigChange();
+    });
+
+    this.configWatcher.on("change", (filePath: string) => {
+      if (filePath !== CONFIG_FILE) return;
+      this.handleConfigChange();
+    });
+
+    this.configWatcher.on("unlink", (filePath: string) => {
+      if (filePath !== CONFIG_FILE) return;
+      this.config = undefined;
+      this.logger.log("config.toml удалён");
+    });
+
+    this.configWatcher.on("error", (error: unknown) => {
+      this.logger.error({ err: error }, "Ошибка watcher config.toml");
+    });
+  }
+
+  private handleConfigChange(): void {
+    this.loadConfig();
+    if (this.config) {
+      this.logger.log({ projectName: this.config.projectName }, "Конфиг лаунчера перечитан");
+    }
   }
 
   private handleVersionChange(): void {
@@ -184,19 +243,17 @@ export class LauncherService implements OnModuleDestroy {
   }
 
   getConfig(): LauncherConfigDto {
-    if (!existsSync(CONFIG_FILE)) {
+    if (!this.config) {
       throw new NotFoundException("Конфиг не настроен: файл config.toml не найден");
     }
 
-    const content = readFileSync(CONFIG_FILE, "utf-8");
-    const parsed = parseToml(content) as unknown as LauncherConfigDto;
-
-    return parsed;
+    return this.config;
   }
 
   onModuleDestroy(): void {
     this.versionWatcher?.close();
     this.platformsWatcher?.close();
+    this.configWatcher?.close();
   }
 
   async download(os: string, arch: string, reply: FastifyReply, version?: string): Promise<void> {
@@ -210,13 +267,15 @@ export class LauncherService implements OnModuleDestroy {
       throw new NotFoundException(`Платформа не найдена: ${os}/${arch}`);
     }
 
-    const zipFile = version ? this.findVersionZip(dir, os, arch, version) : this.findLatestZip(dir);
+    const zipFile = version
+      ? this.findVersionZip(dir, os, arch, version)
+      : this.findCurrentZip(dir, os, arch);
 
     if (!zipFile) {
       throw new NotFoundException(
         version
           ? `Версия ${version} не найдена для ${os}/${arch}`
-          : `Файл лаунчера не найден для ${os}/${arch}`,
+          : `Файл лаунчера версии ${this.version} не найден для ${os}/${arch}`,
       );
     }
 
@@ -229,8 +288,9 @@ export class LauncherService implements OnModuleDestroy {
     reply.send(file.stream());
   }
 
-  private findLatestZip(dir: string): string | undefined {
-    return readdirSync(dir).find((file) => file.endsWith(".zip"));
+  private findCurrentZip(dir: string, os: string, arch: string): string | null {
+    const expectedZip = buildLauncherZipName(this.version, os, arch);
+    return readdirSync(dir).includes(expectedZip) ? expectedZip : null;
   }
 
   private findVersionZip(dir: string, os: string, arch: string, version: string): string | null {

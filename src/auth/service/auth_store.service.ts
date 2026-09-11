@@ -4,7 +4,6 @@ export interface StoredUser {
   uuid: string;
   username: string;
   passwordHash: string;
-  skin: string | null;
   role: string;
   approved: boolean;
   banned: boolean;
@@ -20,10 +19,9 @@ export const AuthMapStoreToken = Symbol("AuthMapStore");
 
 export interface IAuthStore {
   findByUsername(username: string): Promise<StoredUser | undefined>;
-  saveUser(user: StoredUser): Promise<void>;
+  saveUser(user: StoredUser): Promise<boolean>;
   approveUser(uuid: string): Promise<void>;
   userExists(username: string): Promise<boolean>;
-  updateSkin(uuid: string, skin: string): Promise<void>;
   updatePasswordHash(uuid: string, passwordHash: string, changedAt: Date): Promise<void>;
   updateRole(uuid: string, role: string): Promise<void>;
   saveRefresh(jti: string, entry: RefreshEntry): Promise<void>;
@@ -41,8 +39,11 @@ export class AuthMapStore implements IAuthStore {
     return this.users.get(username);
   }
 
-  async saveUser(user: StoredUser): Promise<void> {
+  async saveUser(user: StoredUser): Promise<boolean> {
+    const existing = this.users.get(user.username);
+    if (existing && existing.uuid !== user.uuid) return false;
     this.users.set(user.username, user);
+    return true;
   }
 
   async approveUser(uuid: string): Promise<void> {
@@ -56,15 +57,6 @@ export class AuthMapStore implements IAuthStore {
 
   async userExists(username: string): Promise<boolean> {
     return this.users.has(username);
-  }
-
-  async updateSkin(uuid: string, skin: string): Promise<void> {
-    for (const user of this.users.values()) {
-      if (user.uuid === uuid) {
-        user.skin = skin;
-        return;
-      }
-    }
   }
 
   async updatePasswordHash(uuid: string, passwordHash: string, changedAt: Date): Promise<void> {
@@ -102,5 +94,9 @@ export class AuthMapStore implements IAuthStore {
     for (const [key, val] of this.tokens) {
       if (val.userId === userId) this.tokens.delete(key);
     }
+  }
+
+  async __test__deleteUser(username: string): Promise<void> {
+    this.users.delete(username);
   }
 }

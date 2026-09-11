@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "bun:test";
-import { resolveKeysDir } from "../service/yggdrasil.service";
+import { resolveKeysDir } from "../service/keys-dir";
 
 describe("resolveKeysDir", (): void => {
   it("KEYS_DIR из конфига переопределяет путь", (): void => {

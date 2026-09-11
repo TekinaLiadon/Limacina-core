@@ -1,6 +1,7 @@
 import { Body, Controller, Post } from "@nestjs/common";
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { Roles } from "../../common/roles.decorator";
+import { CurrentUser, type RequestUser } from "../../common/current-user.decorator";
 import { SuccessResponseDto } from "../../common/dto/dto";
 import { TechnicalService } from "../../technical/technical.service";
 import { RestartServerDto } from "../../technical/dto/dto";
@@ -31,8 +32,11 @@ export class V1PanelServerController {
   })
   @ApiResponse({ status: 403, description: "Недостаточно прав" })
   @ApiResponse({ status: 500, description: "Пересборка не удалась, перезапуск отменён" })
-  async restartServer(@Body() dto?: RestartServerDto): Promise<SuccessResponseDto> {
-    await this.technicalService.restartServer(dto?.rebuild ?? false);
+  async restartServer(
+    @CurrentUser() user: RequestUser,
+    @Body() dto?: RestartServerDto,
+  ): Promise<SuccessResponseDto> {
+    await this.technicalService.restartServer(dto?.rebuild ?? false, user);
     return { success: true };
   }
 }

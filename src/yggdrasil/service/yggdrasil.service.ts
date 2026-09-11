@@ -1,6 +1,6 @@
 import { HttpException, HttpStatus, Inject, Injectable, Logger } from "@nestjs/common";
 import { readFileSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { sign, createHmac } from "node:crypto";
 import type {
   AuthenticateDto,
@@ -29,14 +29,7 @@ import {
 } from "../../user-content/user-content.store";
 import { AppConfigToken } from "../../config/app-config.provider";
 import type { AppConfigType } from "../../config/global-config";
-
-export function resolveKeysDir(envKeysDir?: string): string {
-  if (envKeysDir) return resolve(envKeysDir);
-
-  if (import.meta.dir.startsWith("/$bunfs")) return join(process.cwd(), "keys");
-
-  return join(import.meta.dir, "..", "..", "..", "keys");
-}
+import { resolveKeysDir } from "./keys-dir";
 
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_TEXTURE_BYTES = 512 * 1024;
@@ -497,15 +490,27 @@ export class YggdrasilService {
   ): Promise<Array<{ name: string; value: string; signature?: string }>> {
     const properties: Array<{ name: string; value: string; signature?: string }> = [];
 
-    let { skinUrl } = profile;
+    let skinModel = profile.skinModel ?? null;
+    let skinUrl = profile.skinUrl ?? null;
+    let capeUrl = profile.capeUrl ?? null;
     if (!skinUrl) {
       const userSkins = await this.contentStore.findByUserUuid(profile.userId, "skin");
       const latestSkin = userSkins.toSorted((a, b) => a.id - b.id).at(-1);
-      if (latestSkin) skinUrl = latestSkin.filePath;
+      if (latestSkin) {
+        skinUrl = latestSkin.filePath;
+        const { skinModel: latestModel } = latestSkin;
+        if (latestModel) skinModel = latestModel;
+      }
     }
     if (!skinUrl) skinUrl = this.defaultSkinUrl;
 
-    const texturesProfile: YggdrasilProfile = { ...profile, skinUrl };
+    if (!capeUrl) {
+      const userCapes = await this.contentStore.findByUserUuid(profile.userId, "cape");
+      const latestCape = userCapes.toSorted((a, b) => a.id - b.id).at(-1);
+      if (latestCape) capeUrl = latestCape.filePath;
+    }
+
+    const texturesProfile: YggdrasilProfile = { ...profile, skinUrl, skinModel, capeUrl };
     const texturesValue = this.encodeTextures(profile.uuid, profile.username, texturesProfile);
 
     const property: { name: string; value: string; signature?: string } = {

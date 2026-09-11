@@ -147,6 +147,11 @@ export class AdminMapStore implements IAdminStore {
     return false;
   }
 
+  async __test__deleteUser(username: string): Promise<void> {
+    this.users.delete(username);
+    this.deletedUsers.delete(username);
+  }
+
   private cleanupOldDeleted(): void {
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
     for (const [username, user] of this.deletedUsers) {

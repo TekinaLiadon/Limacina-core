@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
-import { type INestApplication } from "@nestjs/common";
+import { type INestApplication, ValidationPipe } from "@nestjs/common";
+import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
 import { YggdrasilController } from "../yggdrasil.controller";
@@ -67,8 +68,10 @@ describe("Yggdrasil эндпоинты", () => {
       ],
     }).compile();
 
-    app = moduleFixture.createNestApplication();
+    app = moduleFixture.createNestApplication(new FastifyAdapter({ bodyLimit: 1024 * 1024 }));
+    app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
     await app.init();
+    await app.getHttpAdapter().getInstance().ready();
 
     store = moduleFixture.get(YggdrasilStoreToken) as YggdrasilMapStore;
     const passwordHash = await Bun.password.hash(TEST_PASSWORD);
@@ -718,6 +721,17 @@ describe("Yggdrasil эндпоинты", () => {
         .expect(400);
 
       expect(res.body.statusCode).toBe(400);
+    });
+
+    it("возвращает 413 для тела больше bodyLimit", async () => {
+      const oversizedBase64 = Buffer.alloc(1024 * 1024, 0x61).toString("base64");
+
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${await authenticateAndBindProfile()}`)
+        .send({ file: oversizedBase64 });
+
+      expect(res.status).toBe(413);
     });
   });
 

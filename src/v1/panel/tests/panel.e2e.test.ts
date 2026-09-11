@@ -1,9 +1,10 @@
-process.env["JWT_ACCESS"] = "test-access-secret";
-process.env["JWT_REFRESH"] = "test-refresh-secret";
+process.env["JWT_ACCESS"] = "test-access-secret-0123456789abcdef0123";
+process.env["JWT_REFRESH"] = "test-refresh-secret-0123456789abcdef0123";
 process.env["NODE_ENV"] = "test";
+process.env["BASE_URL"] = "http://localhost:3005";
 process.env["DB_DRIVER"] = "map";
 
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -18,6 +19,7 @@ import {
   type INestApplication,
   Injectable,
   InternalServerErrorException,
+  Logger,
   ValidationPipe,
 } from "@nestjs/common";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
@@ -171,7 +173,6 @@ describe("V1 panel эндпоинты", (): void => {
       uuid: "user-uuid",
       username: "user",
       passwordHash: await Bun.password.hash("useroldpass"),
-      skin: null,
       role: "user",
       approved: false,
       banned: false,
@@ -180,7 +181,6 @@ describe("V1 panel эндпоинты", (): void => {
       uuid: "futureowner-uuid",
       username: "futureowner",
       passwordHash: "placeholder-hash",
-      skin: null,
       role: "user",
       approved: true,
       banned: false,
@@ -461,6 +461,55 @@ describe("V1 panel эндпоинты", (): void => {
         .set("Authorization", `Bearer ${ownerToken}`)
         .send({ username: "roleuser", role: "superadmin" })
         .expect(400);
+    });
+
+    it("возвращает 403 при попытке админа выдать роль admin", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/role")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "roleuser", role: "admin" })
+        .expect(403);
+
+      const store = app.get(AdminMapStoreToken, { strict: false });
+      expect((await store.findByUsername("roleuser"))?.role).not.toBe("admin");
+    });
+
+    it("владелец может выдать роль admin", async () => {
+      try {
+        await supertest(app.getHttpServer())
+          .patch("/v1/panel/users/role")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .send({ username: "roleuser", role: "admin" })
+          .expect(200);
+
+        const store = app.get(AdminMapStoreToken, { strict: false });
+        expect((await store.findByUsername("roleuser"))?.role).toBe("admin");
+      } finally {
+        await supertest(app.getHttpServer())
+          .patch("/v1/panel/users/role")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .send({ username: "roleuser", role: "user" })
+          .expect(200);
+      }
+    });
+
+    it("админ может выдать роль ниже своей", async () => {
+      try {
+        await supertest(app.getHttpServer())
+          .patch("/v1/panel/users/role")
+          .set("Authorization", `Bearer ${adminToken}`)
+          .send({ username: "alice", role: "moderator" })
+          .expect(200);
+
+        const store = app.get(AdminMapStoreToken, { strict: false });
+        expect((await store.findByUsername("alice"))?.role).toBe("moderator");
+      } finally {
+        await supertest(app.getHttpServer())
+          .patch("/v1/panel/users/role")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .send({ username: "alice", role: "user" })
+          .expect(200);
+      }
     });
   });
 
@@ -794,6 +843,36 @@ describe("V1 panel эндпоинты", (): void => {
         .set("Authorization", `Bearer ${ownerToken}`)
         .expect(404);
     });
+
+    it("возвращает 409 если юзернейм занят живым пользователем", async () => {
+      const store = app.get(AdminMapStoreToken, { strict: false });
+      await store.saveUser({
+        uuid: "occupied-old-uuid",
+        username: "occupied",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      await store.deleteUser("occupied");
+      await store.saveUser({
+        uuid: "occupied-live-uuid",
+        username: "occupied",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/occupied/restore")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(409);
+
+      expect(res.body.message).toContain("занят");
+      expect((await store.findByUsername("occupied"))?.uuid).toBe("occupied-live-uuid");
+      expect(await store.findDeletedByUsername("occupied")).toBeDefined();
+
+      await store.__test__deleteUser("occupied");
+    });
   });
 
   describe("Иерархия ролей при мутациях", () => {
@@ -833,6 +912,55 @@ describe("V1 panel эндпоинты", (): void => {
           .patch("/v1/panel/users/ban")
           .set("Authorization", `Bearer ${ownerToken}`)
           .send({ username: "secondadmin", banned: false });
+      }
+    });
+  });
+
+  describe("Аудит мутаций", () => {
+    it("успех пишется в log, отказ — в error, с актором и целью", async () => {
+      const store = app.get(AdminMapStoreToken, { strict: false });
+      await store.saveUser({
+        uuid: "audituser-uuid",
+        username: "audituser",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+
+      const logSpy = spyOn(Logger.prototype, "log");
+      const errorSpy = spyOn(Logger.prototype, "error");
+      try {
+        await supertest(app.getHttpServer())
+          .patch("/v1/panel/users/ban")
+          .set("Authorization", `Bearer ${adminToken}`)
+          .send({ username: "audituser", banned: true })
+          .expect(200);
+
+        const successPayloads = logSpy.mock.calls.map((call) => JSON.stringify(call));
+        expect(
+          successPayloads.some(
+            (payload) =>
+              payload.includes("audituser") && payload.includes("admin") && payload.includes("ban"),
+          ),
+        ).toBe(true);
+
+        await supertest(app.getHttpServer())
+          .patch("/v1/panel/users/ban")
+          .set("Authorization", `Bearer ${adminToken}`)
+          .send({ username: "secondadmin", banned: true })
+          .expect(403);
+
+        const refusalPayloads = errorSpy.mock.calls.map((call) => JSON.stringify(call));
+        expect(
+          refusalPayloads.some(
+            (payload) => payload.includes("secondadmin") && payload.includes("admin"),
+          ),
+        ).toBe(true);
+      } finally {
+        logSpy.mockRestore();
+        errorSpy.mockRestore();
+        await store.setBanned("audituser", false);
+        await store.__test__deleteUser("audituser");
       }
     });
   });
@@ -883,16 +1011,35 @@ describe("V1 panel эндпоинты", (): void => {
   });
 
   describe("POST /v1/panel/server/restart", () => {
-    it("без body перезапускает сервер без пересборки", async () => {
-      const technicalService = app.get(TechnicalService);
+    function stubRestartPipeline(service: TechnicalService): {
+      signalled: () => boolean;
+      steps: () => string[];
+    } {
       let shutdownSignalled = false;
-      let buildRuns = 0;
-      technicalService.sendShutdownSignal = () => {
+      const stepCalls: string[] = [];
+      service.sendShutdownSignal = () => {
         shutdownSignalled = true;
       };
-      technicalService.buildBinary = async () => {
-        buildRuns += 1;
+      service.gitPull = async () => {
+        stepCalls.push("gitPull");
       };
+      service.installDependencies = async () => {
+        stepCalls.push("installDependencies");
+      };
+      service.runMigrations = async () => {
+        stepCalls.push("runMigrations");
+      };
+      service.buildBinary = async () => {
+        stepCalls.push("buildBinary");
+      };
+      return {
+        signalled: () => shutdownSignalled,
+        steps: () => stepCalls,
+      };
+    }
+
+    it("без body перезапускает сервер без пересборки", async () => {
+      const stub = stubRestartPipeline(app.get(TechnicalService));
 
       const res = await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
@@ -901,20 +1048,12 @@ describe("V1 panel эндпоинты", (): void => {
 
       expect(res.body.success).toBe(true);
       await Bun.sleep(500);
-      expect(shutdownSignalled).toBe(true);
-      expect(buildRuns).toBe(0);
+      expect(stub.signalled()).toBe(true);
+      expect(stub.steps()).toEqual([]);
     });
 
-    it("rebuild: true собирает бинарник и перезапускает", async () => {
-      const technicalService = app.get(TechnicalService);
-      let shutdownSignalled = false;
-      let buildRuns = 0;
-      technicalService.sendShutdownSignal = () => {
-        shutdownSignalled = true;
-      };
-      technicalService.buildBinary = async () => {
-        buildRuns += 1;
-      };
+    it("rebuild: true выполняет конвейер и перезапускает", async () => {
+      const stub = stubRestartPipeline(app.get(TechnicalService));
 
       await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
@@ -922,19 +1061,21 @@ describe("V1 panel эндпоинты", (): void => {
         .send({ rebuild: true })
         .expect(201);
 
-      expect(buildRuns).toBe(1);
+      expect(stub.steps()).toEqual([
+        "gitPull",
+        "installDependencies",
+        "runMigrations",
+        "buildBinary",
+      ]);
       await Bun.sleep(500);
-      expect(shutdownSignalled).toBe(true);
+      expect(stub.signalled()).toBe(true);
     });
 
-    it("rebuild: true при упавшей сборке возвращает 500 без перезапуска", async () => {
+    it("rebuild: true при упавшем шаге возвращает 500 без перезапуска", async () => {
       const technicalService = app.get(TechnicalService);
-      let shutdownSignalled = false;
-      technicalService.sendShutdownSignal = () => {
-        shutdownSignalled = true;
-      };
-      technicalService.buildBinary = async () => {
-        throw new InternalServerErrorException("Пересборка не удалась");
+      const stub = stubRestartPipeline(technicalService);
+      technicalService.gitPull = async () => {
+        throw new InternalServerErrorException("Пересборка не удалась на шаге git pull");
       };
 
       await supertest(app.getHttpServer())
@@ -944,7 +1085,8 @@ describe("V1 panel эндпоинты", (): void => {
         .expect(500);
 
       await Bun.sleep(500);
-      expect(shutdownSignalled).toBe(false);
+      expect(stub.signalled()).toBe(false);
+      expect(stub.steps()).toEqual([]);
     });
 
     it("возвращает 400 при не-булевом rebuild", async () => {

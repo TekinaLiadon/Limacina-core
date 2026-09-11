@@ -10,7 +10,7 @@
     "eslint/no-underscore-dangle": [
       "error",
       {
-        "allow": ["__test__addUser", "__test__deleteProfile"]
+        "allow": ["__test__addUser", "__test__deleteProfile", "__test__deleteUser"]
       }
     ],
     "typescript/consistent-type-imports": ["warn", { "prefer": "inline-type-imports" }],

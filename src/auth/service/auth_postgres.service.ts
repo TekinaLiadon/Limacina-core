@@ -13,7 +13,6 @@ interface UserRow extends Record<string, unknown> {
   uuid: string;
   username: string;
   password_hash: string;
-  skin_url: string | null;
   role: string;
   approved: boolean;
   banned: boolean;
@@ -41,20 +40,41 @@ export class AuthPostgresStore implements IAuthStore {
       uuid: row.uuid,
       username: row.username,
       passwordHash: row.password_hash,
-      skin: null,
       role: row.role,
       approved: row.approved,
       banned: row.banned,
     };
   }
 
-  async saveUser(user: StoredUser): Promise<void> {
-    const query = insertQuery("uuid", "username", "password_hash")
-      .from(TABLES.users)
-      .values(user.uuid, user.username, user.passwordHash)
-      .build();
+  async saveUser(user: StoredUser): Promise<boolean> {
+    const insertSql = `INSERT INTO ${TABLES.users} (uuid, username, password_hash)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (username) DO NOTHING
+      RETURNING uuid`;
+    const { rows } = await execute<{ uuid: string }>(insertSql, [
+      user.uuid,
+      user.username,
+      user.passwordHash,
+    ]);
+    if (rows.length > 0) return true;
 
-    await execute(query.sql, query.values);
+    const username = await this.findUsernameByUuid(user.uuid);
+    if (username !== user.username) return false;
+
+    const update = updateQuery()
+      .from(TABLES.users)
+      .set("password_hash", user.passwordHash)
+      .where("uuid = $1", user.uuid)
+      .build();
+    await execute(update.sql, update.values);
+    return true;
+  }
+
+  private async findUsernameByUuid(uuid: string): Promise<string | undefined> {
+    const query = selectQuery("username").from(TABLES.users).where("uuid = $1", uuid).build();
+
+    const { rows } = await execute<{ username: string }>(query.sql, query.values);
+    return rows[0]?.username;
   }
 
   async approveUser(uuid: string): Promise<void> {
@@ -72,25 +92,6 @@ export class AuthPostgresStore implements IAuthStore {
 
     const { rows } = await execute<UserRow>(query.sql, query.values);
     return rows.length > 0;
-  }
-
-  async updateSkin(uuid: string, skin: string): Promise<void> {
-    const existing = await this.findSkinByUuid(uuid);
-
-    if (existing) {
-      const query = updateQuery()
-        .from(TABLES.user_textures)
-        .set("skin_url", skin)
-        .where("uuid = $1", uuid)
-        .build();
-      await execute(query.sql, query.values);
-    } else {
-      const query = insertQuery("uuid", "skin_url")
-        .from(TABLES.user_textures)
-        .values(uuid, skin)
-        .build();
-      await execute(query.sql, query.values);
-    }
   }
 
   async updatePasswordHash(uuid: string, passwordHash: string, changedAt: Date): Promise<void> {
@@ -112,12 +113,6 @@ export class AuthPostgresStore implements IAuthStore {
       .build();
 
     await execute(query.sql, query.values);
-  }
-
-  private async findSkinByUuid(uuid: string): Promise<boolean> {
-    const query = selectQuery("1").from(TABLES.user_textures).where("uuid = $1", uuid).build();
-    const { rows } = await execute<UserRow>(query.sql, query.values);
-    return rows.length > 0;
   }
 
   async saveRefresh(jti: string, entry: RefreshEntry): Promise<void> {

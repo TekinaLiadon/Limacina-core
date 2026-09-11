@@ -4,6 +4,7 @@ export const validationMessages = {
   boolean: (field: string) => `${field}: ожидается true или false`,
   int: (field: string) => `${field}: ожидается целое число`,
   date: (field: string) => `${field}: ожидается дата в формате ISO 8601`,
+  dateYmd: (field: string) => `${field}: ожидается дата в формате YYYY-MM-DD`,
   array: (field: string) => `${field}: ожидается массив`,
   arrayItemString: (field: string) => `${field}: каждый элемент должен быть строкой`,
   notEmpty: (field: string) => `${field}: не должно быть пустым`,

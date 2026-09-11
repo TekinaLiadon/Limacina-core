@@ -2,6 +2,8 @@ import { Logger } from "@nestjs/common";
 
 const logger = new Logger("Fetch");
 
+const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
+
 export interface FetchOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
@@ -44,19 +46,27 @@ export async function limaFetch<T>(url: string, options?: FetchOptions): Promise
   try {
     const res = await fetch(url, init);
 
-    clearTimeout(timer);
+    const contentLength = Number(res.headers.get("content-length") ?? "");
+    if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
+      controller.abort();
+      const message = `Размер ответа слишком большой: ${contentLength} байт (максимум ${MAX_RESPONSE_BYTES})`;
+      if (!silent) logger.error({ url, method, size: contentLength }, message);
+      return { ok: false, status: 0, data: null, error: message };
+    }
 
     const contentType = res.headers.get("content-type") ?? "";
     let data: T | null = null;
 
-    if (contentType.includes("application/json")) {
-      data = (await res.json()) as T;
-    } else if (res.status !== 204) {
-      const text = await res.text();
-      if (text.length > 0) {
-        data = text as unknown as T;
+    const rawBody = await readBody(res);
+    if (rawBody !== null) {
+      if (contentType.includes("application/json")) {
+        data = JSON.parse(rawBody) as T;
+      } else if (rawBody.length > 0) {
+        data = rawBody as unknown as T;
       }
     }
+
+    clearTimeout(timer);
 
     if (!res.ok) {
       const error =
@@ -85,4 +95,44 @@ export async function limaFetch<T>(url: string, options?: FetchOptions): Promise
 
     return { ok: false, status: 0, data: null, error: message };
   }
+}
+
+async function readBody(res: Response): Promise<string | null> {
+  if (res.status === 204) return null;
+
+  const reader = res.body?.getReader();
+  if (!reader) {
+    return res.text();
+  }
+
+  const decoder = new TextDecoder();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      received += value.byteLength;
+      if (received > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error(
+          `Размер ответа слишком большой: ${received} байт (максимум ${MAX_RESPONSE_BYTES})`,
+        );
+      }
+      chunks.push(value);
+    }
+  }
+
+  return decoder.decode(concatChunks(chunks, received));
+}
+
+function concatChunks(chunks: Uint8Array[], totalLength: number): Uint8Array {
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
 }
