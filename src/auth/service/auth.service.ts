@@ -84,8 +84,8 @@ export class AuthService {
       throw new UnauthorizedException("Пользователь не найден");
     }
 
-    if (user.banned) {
-      throw new UnauthorizedException("Ваш аккаунт заблокирован");
+    if (user.banned || !user.approved) {
+      throw new UnauthorizedException("Нет доступа");
     }
 
     const validOldPassword = await Bun.password.verify(oldPassword, user.passwordHash);
@@ -160,22 +160,25 @@ export class AuthService {
 
   private async findActiveUserByUuid(uuid: string, username: string): Promise<StoredUser> {
     const user = await this.authStore.findByUsername(username);
-    if (!user || user.banned || user.uuid !== uuid) {
+    if (!user || user.uuid !== uuid) {
       throw new UnauthorizedException("Ваш аккаунт недоступен");
+    }
+    if (user.banned || !user.approved) {
+      throw new UnauthorizedException("Нет доступа");
     }
     return user;
   }
 
   private async createTokens(uuid: string, username: string, role: string): Promise<UserTokens> {
     const access_token = await this.jwtService.signAsync(
-      { sub: uuid, username, role },
+      { sub: uuid, username, role, typ: "access", jti: generateUuid() },
       {
         expiresIn: ACCESS_TOKEN_TTL_SECONDS,
       },
     );
     const jti = generateUuid();
     const refresh_token = await this.jwtService.signAsync(
-      { sub: uuid, username, jti, role },
+      { sub: uuid, username, jti, role, typ: "refresh" },
       {
         secret: this.config.JWT_REFRESH,
         expiresIn: REFRESH_TOKEN_TTL_SECONDS,

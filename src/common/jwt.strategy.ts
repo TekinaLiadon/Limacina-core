@@ -36,8 +36,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   async validate(payload: JwtAccessPayload): Promise<RequestUser> {
     const user = await this.authStore.findByUsername(payload.username);
-    if (!user || user.banned || user.uuid !== payload.sub) {
+    if (!user || user.uuid !== payload.sub) {
       throw new UnauthorizedException();
+    }
+
+    if (user.banned || !user.approved) {
+      throw new UnauthorizedException("Нет доступа");
     }
 
     if (issuedBeforePasswordChange(payload, user.passwordChangedAt)) {

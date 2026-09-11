@@ -236,6 +236,26 @@ describe("V1 common/auth эндпоинты", (): void => {
       await seedUser(authStore, "refreshuser", "refresh-user-uuid", "pass123");
     });
 
+    it("токены из регистрации не работают до одобрения", async () => {
+      const registerRes = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/registration")
+        .send({ username: "unapprovedreg", password: "pass123" })
+        .expect(201);
+
+      const res = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/refresh")
+        .send({ refresh_token: registerRes.body.tokens.refresh_token })
+        .expect(401);
+      expect(res.body.message).toBe("Нет доступа");
+
+      await authStore.approveUser(registerRes.body.uuid);
+
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/refresh")
+        .send({ refresh_token: registerRes.body.tokens.refresh_token })
+        .expect(201);
+    });
+
     it("успешный рефреш токена", async () => {
       const loginRes = await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
@@ -296,6 +316,25 @@ describe("V1 common/auth эндпоинты", (): void => {
         .post("/v1/common/auth/refresh")
         .send({ refresh_token })
         .expect(401);
+    });
+
+    it("ошибка 401 после снятия approve", async () => {
+      const user = await seedUser(authStore, "unapproveduser", "unapproved-user-uuid", "pass123");
+
+      const loginRes = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "unapproveduser", password: "pass123" })
+        .expect(201);
+
+      const { refresh_token } = loginRes.body.tokens;
+      await authStore.saveUser({ ...user, approved: false });
+
+      const res = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/refresh")
+        .send({ refresh_token })
+        .expect(401);
+
+      expect(res.body.message).toBe("Нет доступа");
     });
 
     it("ошибка 401 после удаления пользователя", async () => {
@@ -478,6 +517,75 @@ describe("V1 common/auth эндпоинты", (): void => {
         .set("Authorization", `Bearer ${token}`)
         .send({ old_password: "bannedpass1", new_password: "another789" })
         .expect(401);
+    });
+
+    it("401 для неодобренного пользователя", async () => {
+      await seedUser(authStore, "unapprovedpasschanger", "unapproved-passchanger-uuid", "pass123", {
+        approved: false,
+      });
+
+      const token = jwtService.sign({
+        sub: "unapproved-passchanger-uuid",
+        username: "unapprovedpasschanger",
+        role: "user",
+      });
+
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/common/auth/password")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ old_password: "pass123", new_password: "another789" })
+        .expect(401);
+
+      expect(res.body.message).toBe("Нет доступа");
+    });
+  });
+
+  describe("PATCH /v1/common/auth/password rate limit", () => {
+    beforeAll(async () => {
+      await seedUser(authStore, "bruteforcer", "bruteforcer-uuid", "realpass1");
+    });
+
+    const buildBruteforcerToken = (): string =>
+      jwtService.sign({ sub: "bruteforcer-uuid", username: "bruteforcer", role: "user" });
+
+    it("429 после превышения лимита попыток подбора старого пароля", async () => {
+      const token = buildBruteforcerToken();
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const res = await supertest(app.getHttpServer())
+          .patch("/v1/common/auth/password")
+          .set("Authorization", `Bearer ${token}`)
+          .send({ old_password: "x", new_password: "another789" });
+        expect(res.status).toBe(400);
+      }
+
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/common/auth/password")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ old_password: "wrongpass", new_password: "another789" })
+        .expect(429);
+
+      expect(res.body).toHaveProperty("statusCode", 429);
+    });
+
+    it("лимит не блокирует другие токены", async () => {
+      await seedUser(authStore, "bruteforcer2", "bruteforcer2-uuid", "realpass1");
+
+      const otherToken = jwtService.sign({
+        sub: "bruteforcer2-uuid",
+        username: "bruteforcer2",
+        role: "user",
+      });
+
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/auth/password")
+        .set("Authorization", `Bearer ${otherToken}`)
+        .send({ old_password: "wrongpass", new_password: "another789" })
+        .expect(401);
+
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "v1user", password: "pass123" })
+        .expect(201);
     });
   });
 });
