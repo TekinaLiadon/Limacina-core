@@ -116,4 +116,27 @@ describe("AppConfig", () => {
       expect(result.error.issues.some((issue) => issue.path.includes("BASE_URL"))).toBe(true);
     }
   });
+
+  it("принимает полный 40-символьный SHA в DEPLOY_PINNED_REVISION", () => {
+    const result = AppConfig.tryParseEnv({
+      ...baseEnv,
+      DEPLOY_PINNED_REVISION: "a".repeat(40),
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("отклоняет неполный SHA в DEPLOY_PINNED_REVISION", () => {
+    const result = AppConfig.tryParseEnv({
+      ...baseEnv,
+      DEPLOY_PINNED_REVISION: "abc123",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((issue) => issue.path.includes("DEPLOY_PINNED_REVISION")),
+      ).toBe(true);
+    }
+  });
 });

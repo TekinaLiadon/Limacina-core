@@ -32,9 +32,37 @@ export class RestartServerDto {
     example: true,
     required: false,
     default: false,
-    description: "Пересобрать бинарник (bun run build) перед перезапуском",
+    description:
+      "Запустить конвейер пересборки (git pull → bun install → миграции → bun run build) в фоне перед перезапуском",
   })
   @IsOptional()
   @IsBoolean({ message: validationMessages.boolean("rebuild") })
   rebuild?: boolean;
+}
+
+export class RebuildStatusDto {
+  @ApiProperty({ example: true, description: "Выполняется ли конвейер пересборки" })
+  inProgress!: boolean;
+
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    example: "Пересборка не удалась на шаге bun install, перезапуск отменён",
+    description: "Ошибка последнего запуска (null — последний запуск успешен или запусков не было)",
+  })
+  lastError!: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    description: "Ревизия git до pull последнего запуска (null — pull не выполнялся)",
+  })
+  revisionBefore!: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    description: "Ревизия git после pull последнего запуска (null — pull не выполнялся)",
+  })
+  revisionAfter!: string | null;
 }

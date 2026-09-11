@@ -63,6 +63,16 @@ function requestLine(id: string, url: string, remoteAddress: string, statusCode:
   });
 }
 
+async function waitForCondition(condition: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      throw new Error("waitFor: условие не выполнено за отведённое время");
+    }
+    await Bun.sleep(20);
+  }
+}
+
 @Injectable()
 class TestJwtStrategy extends PassportStrategy(Strategy) {
   constructor() {
@@ -1011,40 +1021,41 @@ describe("V1 panel эндпоинты", (): void => {
     });
   });
 
-  describe("POST /v1/panel/server/restart", () => {
-    function stubRestartPipeline(service: TechnicalService): {
-      signalled: () => boolean;
-      steps: () => string[];
-    } {
-      let shutdownSignalled = false;
-      const stepCalls: string[] = [];
-      service.sendShutdownSignal = () => {
-        shutdownSignalled = true;
-      };
-      service.gitPull = async () => {
-        stepCalls.push("gitPull");
-      };
-      service.installDependencies = async () => {
-        stepCalls.push("installDependencies");
-      };
-      service.runMigrations = async () => {
-        stepCalls.push("runMigrations");
-      };
-      service.buildBinary = async () => {
-        stepCalls.push("buildBinary");
-      };
-      return {
-        signalled: () => shutdownSignalled,
-        steps: () => stepCalls,
-      };
-    }
+  function stubRestartPipeline(service: TechnicalService): {
+    signalled: () => boolean;
+    steps: () => string[];
+  } {
+    let shutdownSignalled = false;
+    const stepCalls: string[] = [];
+    service.sendShutdownSignal = () => {
+      shutdownSignalled = true;
+    };
+    service.gitPull = async () => {
+      stepCalls.push("gitPull");
+      return { before: "rev-before", after: "rev-after" };
+    };
+    service.installDependencies = async () => {
+      stepCalls.push("installDependencies");
+    };
+    service.runMigrations = async () => {
+      stepCalls.push("runMigrations");
+    };
+    service.buildBinary = async () => {
+      stepCalls.push("buildBinary");
+    };
+    return {
+      signalled: () => shutdownSignalled,
+      steps: () => stepCalls,
+    };
+  }
 
+  describe("POST /v1/panel/server/restart", () => {
     it("без body перезапускает сервер без пересборки", async () => {
       const stub = stubRestartPipeline(app.get(TechnicalService));
 
       const res = await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .expect(201);
 
       expect(res.body.success).toBe(true);
@@ -1053,26 +1064,21 @@ describe("V1 panel эндпоинты", (): void => {
       expect(stub.steps()).toEqual([]);
     });
 
-    it("rebuild: true выполняет конвейер и перезапускает", async () => {
+    it("rebuild: true отвечает 202 и выполняет конвейер в фоне", async () => {
       const stub = stubRestartPipeline(app.get(TechnicalService));
 
-      await supertest(app.getHttpServer())
+      const res = await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .send({ rebuild: true })
-        .expect(201);
+        .expect(202);
 
-      expect(stub.steps()).toEqual([
-        "gitPull",
-        "installDependencies",
-        "runMigrations",
-        "buildBinary",
-      ]);
-      await Bun.sleep(500);
-      expect(stub.signalled()).toBe(true);
+      expect(res.body.success).toBe(true);
+      await waitForCondition(() => stub.steps().length === 4);
+      await waitForCondition(() => stub.signalled());
     });
 
-    it("rebuild: true при упавшем шаге возвращает 500 без перезапуска", async () => {
+    it("rebuild: true при упавшем шаге: 202, ошибка в статусе, без перезапуска", async () => {
       const technicalService = app.get(TechnicalService);
       const stub = stubRestartPipeline(technicalService);
       technicalService.gitPull = async () => {
@@ -1081,24 +1087,65 @@ describe("V1 panel эндпоинты", (): void => {
 
       await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .send({ rebuild: true })
-        .expect(500);
+        .expect(202);
 
+      await waitForCondition(() => technicalService.getRebuildStatus().lastError !== null);
       await Bun.sleep(500);
       expect(stub.signalled()).toBe(false);
       expect(stub.steps()).toEqual([]);
     });
 
+    it("возвращает 409 пока пересборка выполняется", async () => {
+      const technicalService = app.get(TechnicalService);
+      stubRestartPipeline(technicalService);
+      let release = (): void => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      technicalService.gitPull = async () => {
+        await gate;
+        return { before: "rev-before", after: "rev-after" };
+      };
+
+      try {
+        await supertest(app.getHttpServer())
+          .post("/v1/panel/server/restart")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .send({ rebuild: true })
+          .expect(202);
+        await waitForCondition(() => technicalService.getRebuildStatus().inProgress);
+
+        await supertest(app.getHttpServer())
+          .post("/v1/panel/server/restart")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .send({ rebuild: true })
+          .expect(409);
+      } finally {
+        release();
+      }
+
+      await waitForCondition(() => !technicalService.getRebuildStatus().inProgress);
+    });
+
     it("возвращает 400 при не-булевом rebuild", async () => {
       await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .send({ rebuild: "yes" })
         .expect(400);
     });
 
-    it("возвращает 403 для не-админа", async () => {
+    it("возвращает 403 для админа", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/panel/server/restart")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ rebuild: true })
+        .expect(403);
+    });
+
+    it("возвращает 403 для обычного пользователя", async () => {
       await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
         .set("Authorization", `Bearer ${userToken}`)
@@ -1107,6 +1154,66 @@ describe("V1 panel эндпоинты", (): void => {
 
     it("возвращает 401 без токена", async () => {
       await supertest(app.getHttpServer()).post("/v1/panel/server/restart").expect(401);
+    });
+  });
+
+  describe("GET /v1/panel/server/rebuild", () => {
+    it("отдаёт статус выполняющейся и завершённой пересборки", async () => {
+      const technicalService = app.get(TechnicalService);
+      const stub = stubRestartPipeline(technicalService);
+      let release = (): void => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      technicalService.gitPull = async () => {
+        await gate;
+        return { before: "rev-before", after: "rev-after" };
+      };
+
+      try {
+        await supertest(app.getHttpServer())
+          .post("/v1/panel/server/restart")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .send({ rebuild: true })
+          .expect(202);
+
+        await waitForCondition(() => technicalService.getRebuildStatus().inProgress);
+
+        const running = await supertest(app.getHttpServer())
+          .get("/v1/panel/server/rebuild")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+        expect(running.body.inProgress).toBe(true);
+      } finally {
+        release();
+      }
+
+      await waitForCondition(() => !technicalService.getRebuildStatus().inProgress);
+
+      const done = await supertest(app.getHttpServer())
+        .get("/v1/panel/server/rebuild")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+      expect(done.body.inProgress).toBe(false);
+      expect(done.body.lastError).toBeNull();
+      expect(done.body.revisionBefore).toBe("rev-before");
+      expect(done.body.revisionAfter).toBe("rev-after");
+      expect(stub.signalled()).toBe(true);
+    });
+
+    it("возвращает 403 для админа и обычного пользователя", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/server/rebuild")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(403);
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/server/rebuild")
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(403);
+    });
+
+    it("возвращает 401 без токена", async () => {
+      await supertest(app.getHttpServer()).get("/v1/panel/server/rebuild").expect(401);
     });
   });
 

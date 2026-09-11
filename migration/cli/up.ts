@@ -33,6 +33,8 @@ try {
       log({ text: `${file} migrated up`, type: "success" });
     } catch (error) {
       log({ text: `${file} migration failed`, type: "error", error });
+      await driver.close();
+      process.exit(1);
     }
   }
 

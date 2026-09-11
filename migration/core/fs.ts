@@ -13,5 +13,5 @@ export async function listFiles(dir: string, ext: string): Promise<string[]> {
 }
 
 export function resolveListDir(): string {
-  return path.join(import.meta.dir, "..", "list");
+  return process.env["MIGRATION_LIST_DIR"] ?? path.join(import.meta.dir, "..", "list");
 }

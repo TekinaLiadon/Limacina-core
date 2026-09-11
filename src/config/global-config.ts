@@ -22,6 +22,10 @@ const configSchema = z
     REDIS_URL: z.string().url().optional(),
     CACHE_PREFIX: z.string().optional(),
     MINECRAFT_HOST: z.string().optional(),
+    DEPLOY_PINNED_REVISION: z
+      .string()
+      .regex(/^[0-9a-f]{40}$/, "DEPLOY_PINNED_REVISION must be a full 40-char git SHA")
+      .optional(),
   })
   .refine((config) => config.NODE_ENV !== "production" || config.DB_DRIVER !== "map", {
     message: "DB_DRIVER=map is not allowed in production — use DB_DRIVER=postgres",
