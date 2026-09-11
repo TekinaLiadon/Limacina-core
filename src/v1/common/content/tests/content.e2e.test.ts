@@ -3,7 +3,6 @@ process.env["JWT_REFRESH"] = "test-refresh-secret-0123456789abcdef0123";
 process.env["NODE_ENV"] = "test";
 process.env["BASE_URL"] = "http://localhost:3005";
 process.env["DB_DRIVER"] = "map";
-
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 import { type INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
@@ -74,7 +73,11 @@ describe("V1 common/content эндпоинты", (): void => {
       controllers: [V1ContentController],
       providers: [
         UserContentService,
-        { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
+        {
+          provide: AppConfigToken,
+          useFactory: () =>
+            GlobalConfig.parseEnvOrExit({ ...process.env, MAX_SKINS_PER_USER: "5" }),
+        },
         TestJwtStrategy,
         {
           provide: UserContentMapStoreToken,
@@ -120,6 +123,27 @@ describe("V1 common/content эндпоинты", (): void => {
     uploadedFiles.push(filePath);
   };
 
+  const uploadOwnSkin = async (): Promise<{ id: number; url: string }> => {
+    const res = await supertest(app.getHttpServer())
+      .post("/v1/common/content/skins")
+      .set("Authorization", `Bearer ${userToken}`)
+      .attach("file", pngBuffer(110), "skin.png")
+      .expect(201);
+    trackUploadedFile(res.body.url);
+    return { id: res.body.id, url: res.body.url };
+  };
+
+  const deleteUserSkin = async (): Promise<void> => {
+    const store = app.get(UserContentMapStoreToken);
+    const items = await store.findByUserUuid(TEST_UUID, "skin");
+    for (const item of items) {
+      await supertest(app.getHttpServer())
+        .delete(`/v1/common/content/skins/${item.id}`)
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(200);
+    }
+  };
+
   describe("POST /v1/common/content/skins", () => {
     it("возвращает 401 без токена", async () => {
       await supertest(app.getHttpServer()).post("/v1/common/content/skins").expect(401);
@@ -163,6 +187,59 @@ describe("V1 common/content эндпоинты", (): void => {
 
       expect(Array.isArray(listRes.body)).toBe(true);
       expect(listRes.body.length).toBeGreaterThan(0);
+      for (const item of listRes.body) {
+        expect(typeof item.active).toBe("boolean");
+      }
+    });
+
+    it("отдаёт дефолтный скин с active=true, когда своих скинов нет", async () => {
+      const store = app.get(UserContentMapStoreToken);
+      const ownSkins = await store.findByUserUuid(TEST_UUID, "skin");
+      for (const skin of ownSkins) {
+        await supertest(app.getHttpServer())
+          .delete(`/v1/common/content/skins/${skin.id}`)
+          .set("Authorization", `Bearer ${userToken}`)
+          .expect(200);
+      }
+
+      const listRes = await supertest(app.getHttpServer())
+        .get(`/v1/common/content/skins/${TEST_UUID}`)
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(200);
+
+      expect(listRes.body).toEqual([
+        { id: null, url: "http://localhost:3005/textures/default.png", model: null, active: true },
+      ]);
+    });
+
+    it("при удалении активного скина активным становится последний оставшийся", async () => {
+      const first = await uploadOwnSkin();
+      const second = await uploadOwnSkin();
+      const third = await uploadOwnSkin();
+
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/content/skins/active")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ id: third.id })
+        .expect(200);
+
+      await supertest(app.getHttpServer())
+        .delete(`/v1/common/content/skins/${third.id}`)
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(200);
+
+      const store = app.get(UserContentMapStoreToken);
+      const remaining = await store.findByUserUuid(TEST_UUID, "skin");
+      const activeItems = remaining.filter((s: { active: boolean }) => s.active);
+      expect(activeItems.length).toBe(1);
+      expect(activeItems[0]?.id).toBe(second.id);
+
+      for (const skin of [first, second]) {
+        await supertest(app.getHttpServer())
+          .delete(`/v1/common/content/skins/${skin.id}`)
+          .set("Authorization", `Bearer ${userToken}`)
+          .expect(200);
+      }
     });
 
     it("возвращает model каждого скина (slim/classic/null)", async () => {
@@ -270,6 +347,155 @@ describe("V1 common/content эндпоинты", (): void => {
         .delete("/v1/common/content/skins/not-a-number")
         .set("Authorization", `Bearer ${userToken}`)
         .expect(400);
+    });
+
+    it("запрещает удалять дефолтный скин (файл и запись)", async () => {
+      const store = app.get(UserContentMapStoreToken);
+      const seededIds: number[] = [];
+      try {
+        const seeded = await store.save(
+          TEST_UUID,
+          "http://localhost:3005/textures/default.png",
+          "skin",
+        );
+        seededIds.push(seeded.id);
+
+        const res = await supertest(app.getHttpServer())
+          .delete(`/v1/common/content/skins/${seeded.id}`)
+          .set("Authorization", `Bearer ${userToken}`)
+          .expect(400);
+
+        expect(res.body.message).toBe("Нельзя удалить дефолтный скин");
+        expect(await store.findById(seeded.id, "skin")).toBeDefined();
+        expect(existsSync("public/textures/default.png")).toBe(true);
+
+        const seededRelative = await store.save(TEST_UUID, "/textures/default.png", "skin");
+        seededIds.push(seededRelative.id);
+
+        await supertest(app.getHttpServer())
+          .delete(`/v1/common/content/skins/${seededRelative.id}`)
+          .set("Authorization", `Bearer ${userToken}`)
+          .expect(400);
+
+        expect(existsSync("public/textures/default.png")).toBe(true);
+      } finally {
+        for (const id of seededIds) {
+          await store.deleteById(id, "skin");
+        }
+      }
+    });
+  });
+
+  describe("PATCH /v1/common/content/skins/active", () => {
+    const uploadSkin = async (token: string): Promise<{ id: number; url: string }> => {
+      const res = await supertest(app.getHttpServer())
+        .post("/v1/common/content/skins")
+        .set("Authorization", `Bearer ${token}`)
+        .attach("file", pngBuffer(120), "skin.png")
+        .expect(201);
+      trackUploadedFile(res.body.url);
+      return { id: res.body.id, url: res.body.url };
+    };
+
+    it("возвращает 401 без токена", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/content/skins/active")
+        .send({ id: 1 })
+        .expect(401);
+    });
+
+    it("меняет активный скин: один active, профиль синхронизируется", async () => {
+      await deleteUserSkin();
+      const first = await uploadSkin(userToken);
+      const second = await uploadSkin(userToken);
+
+      const activateFirst = await supertest(app.getHttpServer())
+        .patch("/v1/common/content/skins/active")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ id: first.id })
+        .expect(200);
+      expect(activateFirst.body.success).toBe(true);
+
+      const listAfterFirst = await supertest(app.getHttpServer())
+        .get(`/v1/common/content/skins/${TEST_UUID}`)
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(200);
+      const activeFirst = listAfterFirst.body.find((s: { id: number }) => s.id === first.id);
+      const inactiveSecond = listAfterFirst.body.find((s: { id: number }) => s.id === second.id);
+      expect(activeFirst?.active).toBe(true);
+      expect(inactiveSecond?.active).toBe(false);
+
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/content/skins/active")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ id: second.id })
+        .expect(200);
+
+      const listAfterSecond = await supertest(app.getHttpServer())
+        .get(`/v1/common/content/skins/${TEST_UUID}`)
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(200);
+      const firstAfter = listAfterSecond.body.find((s: { id: number }) => s.id === first.id);
+      const secondAfter = listAfterSecond.body.find((s: { id: number }) => s.id === second.id);
+      expect(firstAfter?.active).toBe(false);
+      expect(secondAfter?.active).toBe(true);
+
+      await supertest(app.getHttpServer())
+        .delete(`/v1/common/content/skins/${first.id}`)
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(200);
+      await supertest(app.getHttpServer())
+        .delete(`/v1/common/content/skins/${second.id}`)
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(200);
+    });
+
+    it("возвращает 403 при попытке активировать чужой скин", async () => {
+      const otherSkin = await uploadSkin(otherUserToken);
+
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/content/skins/active")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ id: otherSkin.id })
+        .expect(403);
+
+      await supertest(app.getHttpServer())
+        .delete(`/v1/common/content/skins/${otherSkin.id}`)
+        .set("Authorization", `Bearer ${otherUserToken}`)
+        .expect(200);
+    });
+
+    it("возвращает 404 если скин не найден", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/content/skins/active")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ id: 999999 })
+        .expect(404);
+    });
+
+    it("возвращает 400 при нецелом id", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/content/skins/active")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ id: "not-a-number" })
+        .expect(400);
+    });
+
+    it("возвращает 400 при выборе дефолтного скина", async () => {
+      const store = app.get(UserContentMapStoreToken);
+      const seeded = await store.save(
+        TEST_UUID,
+        "http://localhost:3005/textures/default.png",
+        "skin",
+      );
+
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/content/skins/active")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ id: seeded.id })
+        .expect(400);
+
+      await store.deleteById(seeded.id, "skin");
     });
   });
 
@@ -391,18 +617,7 @@ describe("V1 common/content эндпоинты", (): void => {
   });
 
   describe("Write-through в yggdrasil-профиль", () => {
-    const deleteUserSkin = async (): Promise<void> => {
-      const store = app.get(UserContentMapStoreToken);
-      const items = await store.findByUserUuid(TEST_UUID, "skin");
-      for (const item of items) {
-        await supertest(app.getHttpServer())
-          .delete(`/v1/common/content/skins/${item.id}`)
-          .set("Authorization", `Bearer ${userToken}`)
-          .expect(200);
-      }
-    };
-
-    it("загрузка скина обновляет skinUrl и skinModel профиля", async () => {
+    it("загрузка скина не меняет активный скин профиля", async () => {
       await deleteUserSkin();
       const profileStore = app.get(YggdrasilStoreToken);
       await profileStore.saveProfile({
@@ -422,6 +637,43 @@ describe("V1 common/content эндпоинты", (): void => {
 
       trackUploadedFile(uploadRes.body.url);
       uploadedSkinId = uploadRes.body.id;
+
+      const profile = await profileStore.findProfileByUuid(TEST_UUID);
+      expect(profile?.skinUrl).toBeNull();
+      expect(profile?.skinModel).toBeNull();
+
+      await supertest(app.getHttpServer())
+        .delete(`/v1/common/content/skins/${uploadedSkinId}`)
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(200);
+    });
+
+    it("смена активного скина обновляет skinUrl и skinModel профиля", async () => {
+      await deleteUserSkin();
+      const profileStore = app.get(YggdrasilStoreToken);
+      await profileStore.saveProfile({
+        uuid: TEST_UUID,
+        userId: TEST_UUID,
+        username: "v1user",
+        skinUrl: null,
+        skinModel: null,
+        capeUrl: null,
+      });
+
+      const uploadRes = await supertest(app.getHttpServer())
+        .post("/v1/common/content/skins?model=slim")
+        .set("Authorization", `Bearer ${userToken}`)
+        .attach("file", pngBuffer(81), "skin.png")
+        .expect(201);
+
+      trackUploadedFile(uploadRes.body.url);
+      uploadedSkinId = uploadRes.body.id;
+
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/content/skins/active")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ id: uploadedSkinId })
+        .expect(200);
 
       const profile = await profileStore.findProfileByUuid(TEST_UUID);
       expect(profile?.skinUrl).toBe(uploadRes.body.url);

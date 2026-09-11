@@ -91,9 +91,6 @@ export class UserContentService {
     await Bun.write(filePath, new Uint8Array(file));
     const item = await this.store.save(userUuid, url, type, skinModel);
 
-    if (type === "skin") {
-      await this.syncProfileTexture(userUuid, { skinUrl: url, skinModel: skinModel ?? null });
-    }
     if (type === "cape") {
       await this.syncProfileTexture(userUuid, { capeUrl: url });
     }
@@ -102,13 +99,34 @@ export class UserContentService {
     return { id: item.id, url };
   }
 
+  async setActiveSkin(ownerUuid: string, skinId: number): Promise<void> {
+    const item = await this.store.findById(skinId, "skin");
+    if (!item) throw new NotFoundException("Скин не найден");
+
+    if (item.userUuid !== ownerUuid) {
+      this.logger.warn({ ownerUuid, skinId, actualOwner: item.userUuid }, "Ownership mismatch");
+      throw new ForbiddenException("Нет прав на смену активного скина");
+    }
+
+    if (this.isDefaultSkin("skin", item.filePath)) {
+      throw new BadRequestException("Нельзя выбрать дефолтный скин как активный");
+    }
+
+    await this.store.updateActiveSkin(ownerUuid, skinId);
+    await this.syncProfileTexture(ownerUuid, {
+      skinUrl: item.filePath,
+      skinModel: item.skinModel ?? null,
+    });
+
+    this.logger.debug({ ownerUuid, skinId }, "Active skin changed");
+  }
+
   private async syncProfileAfterDelete(userUuid: string, type: ContentType): Promise<void> {
     if (type === "skin") {
-      const remaining = (await this.store.findByUserUuid(userUuid, "skin")).toSorted(
-        (a, b) => a.id - b.id,
-      );
-      const latest = remaining.at(-1);
+      const remaining = await this.store.findByUserUuid(userUuid, "skin");
+      const latest = remaining.toSorted((a, b) => a.id - b.id).at(-1);
       if (latest) {
+        await this.store.updateActiveSkin(userUuid, latest.id);
         await this.syncProfileTexture(userUuid, {
           skinUrl: latest.filePath,
           skinModel: latest.skinModel ?? null,
@@ -150,6 +168,11 @@ export class UserContentService {
     return "моделей";
   }
 
+  private isDefaultSkin(type: ContentType, filePath: string): boolean {
+    if (type !== "skin") return false;
+    return filePath === this.defaultSkinUrl || filePath === "/textures/default.png";
+  }
+
   private validatePngFile(file: Buffer, type: ContentType): void {
     const contentName = this.contentTypeName(type);
     if (file.length > MAX_SKIN_BYTES) {
@@ -168,14 +191,16 @@ export class UserContentService {
 
   async listSkins(
     userUuid: string,
-  ): Promise<Array<{ id: number | null; url: string; model?: string | null }>> {
+  ): Promise<Array<{ id: number | null; url: string; model?: string | null; active: boolean }>> {
     const items = await this.store.findByUserUuid(userUuid, "skin");
-    if (items.length === 0) return [{ id: null, url: this.defaultSkinUrl, model: null }];
+    if (items.length === 0)
+      return [{ id: null, url: this.defaultSkinUrl, model: null, active: true }];
 
     return items.map((item) => ({
       id: item.id,
       url: item.filePath,
       model: item.skinModel ?? null,
+      active: item.active,
     }));
   }
 
@@ -199,6 +224,11 @@ export class UserContentService {
     if (item.userUuid !== ownerUuid) {
       this.logger.warn({ ownerUuid, id, type, actualOwner: item.userUuid }, "Ownership mismatch");
       throw new ForbiddenException("Нет прав на удаление");
+    }
+
+    if (this.isDefaultSkin(type, item.filePath)) {
+      this.logger.warn({ ownerUuid, id }, "Попытка удаления дефолтного скина");
+      throw new BadRequestException("Нельзя удалить дефолтный скин");
     }
 
     await this.store.deleteById(id, type);

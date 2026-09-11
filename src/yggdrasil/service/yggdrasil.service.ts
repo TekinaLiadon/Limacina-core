@@ -495,11 +495,11 @@ export class YggdrasilService {
     let capeUrl = profile.capeUrl ?? null;
     if (!skinUrl) {
       const userSkins = await this.contentStore.findByUserUuid(profile.userId, "skin");
-      const latestSkin = userSkins.toSorted((a, b) => a.id - b.id).at(-1);
-      if (latestSkin) {
-        skinUrl = latestSkin.filePath;
-        const { skinModel: latestModel } = latestSkin;
-        if (latestModel) skinModel = latestModel;
+      const activeSkin = userSkins.find((skin) => skin.active);
+      if (activeSkin) {
+        skinUrl = activeSkin.filePath;
+        const { skinModel: activeModel } = activeSkin;
+        if (activeModel) skinModel = activeModel;
       }
     }
     if (!skinUrl) skinUrl = this.defaultSkinUrl;
