@@ -7,7 +7,7 @@ export interface StoredUser {
   role: string;
   approved: boolean;
   banned: boolean;
-  passwordChangedAt?: Date;
+  passwordChangedAt?: Date | undefined;
 }
 
 export interface RefreshEntry {

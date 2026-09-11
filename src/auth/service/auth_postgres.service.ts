@@ -16,6 +16,7 @@ interface UserRow extends Record<string, unknown> {
   role: string;
   approved: boolean;
   banned: boolean;
+  password_changed_at: Date | null;
 }
 
 interface RefreshRow extends Record<string, unknown> {
@@ -27,7 +28,15 @@ interface RefreshRow extends Record<string, unknown> {
 @Injectable()
 export class AuthPostgresStore implements IAuthStore {
   async findByUsername(username: string): Promise<StoredUser | undefined> {
-    const query = selectQuery("uuid", "username", "password_hash", "role", "approved", "banned")
+    const query = selectQuery(
+      "uuid",
+      "username",
+      "password_hash",
+      "role",
+      "approved",
+      "banned",
+      "password_changed_at",
+    )
       .from(TABLES.users)
       .where("username = $1", username)
       .build();
@@ -43,6 +52,7 @@ export class AuthPostgresStore implements IAuthStore {
       role: row.role,
       approved: row.approved,
       banned: row.banned,
+      passwordChangedAt: row.password_changed_at ?? undefined,
     };
   }
 

@@ -532,6 +532,7 @@ describe("V1 panel эндпоинты", (): void => {
       const stored = await authStore.findByUsername("user");
       expect(await Bun.password.verify("ownernewpass", stored!.passwordHash)).toBe(true);
       expect(await Bun.password.verify("useroldpass", stored!.passwordHash)).toBe(false);
+      expect(stored?.passwordChangedAt).toBeInstanceOf(Date);
       expect(await authStore.findRefresh("password-test-jti")).toBeUndefined();
     });
 
