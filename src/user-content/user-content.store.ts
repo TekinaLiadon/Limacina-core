@@ -1,5 +1,13 @@
 import { Injectable } from "@nestjs/common";
-import { selectQuery, insertQuery, deleteQuery, execute, TABLES } from "../utils/sql";
+import {
+  selectQuery,
+  insertQuery,
+  updateQuery,
+  deleteQuery,
+  execute,
+  executeInTransaction,
+  TABLES,
+} from "../utils/sql";
 
 export type ContentType = "skin" | "cape" | "model";
 
@@ -8,6 +16,7 @@ export interface UserContentItem {
   userUuid: string;
   filePath: string;
   skinModel?: string | null;
+  active: boolean;
 }
 
 export const UserContentMapStoreToken = Symbol("UserContentMapStore");
@@ -23,6 +32,7 @@ export interface IUserContentStore {
     skinModel?: string | null,
   ): Promise<UserContentItem>;
   deleteById(id: number, type: ContentType): Promise<UserContentItem | undefined>;
+  updateActiveSkin(userUuid: string, skinId: number): Promise<void>;
 }
 
 function getTable(type: ContentType): "user_skins" | "user_capes" | "user_models" {
@@ -36,6 +46,7 @@ interface ContentRow extends Record<string, unknown> {
   user_uuid: string;
   file_path: string;
   skin_model?: string | null;
+  active?: boolean;
 }
 
 function rowToItem(row: ContentRow): UserContentItem {
@@ -44,6 +55,7 @@ function rowToItem(row: ContentRow): UserContentItem {
     userUuid: row.user_uuid,
     filePath: row.file_path,
     skinModel: row.skin_model ?? null,
+    active: row.active ?? false,
   };
 }
 
@@ -63,7 +75,7 @@ export class UserContentPostgresStore implements IUserContentStore {
     const table = getTable(type);
     const columns =
       type === "skin"
-        ? ["id", "user_uuid", "file_path", "skin_model"]
+        ? ["id", "user_uuid", "file_path", "skin_model", "active"]
         : ["id", "user_uuid", "file_path"];
     const q = selectQuery(...columns)
       .from(table)
@@ -77,7 +89,7 @@ export class UserContentPostgresStore implements IUserContentStore {
     const table = getTable(type);
     const columns =
       type === "skin"
-        ? ["id", "user_uuid", "file_path", "skin_model"]
+        ? ["id", "user_uuid", "file_path", "skin_model", "active"]
         : ["id", "user_uuid", "file_path"];
     const q = selectQuery(...columns)
       .from(table)
@@ -96,10 +108,10 @@ export class UserContentPostgresStore implements IUserContentStore {
     const table = getTable(type);
     const q =
       type === "skin"
-        ? insertQuery("user_uuid", "file_path", "skin_model")
+        ? insertQuery("user_uuid", "file_path", "skin_model", "active")
             .from(table)
-            .values(userUuid, filePath, skinModel ?? null)
-            .returning("id", "user_uuid", "file_path", "skin_model")
+            .values(userUuid, filePath, skinModel ?? null, false)
+            .returning("id", "user_uuid", "file_path", "skin_model", "active")
             .build()
         : insertQuery("user_uuid", "file_path")
             .from(table)
@@ -108,6 +120,22 @@ export class UserContentPostgresStore implements IUserContentStore {
             .build();
     const { rows } = await execute<ContentRow>(q.sql, q.values);
     return rowToItem(rows[0]!);
+  }
+
+  async updateActiveSkin(userUuid: string, skinId: number): Promise<void> {
+    const deactivate = updateQuery()
+      .from(TABLES.user_skins)
+      .set("active", false)
+      .where("user_uuid = $1", userUuid)
+      .build();
+
+    const activate = updateQuery()
+      .from(TABLES.user_skins)
+      .set("active", true)
+      .where("id = $1", skinId)
+      .build();
+
+    await executeInTransaction([deactivate, activate]);
   }
 
   async deleteById(id: number, type: ContentType): Promise<UserContentItem | undefined> {
@@ -174,7 +202,13 @@ export class UserContentMapStore implements IUserContentStore {
     skinModel?: string | null,
   ): Promise<UserContentItem> {
     const id = this.getNextId(type);
-    const item: UserContentItem = { id, userUuid, filePath, skinModel: skinModel ?? null };
+    const item: UserContentItem = {
+      id,
+      userUuid,
+      filePath,
+      skinModel: skinModel ?? null,
+      active: type !== "skin",
+    };
     this.getStore(type).set(id, item);
     return item;
   }
@@ -185,5 +219,14 @@ export class UserContentMapStore implements IUserContentStore {
     if (!item) return undefined;
     store.delete(id);
     return item;
+  }
+
+  async updateActiveSkin(userUuid: string, skinId: number): Promise<void> {
+    const { skins } = this;
+    for (const item of skins.values()) {
+      if (item.userUuid !== userUuid) continue;
+      const updated: UserContentItem = { ...item, active: item.id === skinId };
+      skins.set(item.id, updated);
+    }
   }
 }

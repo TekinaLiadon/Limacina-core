@@ -38,6 +38,7 @@ const buildPngBase64 = (body: string): string => {
 describe("Yggdrasil эндпоинты", () => {
   let app: INestApplication;
   let store: YggdrasilMapStore;
+  let contentStore: UserContentMapStore;
   const uploadedTextures: string[] = [];
 
   beforeAll(async () => {
@@ -74,6 +75,7 @@ describe("Yggdrasil эндпоинты", () => {
     await app.getHttpAdapter().getInstance().ready();
 
     store = moduleFixture.get(YggdrasilStoreToken) as YggdrasilMapStore;
+    contentStore = moduleFixture.get(UserContentMapStoreToken) as UserContentMapStore;
     const passwordHash = await Bun.password.hash(TEST_PASSWORD);
     await store.__test__addUser(TEST_USERNAME, TEST_USER_UUID, passwordHash);
     await store.saveProfile({ uuid: TEST_UUID, userId: TEST_USER_UUID, username: TEST_USERNAME });
@@ -620,6 +622,68 @@ describe("Yggdrasil эндпоинты", () => {
         .expect(200);
 
       expect(res.body.id).toBe(TEST_UUID);
+    });
+
+    it("без skinUrl в профиле берёт активный скин из user_skins", async () => {
+      const first = await contentStore.save(TEST_USER_UUID, "/textures/first.png", "skin");
+      const second = await contentStore.save(TEST_USER_UUID, "/textures/second.png", "skin");
+
+      await contentStore.updateActiveSkin(TEST_USER_UUID, first.id);
+
+      await store.saveProfile({
+        uuid: TEST_UUID,
+        userId: TEST_USER_UUID,
+        username: TEST_USERNAME,
+        skinUrl: null,
+        skinModel: null,
+      });
+
+      const resActiveFirst = await supertest(app.getHttpServer())
+        .get(`/sessionserver/session/minecraft/profile/${TEST_UUID}`)
+        .expect(200);
+
+      const firstProp = resActiveFirst.body.properties.find(
+        (p: { name: string }) => p.name === "textures",
+      );
+      const firstDecoded = JSON.parse(Buffer.from(firstProp.value, "base64").toString());
+      expect(firstDecoded.textures.SKIN.url).toBe("/textures/first.png");
+
+      await contentStore.updateActiveSkin(TEST_USER_UUID, second.id);
+
+      const resActiveSecond = await supertest(app.getHttpServer())
+        .get(`/sessionserver/session/minecraft/profile/${TEST_UUID}`)
+        .expect(200);
+
+      const secondProp = resActiveSecond.body.properties.find(
+        (p: { name: string }) => p.name === "textures",
+      );
+      const secondDecoded = JSON.parse(Buffer.from(secondProp.value, "base64").toString());
+      expect(secondDecoded.textures.SKIN.url).toBe("/textures/second.png");
+
+      await contentStore.deleteById(first.id, "skin");
+      await contentStore.deleteById(second.id, "skin");
+    });
+
+    it("без skinUrl и без активного скина отдаёт дефолтный", async () => {
+      const inactive = await contentStore.save(TEST_USER_UUID, "/textures/inactive.png", "skin");
+
+      await store.saveProfile({
+        uuid: TEST_UUID,
+        userId: TEST_USER_UUID,
+        username: TEST_USERNAME,
+        skinUrl: null,
+        skinModel: null,
+      });
+
+      const res = await supertest(app.getHttpServer())
+        .get(`/sessionserver/session/minecraft/profile/${TEST_UUID}`)
+        .expect(200);
+
+      const texProp = res.body.properties.find((p: { name: string }) => p.name === "textures");
+      const decoded = JSON.parse(Buffer.from(texProp.value, "base64").toString());
+      expect(decoded.textures.SKIN.url).toContain("/textures/default.png");
+
+      await contentStore.deleteById(inactive.id, "skin");
     });
   });
 

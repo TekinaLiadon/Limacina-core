@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Delete,
   Get,
   Param,
   ParseEnumPipe,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -14,7 +16,11 @@ import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from "@ne
 import { UserContentService, type SkinModel } from "../../../user-content/user-content.service";
 import { SuccessResponseDto } from "../../../common/dto/dto";
 import { CurrentUser, type RequestUser } from "../../../common/current-user.decorator";
-import { UserContentItemDto, UserContentUploadResponseDto } from "../../../user-content/dto/dto";
+import {
+  SetActiveSkinDto,
+  UserContentItemDto,
+  UserContentUploadResponseDto,
+} from "../../../user-content/dto/dto";
 import type { FastifyRequest } from "fastify";
 
 @ApiTags("common_content")
@@ -52,6 +58,7 @@ export class V1ContentController {
   @ApiOperation({ summary: "Удалить скин по ID" })
   @ApiParam({ name: "id", description: "ID скина" })
   @ApiResponse({ status: 200, description: "Скин удалён", type: SuccessResponseDto })
+  @ApiResponse({ status: 400, description: "Нельзя удалить дефолтный скин" })
   @ApiResponse({ status: 403, description: "Нет прав на удаление" })
   @ApiResponse({ status: 404, description: "Скин не найден" })
   async deleteSkin(
@@ -59,6 +66,20 @@ export class V1ContentController {
     @Param("id", ParseIntPipe) id: number,
   ): Promise<SuccessResponseDto> {
     await this.userContentService.delete(user.uuid, id, "skin");
+    return { success: true };
+  }
+
+  @Patch("skins/active")
+  @ApiOperation({ summary: "Сменить активный скин" })
+  @ApiResponse({ status: 200, description: "Активный скин изменён", type: SuccessResponseDto })
+  @ApiResponse({ status: 400, description: "Нельзя выбрать дефолтный скин как активный" })
+  @ApiResponse({ status: 403, description: "Нет прав на смену активного скина" })
+  @ApiResponse({ status: 404, description: "Скин не найден" })
+  async setActiveSkin(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: SetActiveSkinDto,
+  ): Promise<SuccessResponseDto> {
+    await this.userContentService.setActiveSkin(user.uuid, dto.id);
     return { success: true };
   }
 
