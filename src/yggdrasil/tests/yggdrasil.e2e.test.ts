@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 import { createHmac } from "node:crypto";
 import { type INestApplication, ValidationPipe } from "@nestjs/common";
+import { JwtModule } from "@nestjs/jwt";
 import type { FastifyInstance } from "fastify";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { Test, TestingModule } from "@nestjs/testing";
@@ -30,6 +31,7 @@ import {
 import GlobalConfig from "../../config/global-config";
 import { AppConfigToken } from "../../config/app-config.provider";
 import { registerAuthRateLimit } from "../../common/auth-rate-limit";
+import { buildTestPng } from "../../utils/tests/test-png";
 
 const TEST_USERNAME = "testplayer";
 const TEST_UUID = "a1b2c3d4e5f67890abcdef1234567890";
@@ -51,7 +53,13 @@ const BIND_SECOND_PROFILE_NAME = "profilebinder2";
 const SIGNOUT_LIMIT_USERNAME = "signoutlimiter";
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const buildPngBase64 = (body: string): string => {
-  const bytes = new Uint8Array([...PNG_SIGNATURE, ...new Uint8Array(Buffer.from(body))]);
+  let hash = 5381;
+  for (const byte of Buffer.from(body)) hash = ((hash * 33) ^ byte) & 0xffffffff;
+  return Buffer.from(buildTestPng({ variant: hash & 0xff })).toString("base64");
+};
+
+const buildInvalidPngBase64 = (): string => {
+  const bytes = new Uint8Array([...PNG_SIGNATURE, ...new Uint8Array(Buffer.from("garbage"))]);
   return Buffer.from(bytes.buffer).toString("base64");
 };
 
@@ -87,7 +95,7 @@ describe("Yggdrasil эндпоинты", () => {
     ];
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [MemoryModule],
+      imports: [MemoryModule, JwtModule.register({})],
       controllers: [YggdrasilController],
       providers: [
         YggdrasilService,
@@ -325,6 +333,100 @@ describe("Yggdrasil эндпоинты", () => {
         .expect(200);
 
       expect(refreshRes.body.selectedProfile.id).toBe(BIND_SECOND_PROFILE_UUID);
+    });
+
+    it("selectedProfile чужого профиля — 400 Invalid profile (TASK-22)", async () => {
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: BIND_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
+
+      const res = await supertest(app.getHttpServer())
+        .post("/authserver/refresh")
+        .send({
+          accessToken: authRes.body.accessToken,
+          selectedProfile: { id: ATTACKER_UUID, name: ATTACKER_USERNAME, properties: [] },
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe("IllegalArgumentException");
+      expect(res.body.errorMessage).toBe("Invalid profile.");
+    });
+
+    it("selectedProfile несуществующего профиля — 400 Invalid profile (TASK-22)", async () => {
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: BIND_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
+
+      const res = await supertest(app.getHttpServer())
+        .post("/authserver/refresh")
+        .send({
+          accessToken: authRes.body.accessToken,
+          selectedProfile: { id: "00000000000000000000000000000000", name: "ghost" },
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe("IllegalArgumentException");
+      expect(res.body.errorMessage).toBe("Invalid profile.");
+    });
+
+    it("чужой selectedProfile — 400 и токен остаётся валидным (TASK-26)", async () => {
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: BIND_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
+
+      await supertest(app.getHttpServer())
+        .post("/authserver/refresh")
+        .send({
+          accessToken: authRes.body.accessToken,
+          selectedProfile: { id: ATTACKER_UUID, name: ATTACKER_USERNAME, properties: [] },
+        })
+        .expect(400);
+
+      await supertest(app.getHttpServer())
+        .post("/authserver/validate")
+        .send({ accessToken: authRes.body.accessToken })
+        .expect(204);
+    });
+
+    it("уже привязанный профиль + selectedProfile — 400 и токен остаётся валидным (TASK-26)", async () => {
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
+
+      await supertest(app.getHttpServer())
+        .post("/authserver/refresh")
+        .send({
+          accessToken: authRes.body.accessToken,
+          selectedProfile: { id: TEST_UUID, name: TEST_USERNAME, properties: [] },
+        })
+        .expect(400);
+
+      await supertest(app.getHttpServer())
+        .post("/authserver/validate")
+        .send({ accessToken: authRes.body.accessToken })
+        .expect(204);
+    });
+
+    it("параллельный refresh одного токена даёт ровно один успех (TASK-26)", async () => {
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
+
+      const [first, second] = await Promise.all([
+        supertest(app.getHttpServer())
+          .post("/authserver/refresh")
+          .send({ accessToken: authRes.body.accessToken }),
+        supertest(app.getHttpServer())
+          .post("/authserver/refresh")
+          .send({ accessToken: authRes.body.accessToken }),
+      ]);
+
+      expect([first.status, second.status].sort((a, b) => a - b)).toEqual([200, 403]);
     });
   });
 
@@ -633,6 +735,26 @@ describe("Yggdrasil эндпоинты", () => {
       const decoded = JSON.parse(Buffer.from(texProp.value, "base64").toString());
       expect(decoded.textures.SKIN.url).toBe("http://example.com/skin.png");
     });
+
+    it("без username — 400 (TASK-30)", async () => {
+      await supertest(app.getHttpServer())
+        .get("/sessionserver/session/minecraft/hasJoined?serverId=some-server")
+        .expect(400);
+    });
+
+    it("без serverId — 400 (TASK-30)", async () => {
+      await supertest(app.getHttpServer())
+        .get(`/sessionserver/session/minecraft/hasJoined?username=${TEST_USERNAME}`)
+        .expect(400);
+    });
+
+    it("serverId длиннее 64 — 400 (TASK-30)", async () => {
+      await supertest(app.getHttpServer())
+        .get(
+          `/sessionserver/session/minecraft/hasJoined?username=${TEST_USERNAME}&serverId=${"a".repeat(65)}`,
+        )
+        .expect(400);
+    });
   });
 
   describe("GET /sessionserver/session/minecraft/profile/:uuid", () => {
@@ -840,6 +962,43 @@ describe("Yggdrasil эндпоинты", () => {
 
       expect(res.body[0].properties).toEqual([]);
     });
+
+    it("тело не-массив — 400 (TASK-27)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .post("/api/profiles/minecraft")
+        .send({ name: TEST_USERNAME })
+        .expect(400);
+
+      expect(res.body.message).toContain("массив");
+    });
+
+    it("пустое имя в массиве — 400 (TASK-27)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .post("/api/profiles/minecraft")
+        .send([TEST_USERNAME, ""])
+        .expect(400);
+
+      expect(res.body.message).toContain("непустыми строками");
+    });
+
+    it("не-строковые элементы — 400 (TASK-27)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .post("/api/profiles/minecraft")
+        .send([TEST_USERNAME, 42])
+        .expect(400);
+
+      expect(res.body.message).toContain("непустыми строками");
+    });
+
+    it("больше 10 имён обрезается до лимита (TASK-27)", async () => {
+      const names = [...Array.from({ length: 10 }, (_, i) => `nobody-${i}`), TEST_USERNAME];
+      const res = await supertest(app.getHttpServer())
+        .post("/api/profiles/minecraft")
+        .send(names)
+        .expect(200);
+
+      expect(res.body).toEqual([]);
+    });
   });
 
   // ─── API: Texture Upload/Delete ───
@@ -881,13 +1040,76 @@ describe("Yggdrasil эндпоинты", () => {
       }
     });
 
-    it("возвращает 403 для несуществующего профиля", async () => {
+    it("модель classic валидируется и сохраняется", async () => {
+      const token = await authenticateAndBindProfile();
+      await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ file: buildPngBase64("model-classic"), model: "classic" })
+        .expect(204);
+
+      expect((await store.findProfileByUuid(TEST_UUID))!.skinModel).toBe("classic");
+      const url = (await store.findProfileByUuid(TEST_UUID))!.skinUrl!;
+      uploadedTextures.push(url.replace(/^https?:\/\/[^/]+\//, "public/"));
+    });
+
+    it("неизвестная модель — 400 Invalid model (TASK-23)", async () => {
+      const token = await authenticateAndBindProfile();
+
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ file: buildPngBase64("model-wide"), model: "wide" })
+        .expect(400);
+
+      expect(res.body.error).toBe("IllegalArgumentException");
+      expect(res.body.errorMessage).toContain("Invalid model");
+    });
+
+    it("битая структура PNG — 403 (TASK-24)", async () => {
+      const token = await authenticateAndBindProfile();
+
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ file: buildInvalidPngBase64() })
+        .expect(403);
+
+      expect(res.body.errorMessage).toContain("Invalid texture file");
+    });
+
+    it("возвращает 401 для несуществующего профиля без токена (TASK-28)", async () => {
       const base64 = buildPngBase64("fake-png-data");
 
       await supertest(app.getHttpServer())
         .put("/api/user/profile/00000000000000000000000000000000/skin")
         .send({ file: base64 })
+        .expect(401);
+    });
+
+    it("мусорный bearer для несуществующего профиля — 401 до поиска профиля (TASK-28)", async () => {
+      const base64 = buildPngBase64("fake-png-data");
+
+      const res = await supertest(app.getHttpServer())
+        .put("/api/user/profile/00000000000000000000000000000000/skin")
+        .set("Authorization", "Bearer garbage-token")
+        .send({ file: base64 })
+        .expect(401);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
+    });
+
+    it("валидный токен для несуществующего профиля — 403 Invalid token (TASK-28)", async () => {
+      const token = await authenticateUser(ATTACKER_USERNAME);
+      const base64 = buildPngBase64("fake-png-data");
+
+      const res = await supertest(app.getHttpServer())
+        .put("/api/user/profile/00000000000000000000000000000000/skin")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ file: base64 })
         .expect(403);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
     });
 
     it("возвращает 400 для неизвестного textureType", async () => {
@@ -976,10 +1198,10 @@ describe("Yggdrasil эндпоинты", () => {
       expect(profile!.capeUrl).toBeNull();
     });
 
-    it("возвращает 403 для несуществующего профиля", async () => {
+    it("возвращает 401 для несуществующего профиля без токена (TASK-28)", async () => {
       await supertest(app.getHttpServer())
         .delete("/api/user/profile/00000000000000000000000000000000/skin")
-        .expect(403);
+        .expect(401);
     });
 
     it("возвращает 400 для неизвестного textureType", async () => {
@@ -1248,6 +1470,7 @@ describe("Yggdrasil эндпоинты", () => {
       const jwt = encodeAccessJwt({
         sub: BANNED_USER_UUID,
         username: BANNED_USERNAME,
+        typ: "access",
         exp: Math.floor(Date.now() / 1000) + 3600,
       });
 
@@ -1261,6 +1484,79 @@ describe("Yggdrasil эндпоинты", () => {
         .expect(403);
 
       expect(res.body.errorMessage).toBe("Invalid token.");
+    });
+  });
+
+  // ─── JWT-ветка join и текстур (TASK-29) ───
+
+  describe("JWT-ветка join и текстур (TASK-29)", () => {
+    const accessJwt = (): string =>
+      encodeAccessJwt({
+        sub: TEST_USER_UUID,
+        username: TEST_USERNAME,
+        typ: "access",
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+    it("join с валидным access JWT записывает сессию", async () => {
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({ accessToken: accessJwt(), selectedProfile: TEST_UUID, serverId: "jwt-access-join" })
+        .expect(204);
+    });
+
+    it("join с JWT типа refresh — 403", async () => {
+      const jwt = encodeAccessJwt({
+        sub: TEST_USER_UUID,
+        username: TEST_USERNAME,
+        typ: "refresh",
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({ accessToken: jwt, selectedProfile: TEST_UUID, serverId: "jwt-refresh-join" })
+        .expect(403);
+    });
+
+    it("join с истёкшим JWT — 403", async () => {
+      const jwt = encodeAccessJwt({
+        sub: TEST_USER_UUID,
+        username: TEST_USERNAME,
+        typ: "access",
+        exp: Math.floor(Date.now() / 1000) - 10,
+      });
+
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({ accessToken: jwt, selectedProfile: TEST_UUID, serverId: "jwt-expired-join" })
+        .expect(403);
+    });
+
+    it("join с подделанной подписью — 403", async () => {
+      const jwt = accessJwt();
+      const tampered = `${jwt.slice(0, -2)}xx`;
+
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({ accessToken: tampered, selectedProfile: TEST_UUID, serverId: "jwt-tampered-join" })
+        .expect(403);
+    });
+
+    it("upload текстуры с access JWT — 204", async () => {
+      const base64 = buildPngBase64("jwt-texture-upload");
+
+      await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${accessJwt()}`)
+        .send({ file: base64 })
+        .expect(204);
+
+      const profile = await store.findProfileByUuid(TEST_UUID);
+      expect(profile!.skinUrl).toBeTruthy();
+      if (profile!.skinUrl) {
+        uploadedTextures.push(profile!.skinUrl.replace(/^https?:\/\/[^/]+\//, "public/"));
+      }
     });
   });
 

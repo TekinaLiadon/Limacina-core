@@ -2,9 +2,10 @@ import { ApiProperty } from "@nestjs/swagger";
 import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { validationMessages } from "../../common/validation-messages";
 export class InitOwnerDto {
-  @ApiProperty({ example: "owner", description: "Юзернейм владельца" })
+  @ApiProperty({ example: "owner", description: "Юзернейм владельца", maxLength: 64 })
   @IsString({ message: validationMessages.string("username") })
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })
+  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
   username!: string;
 
   @ApiProperty({

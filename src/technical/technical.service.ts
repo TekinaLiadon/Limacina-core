@@ -78,7 +78,7 @@ export async function runStep(
   timeoutMs: number,
   killGraceMs = KILL_GRACE_MS,
 ): Promise<void> {
-  let proc: Bun.Subprocess;
+  let proc: Bun.Subprocess<Bun.SpawnOptions.Writable, "pipe", "pipe">;
   try {
     proc = Bun.spawn(command, {
       cwd: process.cwd(),
@@ -170,6 +170,7 @@ export function buildInstallCommand(frozenLockfile: boolean): string[] {
 export class TechnicalService {
   private readonly logger = new Logger(TechnicalService.name);
   private rebuildInProgress = false;
+  private shutdownScheduled = false;
   private lastRebuildError: string | null = null;
   private lastRebuildRevisions: { before: string | null; after: string | null } = {
     before: null,
@@ -183,11 +184,17 @@ export class TechnicalService {
   ) {}
 
   async restartServer(actor: RequestUser): Promise<void> {
+    if (!this.scheduleShutdown()) {
+      this.logger.warn(
+        { actor: actor.username },
+        "Повторный запрос перезапуска отклонён: остановка уже запланирована",
+      );
+      throw new ConflictException("Перезапуск уже запланирован");
+    }
     this.logger.log(
       { actor: actor.username, actorRole: actor.role },
       "Перезапуск сервера по запросу администратора",
     );
-    this.scheduleShutdown();
   }
 
   startRebuild(actor: RequestUser): void {
@@ -250,7 +257,9 @@ export class TechnicalService {
     );
   }
 
-  scheduleShutdown(): void {
+  scheduleShutdown(): boolean {
+    if (this.shutdownScheduled) return false;
+    this.shutdownScheduled = true;
     setTimeout(() => {
       try {
         this.sendShutdownSignal();
@@ -258,8 +267,10 @@ export class TechnicalService {
         this.logger.error({ err: error }, "Сигнал остановки не отправлен, принудительный выход");
         process.exit(1);
       }
+      this.shutdownScheduled = false;
       this.rebuildInProgress = false;
     }, SHUTDOWN_DELAY_MS);
+    return true;
   }
 
   sendShutdownSignal(): void {

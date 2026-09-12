@@ -76,7 +76,10 @@ export async function limaFetch<T>(url: string, options?: FetchOptions): Promise
           : `HTTP ${res.status}`;
 
       if (!silent)
-        logger.warn({ url, method, status: res.status, error }, "HTTP-запрос завершился с ошибкой");
+        logger.error(
+          { url, method, status: res.status, error },
+          "HTTP-запрос завершился с ошибкой",
+        );
 
       return { ok: false, status: res.status, data, error };
     }

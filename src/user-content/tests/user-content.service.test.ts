@@ -3,6 +3,7 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 setupTestEnv();
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { buildTestPng } from "../../utils/tests/test-png";
 import { existsSync, unlinkSync } from "node:fs";
 import { BadRequestException } from "@nestjs/common";
 import { UserContentService } from "../user-content.service";
@@ -10,14 +11,7 @@ import { UserContentMapStore } from "../user-content.store";
 import GlobalConfig, { type AppConfigType } from "../../config/global-config";
 
 const MAX_SKINS = 2;
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-
-const pngBytes = (variant: number): Uint8Array => {
-  const buffer = Buffer.alloc(PNG_SIGNATURE.length + 8);
-  buffer.set(PNG_SIGNATURE);
-  buffer.writeUInt8(variant, PNG_SIGNATURE.length);
-  return new Uint8Array(buffer);
-};
+const pngBytes = (variant: number): Uint8Array => new Uint8Array(buildTestPng({ variant }));
 
 const sha256 = (bytes: Uint8Array): string =>
   new Bun.CryptoHasher("sha256").update(bytes).digest("hex");

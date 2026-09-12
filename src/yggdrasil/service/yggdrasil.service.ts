@@ -1,7 +1,8 @@
 import { HttpException, HttpStatus, Inject, Injectable, Logger } from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
 import { readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { sign, createHmac } from "node:crypto";
+import { sign } from "node:crypto";
 import type {
   ApiMetadataResponseDto,
   AuthenticateDto,
@@ -25,7 +26,10 @@ import {
   type YggdrasilProfile,
   type YggdrasilTextures,
   type YggdrasilUserCredentials,
+  type TokenEntry,
 } from "./yggdrasil_store";
+import type { JwtAccessPayload } from "../../common/jwt.strategy";
+import { MAX_PROFILE_NAMES } from "../batch-profiles.pipe";
 import {
   UserContentMapStoreToken,
   type IUserContentStore,
@@ -34,9 +38,14 @@ import { AppConfigToken } from "../../config/app-config.provider";
 import type { AppConfigType } from "../../config/global-config";
 import { resolveKeysDir } from "./keys-dir";
 import { sanitizeFilePrefix } from "../../utils/file-prefix";
+import { PngStructureError, validatePngStructure } from "../../utils/png";
 
-const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_TEXTURE_BYTES = 512 * 1024;
+const SKIN_MODEL_VALUES = ["classic", "slim"] as const;
+
+type TextureAccessPrincipal =
+  | { kind: "token"; entry: TokenEntry }
+  | { kind: "jwt"; payload: JwtAccessPayload };
 
 @Injectable()
 export class YggdrasilService {
@@ -52,6 +61,7 @@ export class YggdrasilService {
     @Inject(YggdrasilSessionStoreToken) private readonly sessionStore: IYggdrasilSessionStore,
     @Inject(UserContentMapStoreToken) private readonly contentStore: IUserContentStore,
     @Inject(AppConfigToken) private readonly config: AppConfigType,
+    private readonly jwtService: JwtService,
   ) {
     this.defaultSkinUrl = `${config.BASE_URL}/textures/default.png`;
     this.jwtSecret = config.JWT_ACCESS;
@@ -127,9 +137,11 @@ export class YggdrasilService {
     if (!entry || (dto.clientToken && dto.clientToken !== entry.clientToken))
       throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
 
-    await this.tokenStore.deleteToken(dto.accessToken);
+    const profiles = await this.store.findProfilesByUserId(entry.userId);
+
     let selectedProfile: string | undefined = entry.profileId ?? undefined;
     if (dto.selectedProfile) {
+      const requestedProfileId = dto.selectedProfile.id;
       if (entry.profileId)
         throw this.createError(
           { info: "***" },
@@ -138,20 +150,29 @@ export class YggdrasilService {
           "IllegalArgumentException",
           HttpStatus.BAD_REQUEST,
         );
-      selectedProfile = dto.selectedProfile.id;
+      if (!profiles.some((profile) => profile.uuid === requestedProfileId))
+        throw this.createError(
+          { info: "***" },
+          "invalid selectedProfile",
+          "Invalid profile.",
+          "IllegalArgumentException",
+          HttpStatus.BAD_REQUEST,
+        );
+      selectedProfile = requestedProfileId;
     }
 
-    const profiles = await this.store.findProfilesByUserId(entry.userId);
     const user = await this.findActiveUserByUsername(entry.username);
 
-    const response = await this.createAuthResponse(
+    const claimed = await this.tokenStore.claimToken(dto.accessToken);
+    if (!claimed) throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
+
+    return await this.createAuthResponse(
       user.uuid,
       profiles,
       dto.clientToken ?? entry.clientToken,
       dto.requestUser,
       selectedProfile,
     );
-    return response;
   }
 
   async validate(dto: ValidateDto): Promise<void> {
@@ -194,7 +215,7 @@ export class YggdrasilService {
     const entry = await this.tokenStore.findToken(dto.accessToken);
 
     if (!entry) {
-      const jwtPayload = this.verifyJwt(dto.accessToken);
+      const jwtPayload = await this.verifyAccessToken(dto.accessToken);
       if (!jwtPayload) {
         throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
       }
@@ -203,7 +224,6 @@ export class YggdrasilService {
       await this.sessionStore.saveSession(dto.serverId, {
         profileId: dto.selectedProfile,
         username: jwtPayload.username,
-        ip: "",
       });
       return;
     }
@@ -215,7 +235,6 @@ export class YggdrasilService {
     await this.sessionStore.saveSession(dto.serverId, {
       profileId: dto.selectedProfile,
       username: entry.username,
-      ip: "",
     });
   }
 
@@ -226,45 +245,25 @@ export class YggdrasilService {
     return user;
   }
 
-  private verifyJwt(token: string): { sub: string; username: string } | null {
+  private async verifyAccessToken(token: string): Promise<JwtAccessPayload | null> {
     try {
-      const parts = token.split(".");
-      if (parts.length !== 3) return null;
-
-      const [headerB64, payloadB64, sigB64] = parts;
-      if (!headerB64 || !payloadB64 || !sigB64) return null;
-      const expectedSig = createHmac("sha256", this.jwtSecret)
-        .update(`${headerB64}.${payloadB64}`)
-        .digest("base64url");
-
-      if (sigB64 !== expectedSig) return null;
-
-      const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString()) as {
-        sub: string;
-        username: string;
-        exp: number;
-      };
-
-      if (payload.exp * 1000 < Date.now()) return null;
-
-      return { sub: payload.sub, username: payload.username };
+      const payload = await this.jwtService.verifyAsync<JwtAccessPayload>(token, {
+        secret: this.jwtSecret,
+      });
+      if (payload.typ !== "access") return null;
+      return payload;
     } catch {
       return null;
     }
   }
 
-  async hasJoined(
-    username: string,
-    serverId: string,
-    ip?: string,
-  ): Promise<SessionProfileDto | null> {
+  async hasJoined(username: string, serverId: string): Promise<SessionProfileDto | null> {
     const session = await this.sessionStore.findSession(serverId);
     if (!session) return null;
 
     const profile = await this.store.findProfileByUuid(session.profileId);
     if (!profile || profile.username !== username) return null;
 
-    if (ip && session.ip && session.ip !== ip) return null;
     return {
       id: profile.uuid,
       name: profile.username,
@@ -285,8 +284,7 @@ export class YggdrasilService {
   }
 
   async batchProfiles(names: string[]): Promise<GameProfileDto[]> {
-    const maxProfiles = 10;
-    const limited = names.slice(0, maxProfiles);
+    const limited = names.slice(0, MAX_PROFILE_NAMES);
     const profiles = await this.store.findProfilesByUsernames(limited);
 
     return profiles.map((p) => ({
@@ -303,19 +301,33 @@ export class YggdrasilService {
     model?: string,
     authorization?: string,
   ): Promise<void> {
+    const principal = await this.authenticateTextureAccess(authorization);
     const normalizedUuid = uuid.replace(/-/g, "");
     const profile = await this.store.findProfileByUuid(normalizedUuid);
     if (!profile) throw this.createError({ info: uuid }, "invalid uuid", "Invalid token.");
 
-    await this.assertTextureOwnership(profile, authorization);
+    this.assertTextureOwnership(principal, profile);
     this.validateTextureFile(file);
+    const skinModel = this.normalizeSkinModel(model);
 
     const previousUrl = textureType === "skin" ? profile.skinUrl : profile.capeUrl;
     const url = await this.writeTexture(file, profile.username, normalizedUuid);
 
-    const textures: YggdrasilTextures = this.createTextures(textureType, model ?? null, url);
+    const textures: YggdrasilTextures = this.createTextures(textureType, skinModel, url);
     await this.store.updateProfileTexture(normalizedUuid, textures);
     await this.releaseTextureFile(previousUrl, textureType);
+  }
+
+  private normalizeSkinModel(model?: string): string | null {
+    if (model === undefined || model === null || model === "") return null;
+    if (SKIN_MODEL_VALUES.includes(model as (typeof SKIN_MODEL_VALUES)[number])) return model;
+    throw this.createError(
+      { info: model },
+      "invalid model",
+      "Invalid model. Supported values: classic, slim.",
+      "IllegalArgumentException",
+      HttpStatus.BAD_REQUEST,
+    );
   }
 
   private validateTextureFile(file: Buffer): void {
@@ -327,14 +339,14 @@ export class YggdrasilService {
       );
     }
 
-    const hasPngSignature =
-      file.length >= PNG_SIGNATURE.length &&
-      PNG_SIGNATURE.every((byte, index) => file[index] === byte);
-    if (!hasPngSignature) {
+    try {
+      validatePngStructure(file);
+    } catch (error) {
+      if (!(error instanceof PngStructureError)) throw error;
       throw this.createError(
-        { info: "no png signature" },
+        { info: error.message },
         "texture upload",
-        "Invalid texture file: PNG signature missing.",
+        `Invalid texture file: ${error.message}.`,
       );
     }
   }
@@ -355,11 +367,12 @@ export class YggdrasilService {
     textureType: "skin" | "cape",
     authorization?: string,
   ): Promise<void> {
+    const principal = await this.authenticateTextureAccess(authorization);
     const normalizedUuid = uuid.replace(/-/g, "");
     const profile = await this.store.findProfileByUuid(normalizedUuid);
     if (!profile) throw this.createError({ info: uuid }, "invalid uuid", "Invalid token.");
 
-    await this.assertTextureOwnership(profile, authorization);
+    this.assertTextureOwnership(principal, profile);
 
     const previousUrl = textureType === "skin" ? profile.skinUrl : profile.capeUrl;
     const textures: YggdrasilTextures = this.createTextures(textureType);
@@ -402,10 +415,7 @@ export class YggdrasilService {
     return hosted ? localPath : undefined;
   }
 
-  private async assertTextureOwnership(
-    profile: YggdrasilProfile,
-    authorization?: string,
-  ): Promise<void> {
+  private async authenticateTextureAccess(authorization?: string): Promise<TextureAccessPrincipal> {
     const accessToken = this.parseBearerToken(authorization);
     if (!accessToken)
       throw this.createError(
@@ -417,18 +427,10 @@ export class YggdrasilService {
       );
 
     const entry = await this.tokenStore.findToken(accessToken);
-    if (entry) {
-      if (entry.profileId !== profile.uuid)
-        throw this.createError(
-          { info: profile.uuid },
-          "texture access denied",
-          "Access token does not belong to this profile.",
-        );
-      return;
-    }
+    if (entry) return { kind: "token", entry };
 
-    const jwtPayload = this.verifyJwt(accessToken);
-    if (!jwtPayload)
+    const payload = await this.verifyAccessToken(accessToken);
+    if (!payload)
       throw this.createError(
         { info: "***" },
         "invalid token",
@@ -436,8 +438,18 @@ export class YggdrasilService {
         "ForbiddenOperationException",
         HttpStatus.UNAUTHORIZED,
       );
+    return { kind: "jwt", payload };
+  }
 
-    if (jwtPayload.sub !== profile.userId)
+  private assertTextureOwnership(
+    principal: TextureAccessPrincipal,
+    profile: YggdrasilProfile,
+  ): void {
+    const owns =
+      principal.kind === "token"
+        ? principal.entry.profileId === profile.uuid
+        : principal.payload.sub === profile.userId;
+    if (!owns)
       throw this.createError(
         { info: profile.uuid },
         "texture access denied",

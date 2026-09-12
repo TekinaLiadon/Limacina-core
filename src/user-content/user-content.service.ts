@@ -19,10 +19,10 @@ import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 import { YggdrasilStoreToken, type IYggdrasilStore } from "../yggdrasil/service/yggdrasil_store";
 import { sanitizeFilePrefix } from "../utils/file-prefix";
+import { PngStructureError, validatePngStructure } from "../utils/png";
 
 export const MAX_SKIN_BYTES = 512 * 1024;
 export const MAX_MODEL_BYTES = 256 * 1024;
-const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const SKIN_MODELS = ["classic", "slim"] as const;
 export type SkinModel = (typeof SKIN_MODELS)[number];
 
@@ -222,11 +222,11 @@ export class UserContentService {
       );
     }
 
-    const hasPngSignature =
-      file.length >= PNG_SIGNATURE.length &&
-      PNG_SIGNATURE.every((byte, index) => file[index] === byte);
-    if (!hasPngSignature) {
-      throw new BadRequestException(`Невалидный файл ${contentName}: отсутствует PNG-сигнатура`);
+    try {
+      validatePngStructure(file);
+    } catch (error) {
+      if (!(error instanceof PngStructureError)) throw error;
+      throw new BadRequestException(`Невалидный файл ${contentName}: ${error.message}`);
     }
   }
 

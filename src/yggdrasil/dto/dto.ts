@@ -153,6 +153,18 @@ export class JoinDto {
   serverId!: string;
 }
 
+export class HasJoinedQueryDto {
+  @ApiProperty({ example: "player1", maxLength: 64 })
+  @IsString({ message: validationMessages.string("username") })
+  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
+  username!: string;
+
+  @ApiProperty({ example: "server-id", maxLength: 64 })
+  @IsString({ message: validationMessages.string("serverId") })
+  @MaxLength(64, { message: validationMessages.maxLength("serverId", 64) })
+  serverId!: string;
+}
+
 export class YggUserDto {
   @ApiProperty({ example: "a1b2c3d4e5f67890abcdef1234567890" })
   id!: string;

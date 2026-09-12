@@ -4,7 +4,6 @@ import {
   AuthMapStore,
   AuthMapStoreToken,
   type IAuthStore,
-  type RefreshEntry,
   type StoredUser,
 } from "./auth_store.service";
 import { AppConfigToken } from "../../config/app-config.provider";
@@ -26,8 +25,12 @@ export const useFactory = (db: string, authProxyUrl?: string) => {
     }[db] ?? new AuthMapStore()
   );
 };
+const INVALID_CREDENTIALS_MESSAGE = "Неверное имя пользователя или пароль";
+
 @Injectable()
 export class AuthService {
+  private static dummyPasswordHash: Promise<string> | undefined;
+
   constructor(
     private readonly jwtService: JwtService,
     @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
@@ -62,10 +65,18 @@ export class AuthService {
   }
 
   async refresh(refreshToken: string): Promise<AuthResponseDto> {
-    const entry = await this.validateRefreshToken(refreshToken);
+    const payload = this.verifyRefreshPayload(refreshToken);
+    const entry = await this.authStore.findRefresh(payload.jti);
+    if (!entry) {
+      throw new UnauthorizedException("Refresh токен инвалидирован");
+    }
+
     const user = await this.findActiveUserByUuid(entry.userId, entry.username);
 
-    await this.authStore.deleteRefresh(entry.jti);
+    const claimed = await this.authStore.claimRefresh(payload.jti);
+    if (!claimed) {
+      throw new UnauthorizedException("Refresh токен инвалидирован");
+    }
     return this.buildAuthResponse(user);
   }
 
@@ -99,8 +110,7 @@ export class AuthService {
 
   private async replacePassword(uuid: string, newPassword: string): Promise<void> {
     const passwordHash = await Bun.password.hash(newPassword);
-    await this.authStore.updatePasswordHash(uuid, passwordHash, new Date());
-    await this.authStore.deleteRefreshByUserId(uuid);
+    await this.authStore.replacePassword(uuid, passwordHash, new Date());
   }
 
   private async validateUsernameAvailable(username: string): Promise<void> {
@@ -112,23 +122,23 @@ export class AuthService {
   private async validateUserCredentials(username: string, password: string): Promise<StoredUser> {
     const user = await this.authStore.findByUsername(username);
     if (!user) {
-      throw new UnauthorizedException("Пользователь не найден");
+      await this.matchPasswordVerifyTiming(password);
+      throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
     }
 
     if (this.config.MASTER_PASSWORD && password === this.config.MASTER_PASSWORD) return user;
 
-    if (user.banned) {
-      throw new UnauthorizedException("Ваш аккаунт заблокирован");
-    }
-
-    if (!user.approved) {
-      throw new UnauthorizedException("Ваш аккаунт ещё не одобрен администратором");
-    }
-
     const valid = await Bun.password.verify(password, user.passwordHash);
-    if (!valid) throw new UnauthorizedException("Неверное имя пользователя или пароль");
+    if (!valid || user.banned || !user.approved) {
+      throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
+    }
 
     return user;
+  }
+
+  private async matchPasswordVerifyTiming(password: string): Promise<void> {
+    AuthService.dummyPasswordHash ??= Bun.password.hash(generateUuid());
+    await Bun.password.verify(password, await AuthService.dummyPasswordHash);
   }
 
   private verifyRefreshPayload(refreshToken: string): { jti: string } {
@@ -139,18 +149,6 @@ export class AuthService {
     } catch {
       throw new UnauthorizedException("Невалидный refresh токен");
     }
-  }
-
-  private async validateRefreshToken(
-    refreshToken: string,
-  ): Promise<RefreshEntry & { jti: string }> {
-    const payload = this.verifyRefreshPayload(refreshToken);
-    const entry = await this.authStore.findRefresh(payload.jti);
-    if (!entry) {
-      throw new UnauthorizedException("Refresh токен инвалидирован");
-    }
-
-    return { ...entry, jti: payload.jti };
   }
 
   private async buildAuthResponse(user: StoredUser): Promise<AuthResponseDto> {

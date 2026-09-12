@@ -1,13 +1,12 @@
 import { describe } from "bun:test";
 import { AuthPostgresStore } from "../../auth/service/auth_postgres.service";
 import type { StoredUser } from "../../auth/service/auth_store.service";
-import { deleteQuery, execute, TABLES } from "../sql";
+import { deleteQuery, execute, updateQuery, TABLES } from "../sql";
 import { generateUuid } from "../uuid";
 
 const authStore = new AuthPostgresStore();
 
 const trackedUuids = new Set<string>();
-const trackedUsernames = new Set<string>();
 
 export interface PostgresUserSeed {
   usernamePrefix?: string;
@@ -51,23 +50,24 @@ export async function createPostgresUser(seed: PostgresUserSeed = {}): Promise<S
   return user;
 }
 
-export function trackPostgresUser(user: { uuid: string; username: string }): void {
+export function trackPostgresUser(user: { uuid: string }): void {
   trackedUuids.add(user.uuid);
-  trackedUsernames.add(user.username);
+}
+
+export async function markPostgresUserDeleted(uuid: string): Promise<void> {
+  const query = updateQuery()
+    .from(TABLES.users)
+    .set("deleted", true)
+    .set("deleted_at", new Date())
+    .where("uuid = $1", uuid)
+    .build();
+  await execute(query.sql, query.values);
 }
 
 export async function cleanupTrackedUsers(): Promise<void> {
-  for (const username of trackedUsernames) {
-    const deleted = deleteQuery()
-      .from(TABLES.deleted_users)
-      .where("username = $1", username)
-      .build();
-    await execute(deleted.sql, deleted.values);
-  }
   for (const uuid of trackedUuids) {
     const query = deleteQuery().from(TABLES.users).where("uuid = $1", uuid).build();
     await execute(query.sql, query.values);
   }
   trackedUuids.clear();
-  trackedUsernames.clear();
 }

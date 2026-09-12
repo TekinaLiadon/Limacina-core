@@ -1,6 +1,6 @@
 import { join, relative, resolve, isAbsolute } from "path";
 import { readFile } from "fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
@@ -43,34 +43,33 @@ async function bootstrap() {
   });
 
   const panelDir = join(process.cwd(), "public", "panel");
-  if (existsSync(panelDir)) {
-    await instance.register(
-      async (panelInstance: FastifyInstance) => {
-        await panelInstance.register(fastifyStatic, {
-          root: panelDir,
-          wildcard: true,
-          decorateReply: false,
-        });
+  mkdirSync(panelDir, { recursive: true });
+  await instance.register(
+    async (panelInstance: FastifyInstance) => {
+      await panelInstance.register(fastifyStatic, {
+        root: panelDir,
+        wildcard: true,
+        decorateReply: false,
+      });
 
-        const panelIndexPath = join(panelDir, "index.html");
-        panelInstance.setNotFoundHandler(async (request: FastifyRequest, reply: FastifyReply) => {
-          try {
-            await servePanelFallback(request, reply, panelDir, panelIndexPath);
-          } catch (error) {
-            logger.error({ err: error, url: request.url }, "Ошибка отдачи panel SPA");
-            if (!reply.raw.headersSent) {
-              reply.code(404).send("Not found");
-            }
+      const panelIndexPath = join(panelDir, "index.html");
+      panelInstance.setNotFoundHandler(async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          await servePanelFallback(request, reply, panelDir, panelIndexPath);
+        } catch (error) {
+          logger.error({ err: error, url: request.url }, "Ошибка отдачи panel SPA");
+          if (!reply.raw.headersSent) {
+            reply.code(404).send("Not found");
           }
-        });
-      },
-      { prefix: "/panel" },
-    );
-  }
+        }
+      });
+    },
+    { prefix: "/panel" },
+  );
 
   const corsOrigins = envConfig.CORS_ORIGINS;
   await instance.register(cors, {
-    origin: corsOrigins ?? true,
+    origin: corsOrigins ?? false,
     credentials: true,
     methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE"],
   });

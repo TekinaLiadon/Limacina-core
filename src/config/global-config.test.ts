@@ -139,4 +139,68 @@ describe("AppConfig", () => {
       ).toBe(true);
     }
   });
+
+  it("SECRETS добавляет значения, отсутствующие в env", () => {
+    const result = AppConfig.tryParseEnv({
+      ...baseEnv,
+      SECRETS: JSON.stringify({ MASTER_PASSWORD: "secret-pass" }),
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.MASTER_PASSWORD).toBe("secret-pass");
+    }
+  });
+
+  it("env перекрывает SECRETS при конфликте", () => {
+    const result = AppConfig.tryParseEnv({
+      ...baseEnv,
+      BASE_URL: "http://env-wins.test",
+      SECRETS: JSON.stringify({ BASE_URL: "http://secrets-win.test" }),
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.BASE_URL).toBe("http://env-wins.test");
+    }
+  });
+
+  it("отклоняет SECRETS, не являющийся JSON-объектом", () => {
+    for (const raw of ["[1,2]", '"str"', "42", "null", "{broken"]) {
+      const result = AppConfig.tryParseEnv({ ...baseEnv, SECRETS: raw });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.some((issue) => issue.path.includes("SECRETS"))).toBe(true);
+      }
+    }
+  });
+
+  it("CORS_ORIGINS тримит записи и режет до 100", () => {
+    const result = AppConfig.tryParseEnv({
+      ...baseEnv,
+      CORS_ORIGINS: ` http://a.test , http://b.test ,,${Array.from(
+        { length: 120 },
+        (_, i) => `http://host${i}.test`,
+      ).join(",")}`,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.CORS_ORIGINS).toEqual([
+        "http://a.test",
+        "http://b.test",
+        ...Array.from({ length: 98 }, (_, i) => `http://host${i}.test`),
+      ]);
+    }
+  });
+
+  it("пустая CORS_ORIGINS даёт undefined (дефолт)", () => {
+    const result = AppConfig.tryParseEnv({ ...baseEnv, CORS_ORIGINS: "" });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.CORS_ORIGINS).toBeUndefined();
+    }
+  });
 });

@@ -3,6 +3,7 @@ import {
   cleanupTrackedUsers,
   createPostgresUser,
   ensurePostgresSchema,
+  markPostgresUserDeleted,
   postgresDescribe,
 } from "../../../utils/tests/postgres-suite";
 import { YggdrasilPostgresStore } from "../yggdrasil_postgres";
@@ -153,5 +154,15 @@ postgresDescribe("YggdrasilPostgresStore (postgres)", () => {
     expect(foundPending?.approved).toBe(false);
 
     expect(await store.findUserByUsername("pgygg_missing")).toBeUndefined();
+  });
+
+  it("профили и креды удалённого пользователя недоступны", async () => {
+    const user = await createPostgresUser({ usernamePrefix: "pgygg", approved: true });
+    await markPostgresUserDeleted(user.uuid);
+
+    expect(await store.findProfileByUuid(user.uuid)).toBeUndefined();
+    expect(await store.findProfileByUsername(user.username)).toBeUndefined();
+    expect(await store.findProfilesByUsernames([user.username])).toEqual([]);
+    expect(await store.findUserByUsername(user.username)).toBeUndefined();
   });
 });

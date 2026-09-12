@@ -17,6 +17,11 @@ const LAUNCHER_DIR = "public/launcher";
 
 export const FILES_LIST_EXCLUDED_FOLDERS: string[] = ["mods"];
 
+export interface FilesPage {
+  files: Record<string, string>;
+  total: number;
+}
+
 const isExcludedFolder = (key: string): boolean =>
   FILES_LIST_EXCLUDED_FOLDERS.some((folder) => key.startsWith(`${folder}/`));
 
@@ -140,15 +145,33 @@ export class FilesService implements OnModuleDestroy {
     return hasher.digest("hex");
   }
 
-  getList(): Record<string, string> {
-    const entries = [...this.launcherHash.entries()].filter(([key]) => !isExcludedFolder(key));
-    return Object.fromEntries(entries);
+  getList(offset?: number, limit?: number): FilesPage {
+    return this.pageFiles(
+      [...this.launcherHash.entries()].filter(([key]) => !isExcludedFolder(key)),
+      offset,
+      limit,
+    );
   }
 
-  getExtraList(folder: string): Record<string, string> {
-    const prefix = `${folder}/`;
-    const entries = [...this.launcherHash.entries()].filter(([key]) => key.startsWith(prefix));
-    return Object.fromEntries(entries);
+  getExtraList(folder: string, offset?: number, limit?: number): FilesPage {
+    return this.pageFiles(
+      [...this.launcherHash.entries()].filter(([key]) => key.startsWith(`${folder}/`)),
+      offset,
+      limit,
+    );
+  }
+
+  private pageFiles(
+    entries: [string, string][],
+    offset: number | undefined,
+    limit: number | undefined,
+  ): FilesPage {
+    const sorted = entries.toSorted(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    );
+    const start = offset ?? 0;
+    const page = limit === undefined ? sorted.slice(start) : sorted.slice(start, start + limit);
+    return { files: Object.fromEntries(page), total: sorted.length };
   }
 
   async sendFile(fileInfo: FileDto, reply: FastifyReply): Promise<void> {

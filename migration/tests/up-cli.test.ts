@@ -79,6 +79,20 @@ function readRecorded(dbPath: string): string[] {
   }
 }
 
+function readChecksums(dbPath: string): Record<string, string | null> {
+  const db = new Database(dbPath);
+  try {
+    const rows = db
+      .query<{ migration: string; checksum: string | null }, []>(
+        "SELECT migration, checksum FROM migrations ORDER BY id ASC",
+      )
+      .all();
+    return Object.fromEntries(rows.map((row) => [row.migration, row.checksum]));
+  } finally {
+    db.close();
+  }
+}
+
 describe("migration/cli/up.ts", () => {
   it("останавливается на первой упавшей миграции и выходит с кодом 1", async () => {
     const { dbPath, listDir, env } = makeScenario();
@@ -150,6 +164,71 @@ describe("migration/cli/up.ts", () => {
       expect((await runCli("up.ts", env)).exitCode).toBe(0);
 
       expect(readRecorded(dbPath)).toEqual(["2_first.js", "1_new.js"]);
+    } finally {
+      rmSync(path.dirname(dbPath), { recursive: true, force: true });
+    }
+  });
+
+  it("записывает checksum применённой миграции и up.ts сам создаёт таблицу", async () => {
+    const { dbPath, listDir, env } = makeScenario();
+    try {
+      writeMigration(listDir, "1_only.js", "await sql`CREATE TABLE only_table (id INTEGER)`;");
+
+      expect((await runCli("up.ts", env)).exitCode).toBe(0);
+      expect(readTables(dbPath)).toContain("only_table");
+
+      const checksums = readChecksums(dbPath);
+      expect(checksums["1_only.js"]).toBeTruthy();
+      expect(checksums["1_only.js"]).toMatch(/^[0-9a-f]{64}$/);
+    } finally {
+      rmSync(path.dirname(dbPath), { recursive: true, force: true });
+    }
+  });
+
+  it("падает, если применённая миграция была изменена после применения", async () => {
+    const { dbPath, listDir, env } = makeScenario();
+    try {
+      writeMigration(listDir, "1_first.js", "await sql`CREATE TABLE first_table (id INTEGER)`;");
+      expect((await runCli("up.ts", env)).exitCode).toBe(0);
+
+      writeFileSync(path.join(listDir, "1_first.js"), "// tampered content\n");
+      const up = await runCli("up.ts", env);
+
+      expect(up.exitCode).toBe(1);
+      expect(up.output).toContain("1_first.js was modified after it was applied");
+      expect(readRecorded(dbPath)).toEqual(["1_first.js"]);
+    } finally {
+      rmSync(path.dirname(dbPath), { recursive: true, force: true });
+    }
+  });
+
+  it("повторный прогон не падает при неизменённых файлах", async () => {
+    const { dbPath, listDir, env } = makeScenario();
+    try {
+      writeMigration(listDir, "1_first.js", "await sql`CREATE TABLE first_table (id INTEGER)`;");
+      expect((await runCli("up.ts", env)).exitCode).toBe(0);
+      expect((await runCli("up.ts", env)).exitCode).toBe(0);
+      expect((await runCli("up.ts", env)).output).toContain("No pending migrations.");
+    } finally {
+      rmSync(path.dirname(dbPath), { recursive: true, force: true });
+    }
+  });
+
+  it("дозаполняет checksum у легаси-записей без checksum", async () => {
+    const { dbPath, listDir, env } = makeScenario();
+    try {
+      writeMigration(listDir, "1_first.js", "await sql`CREATE TABLE first_table (id INTEGER)`;");
+      expect((await runCli("up.ts", env)).exitCode).toBe(0);
+
+      const legacy = new Database(dbPath);
+      try {
+        legacy.query("UPDATE migrations SET checksum = NULL").run();
+      } finally {
+        legacy.close();
+      }
+
+      expect((await runCli("up.ts", env)).exitCode).toBe(0);
+      expect(readChecksums(dbPath)["1_first.js"]).toMatch(/^[0-9a-f]{64}$/);
     } finally {
       rmSync(path.dirname(dbPath), { recursive: true, force: true });
     }

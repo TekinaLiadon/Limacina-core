@@ -40,7 +40,7 @@ export class ZodEnvConfig<T extends z.ZodType<Record<string, unknown>>> {
       };
     }
 
-    const mergedEnv = { ...env, ...secrets.value };
+    const mergedEnv = { ...secrets.value, ...env };
     const result = this.schema.safeParse(mergedEnv);
     if (result.success) {
       return { success: true as const, data: result.data };

@@ -45,6 +45,7 @@ const PROFILE_COLUMNS = [
 function profileBase() {
   return selectQuery(...PROFILE_COLUMNS)
     .from(TABLES.users, "u")
+    .where("u.deleted = false")
     .join("LEFT JOIN", TABLES.user_textures, "t", "t.uuid = u.uuid");
 }
 
@@ -129,6 +130,7 @@ export class YggdrasilPostgresStore implements IYggdrasilStore {
     const q = selectQuery("uuid", "password_hash", "banned", "approved")
       .from(TABLES.users)
       .where("username = $1", username)
+      .where("deleted = false")
       .build();
     const { rows } = await execute<UserRow>(q.sql, q.values);
     const [row] = rows;

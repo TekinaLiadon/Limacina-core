@@ -28,7 +28,7 @@ interface VersionData {
 export interface LauncherPlatformFile {
   os: string;
   arch: string;
-  buffer: Buffer;
+  tempPath: string;
 }
 
 @Injectable()
@@ -36,25 +36,29 @@ export class LauncherUpdateService {
   private readonly logger = new Logger(LauncherUpdateService.name);
 
   update(version: string, files: LauncherPlatformFile[]): LauncherUpdateResponseDto {
-    const targetVersion = version || this.getCurrentVersion();
-    this.validateVersion(targetVersion);
-
-    for (const file of files) {
-      this.validatePlatform(file.os, file.arch);
-    }
-
-    const migration = this.stageNewZips(targetVersion, files);
     try {
-      this.commitVersion(targetVersion);
-    } catch (error) {
-      this.rollbackZips(migration, targetVersion);
-      throw error;
+      const targetVersion = version || this.getCurrentVersion();
+      this.validateVersion(targetVersion);
+
+      for (const file of files) {
+        this.validatePlatform(file.os, file.arch);
+      }
+
+      const migration = this.stageNewZips(targetVersion, files);
+      try {
+        this.commitVersion(targetVersion);
+      } catch (error) {
+        this.rollbackZips(migration, targetVersion);
+        throw error;
+      }
+
+      const updated = migration.map((step) => `${step.os}/${step.arch}`);
+      this.logger.log({ version: targetVersion, platforms: updated }, "Лаунчер обновлён");
+
+      return { version: targetVersion, updated };
+    } finally {
+      this.removeTempFiles(files);
     }
-
-    const updated = migration.map((step) => `${step.os}/${step.arch}`);
-    this.logger.log({ version: targetVersion, platforms: updated }, "Лаунчер обновлён");
-
-    return { version: targetVersion, updated };
   }
 
   private validateVersion(version: string): void {
@@ -86,15 +90,34 @@ export class LauncherUpdateService {
       const dir = join(PUBLIC_DIR, file.os, file.arch);
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-      const archived = this.archiveCurrentZips(dir, file.os, file.arch, version);
+      try {
+        const archived = this.archiveCurrentZips(dir, file.os, file.arch, version);
 
-      const filename = buildLauncherZipName(version, file.os, file.arch);
-      writeFileSync(join(dir, filename), new Uint8Array(file.buffer));
+        const filename = buildLauncherZipName(version, file.os, file.arch);
+        renameSync(file.tempPath, join(dir, filename));
 
-      migration.push({ os: file.os, arch: file.arch, archived, zipFile: filename });
+        migration.push({ os: file.os, arch: file.arch, archived, zipFile: filename });
+      } catch (error) {
+        this.rollbackZips(migration, version);
+        throw error;
+      }
     }
 
     return migration;
+  }
+
+  private removeTempFiles(files: LauncherPlatformFile[]): void {
+    for (const file of files) {
+      if (!existsSync(file.tempPath)) continue;
+      try {
+        unlinkSync(file.tempPath);
+      } catch (error) {
+        this.logger.error(
+          { err: error, path: file.tempPath },
+          "Не удалось удалить временный файл загрузки лаунчера",
+        );
+      }
+    }
   }
 
   private rollbackZips(

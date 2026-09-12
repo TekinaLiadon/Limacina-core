@@ -5,9 +5,11 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  type OnModuleInit,
 } from "@nestjs/common";
 import {
   AdminMapStoreToken,
+  DELETED_USERS_RETENTION_DAYS,
   type IAdminStore,
   type AdminUser,
   type UsersFilter,
@@ -15,17 +17,38 @@ import {
   type DeletedUsersPage,
 } from "./admin.store";
 import { AuthMapStoreToken, type IAuthStore } from "../auth/service/auth_store.service";
+import { CronService } from "../cron/cron.service";
 import { ROLE_WEIGHTS, isKnownRole } from "../common/roles";
 import type { RequestUser } from "../common/current-user.decorator";
 
+interface MutationStep {
+  run: () => Promise<void>;
+  undo: () => Promise<void>;
+}
+
 @Injectable()
-export class AdminService {
+export class AdminService implements OnModuleInit {
   private readonly logger = new Logger(AdminService.name);
 
   constructor(
     @Inject(AdminMapStoreToken) private readonly adminStore: IAdminStore,
     @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
+    private readonly cron: CronService,
   ) {}
+
+  onModuleInit(): void {
+    this.cron.registerTasks({
+      name: "purge-old-deleted-users",
+      run: () => this.purgeOldDeletedUsers(),
+    });
+  }
+
+  private async purgeOldDeletedUsers(): Promise<void> {
+    const purged = await this.adminStore.purgeOldDeletedUsers(DELETED_USERS_RETENTION_DAYS);
+    if (purged > 0) {
+      this.logger.log({ purged }, "Просроченные удалённые пользователи очищены");
+    }
+  }
 
   async searchUsers(filter: UsersFilter): Promise<UsersPage> {
     return this.adminStore.searchUsers(filter);
@@ -57,8 +80,16 @@ export class AdminService {
     }
 
     const user = await this.findMutableUser(username, actor, "setRole");
-    await this.adminStore.setRole(username, role);
-    await this.authStore.updateRole(user.uuid, role);
+    await this.applyWithRollback([
+      {
+        run: () => this.adminStore.setRole(username, role),
+        undo: () => this.adminStore.setRole(username, user.role),
+      },
+      {
+        run: () => this.authStore.updateRole(user.uuid, role),
+        undo: () => this.authStore.updateRole(user.uuid, user.role),
+      },
+    ]);
     this.logger.log(this.audit(actor, username, "setRole"), "Роль пользователя изменена");
   }
 
@@ -77,25 +108,56 @@ export class AdminService {
       throw new NotFoundException(`Пользователь ${username} не найден`);
     }
 
-    await this.adminStore.setRole(username, "owner");
-    await this.authStore.updateRole(user.uuid, "owner");
+    await this.applyWithRollback([
+      {
+        run: () => this.adminStore.setRole(username, "owner"),
+        undo: () => this.adminStore.setRole(username, user.role),
+      },
+      {
+        run: () => this.authStore.updateRole(user.uuid, "owner"),
+        undo: () => this.authStore.updateRole(user.uuid, user.role),
+      },
+    ]);
     this.logger.log(this.audit(actor, username, "setOwner"), "Пользователь назначен владельцем");
   }
 
   async setUserPassword(username: string, password: string, actor: RequestUser): Promise<void> {
     const user = await this.findMutableUser(username, actor, "setPassword");
     const passwordHash = await Bun.password.hash(password);
-    await this.authStore.updatePasswordHash(user.uuid, passwordHash, new Date());
-    await this.authStore.deleteRefreshByUserId(user.uuid);
+    await this.authStore.replacePassword(user.uuid, passwordHash, new Date());
     this.logger.log(this.audit(actor, username, "setPassword"), "Пароль пользователя изменён");
   }
 
   async deleteUser(username: string, actor: RequestUser): Promise<AdminUser> {
-    await this.findMutableUser(username, actor, "delete");
-    const deleted = await this.adminStore.deleteUser(username);
+    const user = await this.findMutableUser(username, actor, "delete");
+    let deleted: AdminUser | undefined;
+    await this.applyWithRollback([
+      {
+        run: async () => {
+          deleted = await this.adminStore.deleteUser(username);
+          if (!deleted) {
+            this.logger.error(
+              this.audit(actor, username, "delete"),
+              "Отказ: пользователь не найден",
+            );
+            throw new NotFoundException(`Пользователь ${username} не найден`);
+          }
+        },
+        undo: async () => {
+          await this.adminStore.restoreUser(username);
+        },
+      },
+      {
+        run: () => this.authStore.deleteUser(user.uuid),
+        undo: () => this.authStore.restoreUser(user.uuid),
+      },
+      {
+        run: () => this.authStore.deleteRefreshByUserId(user.uuid),
+        undo: async () => {},
+      },
+    ]);
     if (!deleted) {
-      this.logger.error(this.audit(actor, username, "delete"), "Отказ: пользователь не найден");
-      throw new NotFoundException(`Пользователь ${username} не найден`);
+      throw new Error("deleteUser не вернул запись после успешного шага удаления");
     }
     this.logger.log(this.audit(actor, username, "delete"), "Пользователь удалён");
     return deleted;
@@ -130,12 +192,42 @@ export class AdminService {
       throw new ConflictException(`Юзернейм ${username} уже занят живым пользователем`);
     }
 
-    await this.adminStore.restoreUser(username);
+    await this.applyWithRollback([
+      {
+        run: () => this.adminStore.restoreUser(username),
+        undo: async () => {
+          await this.adminStore.deleteUser(username);
+        },
+      },
+      {
+        run: () => this.authStore.restoreUser(deleted.uuid),
+        undo: () => this.authStore.deleteUser(deleted.uuid),
+      },
+    ]);
     this.logger.log(this.audit(actor, username, "restore"), "Пользователь восстановлен");
   }
 
   private audit(actor: RequestUser, target: string, action: string): Record<string, string> {
     return { actor: actor.username, actorRole: actor.role, target, action };
+  }
+
+  private async applyWithRollback(steps: MutationStep[]): Promise<void> {
+    const applied: MutationStep[] = [];
+    try {
+      for (const step of steps) {
+        await step.run();
+        applied.push(step);
+      }
+    } catch (error) {
+      for (const step of applied.reverse()) {
+        try {
+          await step.undo();
+        } catch (undoError) {
+          this.logger.error({ err: undoError }, "Откат шага мутации пользователя не выполнен");
+        }
+      }
+      throw error;
+    }
   }
 
   private canAffectRole(callerRole: string, targetRole: string): boolean {

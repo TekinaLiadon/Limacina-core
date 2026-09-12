@@ -12,6 +12,12 @@ export async function listFiles(dir: string, ext: string): Promise<string[]> {
   return matchedFiles.sort().reverse();
 }
 
+export async function checksumFile(filePath: string): Promise<string> {
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(await Bun.file(filePath).arrayBuffer());
+  return hasher.digest("hex");
+}
+
 export function resolveListDir(): string {
   return process.env["MIGRATION_LIST_DIR"] ?? path.join(import.meta.dir, "..", "list");
 }

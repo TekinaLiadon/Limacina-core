@@ -33,10 +33,10 @@ export class AuthProxyStore implements IAuthStore {
     return (await this.fetchUpstreamUser(username)) !== undefined;
   }
 
-  async updatePasswordHash(uuid: string, _passwordHash: string, _changedAt: Date): Promise<void> {
+  async replacePassword(uuid: string, _passwordHash: string, _changedAt: Date): Promise<void> {
     this.logger.warn(
       { uuid, upstreamUrl: this.upstreamUrl },
-      "updatePasswordHash в прокси-режиме не реализован",
+      "replacePassword в прокси-режиме не реализован",
     );
   }
 
@@ -47,11 +47,29 @@ export class AuthProxyStore implements IAuthStore {
     );
   }
 
+  async deleteUser(uuid: string): Promise<void> {
+    this.logger.warn(
+      { uuid, upstreamUrl: this.upstreamUrl },
+      "deleteUser в прокси-режиме не реализован",
+    );
+  }
+
+  async restoreUser(uuid: string): Promise<void> {
+    this.logger.warn(
+      { uuid, upstreamUrl: this.upstreamUrl },
+      "restoreUser в прокси-режиме не реализован",
+    );
+  }
+
   async saveRefresh(jti: string, _entry: RefreshEntry): Promise<void> {
     this.logger.warn(
       { jti, upstreamUrl: this.upstreamUrl },
       "saveRefresh в прокси-режиме не реализован",
     );
+  }
+
+  async claimRefresh(_jti: string): Promise<RefreshEntry | undefined> {
+    return undefined;
   }
 
   async findRefresh(_jti: string): Promise<RefreshEntry | undefined> {

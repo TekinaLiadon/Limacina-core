@@ -49,9 +49,9 @@ describe("LogsService — фильтрация логов запросов", ():
     rmSync(TEST_LOG_FILE, { force: true });
   });
 
-  it("не отдаёт строки без кода статуса", () => {
+  it("не отдаёт строки без кода статуса", async () => {
     const service = new LogsService();
-    const { lines, total } = service.getLines(TEST_DATE, 0, 100);
+    const { lines, total } = await service.getLines(TEST_DATE, 0, 100);
 
     expect(total).toBe(3);
     expect(lines).toEqual([loginLine, registrationLine, panelLogsLine]);
@@ -60,37 +60,47 @@ describe("LogsService — фильтрация логов запросов", ():
     }
   });
 
-  it("фильтрует по статус-коду", () => {
+  it("фильтрует по статус-коду", async () => {
     const service = new LogsService();
-    const { lines, total } = service.getLines(TEST_DATE, 0, 100, { statusCode: 400 });
+    const { lines, total } = await service.getLines(TEST_DATE, 0, 100, { statusCode: 400 });
 
     expect(total).toBe(1);
     expect(lines).toEqual([registrationLine]);
   });
 
-  it("фильтрует по url как по подстроке без учёта регистра", () => {
-    const byPath = new LogsService().getLines(TEST_DATE, 0, 100, { url: "/common/auth" });
+  it("фильтрует по url как по подстроке без учёта регистра", async () => {
+    const byPath = await new LogsService().getLines(TEST_DATE, 0, 100, { url: "/common/auth" });
     expect(byPath.total).toBe(2);
     expect(byPath.lines).toEqual([loginLine, registrationLine]);
 
-    const caseInsensitive = new LogsService().getLines(TEST_DATE, 0, 100, { url: "REGISTRATION" });
+    const caseInsensitive = await new LogsService().getLines(TEST_DATE, 0, 100, {
+      url: "REGISTRATION",
+    });
     expect(caseInsensitive.total).toBe(1);
     expect(caseInsensitive.lines).toEqual([registrationLine]);
   });
 
-  it("фильтрует по ip как по подстроке", () => {
-    const exact = new LogsService().getLines(TEST_DATE, 0, 100, { ip: "127.0.0.1" });
+  it("фильтрует по ip как по подстроке", async () => {
+    const exact = await new LogsService().getLines(TEST_DATE, 0, 100, { ip: "127.0.0.1" });
     expect(exact.total).toBe(1);
     expect(exact.lines).toEqual([loginLine]);
 
-    const subnet = new LogsService().getLines(TEST_DATE, 0, 100, { ip: "192.168." });
+    const subnet = await new LogsService().getLines(TEST_DATE, 0, 100, { ip: "192.168." });
     expect(subnet.total).toBe(1);
     expect(subnet.lines).toEqual([registrationLine]);
   });
 
-  it("комбинирует фильтры", () => {
+  it("возвращает пустой результат для отсутствующего файла", async () => {
     const service = new LogsService();
-    const { lines, total } = service.getLines(TEST_DATE, 0, 100, {
+    const { lines, total } = await service.getLines("2098-01-01", 0, 100);
+
+    expect(total).toBe(0);
+    expect(lines).toEqual([]);
+  });
+
+  it("комбинирует фильтры", async () => {
+    const service = new LogsService();
+    const { lines, total } = await service.getLines(TEST_DATE, 0, 100, {
       statusCode: 200,
       ip: "127.0.0.1",
       url: "login",
@@ -100,17 +110,17 @@ describe("LogsService — фильтрация логов запросов", ():
     expect(lines).toEqual([loginLine]);
   });
 
-  it("возвращает пустой результат, если ничего не совпало", () => {
+  it("возвращает пустой результат, если ничего не совпало", async () => {
     const service = new LogsService();
-    const { lines, total } = service.getLines(TEST_DATE, 0, 100, { statusCode: 404 });
+    const { lines, total } = await service.getLines(TEST_DATE, 0, 100, { statusCode: 404 });
 
     expect(total).toBe(0);
     expect(lines).toEqual([]);
   });
 
-  it("пагинует после фильтрации", () => {
+  it("пагинует после фильтрации", async () => {
     const service = new LogsService();
-    const { lines, total } = service.getLines(TEST_DATE, 1, 1, { url: "/common/auth" });
+    const { lines, total } = await service.getLines(TEST_DATE, 1, 1, { url: "/common/auth" });
 
     expect(total).toBe(2);
     expect(lines).toEqual([registrationLine]);

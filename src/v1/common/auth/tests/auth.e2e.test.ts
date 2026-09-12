@@ -148,6 +148,20 @@ describe("V1 common/auth эндпоинты", (): void => {
       expect(after?.passwordHash).toBe(before?.passwordHash);
     });
 
+    it("регистрация ника, отличающегося только регистром, даёт 409", async () => {
+      const registered = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/registration")
+        .send({ username: "cireguser", password: "pass123" })
+        .expect(201);
+
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/registration")
+        .send({ username: "CIRegUser", password: "pass123" })
+        .expect(409);
+
+      await authStore.__test__deleteUser(registered.body.username);
+    });
+
     it("параллельная регистрация одного юзернейма: один 201, второй 409", async () => {
       const [first, second] = await Promise.all([
         supertest(app.getHttpServer())
@@ -234,11 +248,59 @@ describe("V1 common/auth эндпоинты", (): void => {
         await authStore.saveUser({ ...user, banned: false });
       }
     });
+
+    it("не раскрывает отсутствие пользователя: сообщение как при неверном пароле (TASK-10)", async () => {
+      const wrongPassword = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "v1user", password: "wrongpass" })
+        .expect(401);
+
+      const ghost = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "ghostuser", password: "wrongpass" })
+        .expect(401);
+
+      expect(ghost.body.message).toBe("Неверное имя пользователя или пароль");
+      expect(ghost.body.message).toBe(wrongPassword.body.message);
+    });
+
+    it("не раскрывает бан: сообщение как при неверном пароле (TASK-10)", async () => {
+      const user = await seedUser(authStore, "bannedlogin", "banned-login-uuid", "pass123");
+      try {
+        await authStore.saveUser({ ...user, banned: true });
+
+        const res = await supertest(app.getHttpServer())
+          .post("/v1/common/auth/login")
+          .send({ username: "bannedlogin", password: "pass123" })
+          .expect(401);
+
+        expect(res.body.message).toBe("Неверное имя пользователя или пароль");
+      } finally {
+        await authStore.saveUser({ ...user, banned: false });
+      }
+    });
+
+    it("не раскрывает неодобрение: сообщение как при неверном пароле (TASK-10)", async () => {
+      const user = await seedUser(authStore, "unapprovedlogin", "unapproved-login-uuid", "pass123");
+      try {
+        await authStore.saveUser({ ...user, approved: false });
+
+        const res = await supertest(app.getHttpServer())
+          .post("/v1/common/auth/login")
+          .send({ username: "unapprovedlogin", password: "pass123" })
+          .expect(401);
+
+        expect(res.body.message).toBe("Неверное имя пользователя или пароль");
+      } finally {
+        await authStore.saveUser({ ...user, approved: true });
+      }
+    });
   });
 
   describe("POST /v1/common/auth/refresh", () => {
     beforeAll(async () => {
       await seedUser(authStore, "refreshuser", "refresh-user-uuid", "pass123");
+      await seedUser(authStore, "refresheracer", "refresh-racer-uuid", "pass123");
     });
 
     it("токены из регистрации не работают до одобрения", async () => {
@@ -302,6 +364,28 @@ describe("V1 common/auth эндпоинты", (): void => {
         .post("/v1/common/auth/refresh")
         .send({ refresh_token: "invalid-token" })
         .expect(401);
+    });
+
+    it("параллельный refresh одного токена: ровно один 201 (TASK-9)", async () => {
+      const loginRes = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "refresheracer", password: "pass123" })
+        .expect(201);
+
+      const { refresh_token } = loginRes.body.tokens;
+
+      const [first, second] = await Promise.all([
+        supertest(app.getHttpServer()).post("/v1/common/auth/refresh").send({ refresh_token }),
+        supertest(app.getHttpServer()).post("/v1/common/auth/refresh").send({ refresh_token }),
+      ]);
+
+      expect([first.status, second.status].sort()).toEqual([201, 401]);
+
+      const winner = first.status === 201 ? first : second;
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/refresh")
+        .send({ refresh_token: winner.body.tokens.refresh_token })
+        .expect(201);
     });
   });
 

@@ -10,6 +10,7 @@ export interface JwtAccessPayload {
   sub: string;
   username: string;
   role: string;
+  typ?: "access" | "refresh";
   iat?: number;
 }
 

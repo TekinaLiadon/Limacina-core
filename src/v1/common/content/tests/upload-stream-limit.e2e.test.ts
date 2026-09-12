@@ -28,17 +28,12 @@ import { AppConfigToken } from "../../../../config/app-config.provider";
 import { Jwt_authGuard } from "../../../../common/jwt_auth.guard";
 import { RolesGuard } from "../../../../common/roles.guard";
 import { AllExceptionsFilter } from "../../../../common/all-exceptions.filter";
+import { buildTestPng } from "../../../../utils/tests/test-png";
 
 const TEST_UUID = "streamlimit-uuid-0001";
 const BODY_LIMIT_BYTES = 4 * 1024 * 1024;
 const PLUGIN_FILE_SIZE_BYTES = 2 * 1024 * 1024;
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-
-const pngBuffer = (totalBytes: number): Buffer => {
-  const buffer = Buffer.alloc(totalBytes);
-  buffer.set(PNG_SIGNATURE);
-  return buffer;
-};
+const pngBuffer = (totalBytes: number): Buffer => buildTestPng({ totalBytes });
 
 @Injectable()
 class TestJwtStrategy extends PassportStrategy(Strategy) {

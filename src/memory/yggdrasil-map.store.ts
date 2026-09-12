@@ -38,6 +38,13 @@ export class YggdrasilMapTokenStore implements IYggdrasilTokenStore {
     this.db.yggdrasilTokens.delete(accessToken);
   }
 
+  async claimToken(accessToken: string): Promise<TokenEntry | undefined> {
+    const entry = await this.findToken(accessToken);
+    if (!entry) return undefined;
+    this.db.yggdrasilTokens.delete(accessToken);
+    return entry;
+  }
+
   async deleteTokensByUserId(userId: string): Promise<void> {
     for (const [key, record] of this.db.yggdrasilTokens) {
       if (record.entry.userId === userId) this.db.yggdrasilTokens.delete(key);

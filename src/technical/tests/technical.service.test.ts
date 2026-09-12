@@ -211,6 +211,21 @@ describe("TechnicalService", (): void => {
       expect(steps()).toEqual([]);
       expect(signalled()).toBe(true);
     });
+
+    it("повторный запрос перезапуска отклоняется, сигнал подаётся один раз (TASK-46)", async () => {
+      const { service } = makeService();
+      let signalCount = 0;
+      service.sendShutdownSignal = () => {
+        signalCount += 1;
+      };
+
+      await service.restartServer(actor);
+      await expect(service.restartServer(actor)).rejects.toThrow(ConflictException);
+      await expect(service.restartServer(actor)).rejects.toThrow("Перезапуск уже запланирован");
+      await Bun.sleep(400);
+
+      expect(signalCount).toBe(1);
+    });
   });
 
   describe("startRebuild", () => {

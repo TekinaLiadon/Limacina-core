@@ -22,7 +22,6 @@ export interface TokenEntry {
 export interface SessionEntry {
   profileId: string;
   username: string;
-  ip: string;
 }
 
 export interface YggdrasilUserCredentials {
@@ -68,6 +67,7 @@ export interface IYggdrasilTokenStore {
   saveToken(accessToken: string, entry: TokenEntry): Promise<void>;
   findToken(accessToken: string): Promise<TokenEntry | undefined>;
   deleteToken(accessToken: string): Promise<void>;
+  claimToken(accessToken: string): Promise<TokenEntry | undefined>;
   deleteTokensByUserId(userId: string): Promise<void>;
 }
 

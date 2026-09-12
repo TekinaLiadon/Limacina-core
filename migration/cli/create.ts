@@ -41,21 +41,23 @@ export async function createMigration(options: CreateOptions): Promise<string> {
   return filename;
 }
 
-const args = process.argv.slice(2);
-const gitFlag = args.includes("--git");
-const nameArg = args.find((a) => !a.startsWith("--"));
-const listDir = path.join(import.meta.dir, "..", "list");
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  const gitFlag = args.includes("--git");
+  const nameArg = args.find((a) => !a.startsWith("--"));
+  const listDir = path.join(import.meta.dir, "..", "list");
 
-try {
-  const filename = await createMigration({
-    ...(nameArg ? { name: nameArg } : {}),
-    git: gitFlag,
-    listDir,
-  });
-  log({ text: `Migration created: ${filename}`, type: "success" });
-  if (gitFlag) {
-    log({ text: `Staged in git: ${filename}`, type: "success" });
+  try {
+    const filename = await createMigration({
+      ...(nameArg ? { name: nameArg } : {}),
+      git: gitFlag,
+      listDir,
+    });
+    log({ text: `Migration created: ${filename}`, type: "success" });
+    if (gitFlag) {
+      log({ text: `Staged in git: ${filename}`, type: "success" });
+    }
+  } catch (error) {
+    fatal("Failed to create migration", error);
   }
-} catch (error) {
-  fatal("Failed to create migration", error);
 }

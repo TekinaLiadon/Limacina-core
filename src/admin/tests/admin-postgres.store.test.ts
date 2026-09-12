@@ -1,15 +1,20 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import type { AdminUser } from "../admin.store";
 import { AdminPostgresStore } from "../admin_postgres.store";
+import { AuthPostgresStore } from "../../auth/service/auth_postgres.service";
+import type { StoredUser } from "../../auth/service/auth_store.service";
 import {
   cleanupTrackedUsers,
   createPostgresUser,
   ensurePostgresSchema,
   postgresDescribe,
+  trackPostgresUser,
 } from "../../utils/tests/postgres-suite";
-import { execute, insertQuery, selectQuery, TABLES } from "../../utils/sql";
+import { execute, insertQuery, selectQuery, updateQuery, TABLES } from "../../utils/sql";
+import { generateUuid } from "../../utils/uuid";
 
 const store = new AdminPostgresStore();
+const authStore = new AuthPostgresStore();
 const prefix = "pgadm";
 
 const createAdminUser = async (overrides: Partial<AdminUser> = {}): Promise<AdminUser> => {
@@ -48,6 +53,24 @@ const findTextureRow = async (uuid: string): Promise<Record<string, unknown> | u
     .build();
   const { rows } = await execute(query.sql, query.values);
   return rows[0];
+};
+
+const findRawUser = async (uuid: string): Promise<Record<string, unknown> | undefined> => {
+  const query = selectQuery("deleted", "deleted_at")
+    .from(TABLES.users)
+    .where("uuid = $1", uuid)
+    .build();
+  const { rows } = await execute(query.sql, query.values);
+  return rows[0];
+};
+
+const findPasswordChangedAt = async (uuid: string): Promise<Date | null> => {
+  const query = selectQuery("password_changed_at")
+    .from(TABLES.users)
+    .where("uuid = $1", uuid)
+    .build();
+  const { rows } = await execute<{ password_changed_at: Date | null }>(query.sql, query.values);
+  return rows[0]?.password_changed_at ?? null;
 };
 
 postgresDescribe("AdminPostgresStore (postgres)", () => {
@@ -92,6 +115,36 @@ postgresDescribe("AdminPostgresStore (postgres)", () => {
     }
   });
 
+  it("searchUsers сортирует по lower(username) независимо от регистра", async () => {
+    const suffix = generateUuid().slice(0, 8);
+    const orderPrefix = `${prefix}_ord`;
+    const names = [
+      `${orderPrefix}_AAA${suffix}`,
+      `${orderPrefix}_bbb${suffix}`,
+      `${orderPrefix}_ZZZ${suffix}`,
+    ];
+    for (const username of names) {
+      const uuid = generateUuid();
+      const saved = await authStore.saveUser({
+        uuid,
+        username,
+        passwordHash: "order-test-hash",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      trackPostgresUser({ uuid });
+      expect(saved).toBe(true);
+    }
+
+    const page = await store.searchUsers({ limit: 100, offset: 0, username: orderPrefix });
+
+    const ordered = page.items
+      .map((item) => item.username)
+      .filter((username) => names.includes(username));
+    expect(ordered).toEqual(names);
+  });
+
   it("searchUsers фильтрует по approved и пагинирует без пересечений", async () => {
     for (let i = 0; i < 3; i += 1) {
       await createAdminUser({ approved: false });
@@ -125,7 +178,7 @@ postgresDescribe("AdminPostgresStore (postgres)", () => {
     expect(found?.role).toBe("admin");
   });
 
-  it("deleteUser переносит пользователя с текстурами в deleted_users", async () => {
+  it("deleteUser помечает пользователя deleted и ставит deleted_at", async () => {
     const user = await createAdminUser();
     await insertTextures(user.uuid);
 
@@ -133,38 +186,126 @@ postgresDescribe("AdminPostgresStore (postgres)", () => {
 
     expect(removed).toEqual(user);
     expect(await store.findByUsername(user.username)).toBeUndefined();
-    const deleted = await store.findDeletedByUsername(user.username);
-    expect(deleted).toBeDefined();
-    expect(deleted?.deletedAt).toBeInstanceOf(Date);
+    expect(await store.findDeletedByUsername(user.username)).toBeDefined();
 
-    const textureRow = await execute<{ skin_url: string | null }>(
-      `SELECT skin_url FROM ${TABLES.deleted_users} WHERE username = $1`,
-      [user.username],
-    );
-    expect(textureRow.rows[0]?.skin_url).toBe("http://localhost:3005/textures/test-skin.png");
-    expect(await findTextureRow(user.uuid)).toBeUndefined();
+    const row = await findRawUser(user.uuid);
+    expect(row?.["deleted"]).toBe(true);
+    expect(row?.["deleted_at"]).toBeInstanceOf(Date);
 
+    const textures = await findTextureRow(user.uuid);
+    expect(textures?.["skin_url"]).toBe("http://localhost:3005/textures/test-skin.png");
+  });
+
+  it("restoreUser снимает пометку deleted и очищает deleted_at", async () => {
+    const user = await createAdminUser();
+    await insertTextures(user.uuid);
+
+    await store.deleteUser(user.username);
     await store.restoreUser(user.username);
 
     const restored = await store.findByUsername(user.username);
     expect(restored).toBeDefined();
+    expect(await store.findDeletedByUsername(user.username)).toBeUndefined();
+
+    const row = await findRawUser(user.uuid);
+    expect(row?.["deleted"]).toBe(false);
+    expect(row?.["deleted_at"]).toBeNull();
     const textures = await findTextureRow(user.uuid);
     expect(textures?.["skin_url"]).toBe("http://localhost:3005/textures/test-skin.png");
     expect(textures?.["cape_url"]).toBe("http://localhost:3005/capes/test-cape.png");
-    expect(await store.findDeletedByUsername(user.username)).toBeUndefined();
   });
 
-  it("deleteUser и restoreUser работают без текстур", async () => {
+  it("password_hash и password_changed_at сохраняются при delete → restore", async () => {
     const user = await createAdminUser();
+    const changedAt = new Date("2026-09-01T12:00:00Z");
+    const backdated = updateQuery()
+      .from(TABLES.users)
+      .set("password_changed_at", changedAt)
+      .where("uuid = $1", user.uuid)
+      .build();
+    await execute(backdated.sql, backdated.values);
 
     await store.deleteUser(user.username);
-    expect(await store.findDeletedByUsername(user.username)).toBeDefined();
-
     await store.restoreUser(user.username);
 
-    expect(await store.findByUsername(user.username)).toBeDefined();
-    expect(await findTextureRow(user.uuid)).toBeUndefined();
-    expect(await store.findDeletedByUsername(user.username)).toBeUndefined();
+    const found = await store.findByUsername(user.username);
+    expect(found?.role).toBe(user.role);
+    expect(await findPasswordChangedAt(user.uuid)).toEqual(changedAt);
+  });
+
+  it("searchUsers не отдаёт удалённых, searchDeletedUsers только удалённых", async () => {
+    const live = await createAdminUser();
+    const removed = await createAdminUser();
+    await store.deleteUser(removed.username);
+
+    const livePage = await store.searchUsers({ limit: 100, offset: 0, username: prefix });
+    expect(livePage.items.map((item) => item.username)).toContain(live.username);
+    expect(livePage.items.map((item) => item.username)).not.toContain(removed.username);
+
+    const deletedPage = await store.searchDeletedUsers({ limit: 100, offset: 0, username: prefix });
+    expect(deletedPage.items.map((item) => item.username)).toContain(removed.username);
+    expect(deletedPage.items.map((item) => item.username)).not.toContain(live.username);
+    for (const item of deletedPage.items) {
+      expect(item.deletedAt).toBeInstanceOf(Date);
+    }
+  });
+
+  it("никнейм удалённого можно занять заново, restore тогда отклоняется", async () => {
+    const user = await createAdminUser({ approved: true });
+    await store.deleteUser(user.username);
+
+    const reissued: StoredUser = {
+      uuid: generateUuid(),
+      username: user.username,
+      passwordHash: await Bun.password.hash("limacina-reissued"),
+      role: "user",
+      approved: true,
+      banned: false,
+    };
+    trackPostgresUser(reissued);
+    expect(await authStore.userExists(user.username)).toBe(false);
+    expect(await authStore.saveUser(reissued)).toBe(true);
+
+    await expect(store.restoreUser(user.username)).rejects.toThrow();
+  });
+
+  it("purgeOldDeletedUsers удаляет только просроченных удалённых", async () => {
+    const stale = await createAdminUser();
+    const fresh = await createAdminUser();
+    await store.deleteUser(stale.username);
+    await store.deleteUser(fresh.username);
+
+    const backdate = updateQuery()
+      .from(TABLES.users)
+      .set("deleted_at", new Date(Date.now() - 31 * 24 * 60 * 60 * 1000))
+      .where("uuid = $1", stale.uuid)
+      .build();
+    await execute(backdate.sql, backdate.values);
+
+    const purged = await store.purgeOldDeletedUsers(30);
+
+    expect(purged).toBeGreaterThanOrEqual(1);
+    expect(await findRawUser(stale.uuid)).toBeUndefined();
+    expect(await findRawUser(fresh.uuid)).toBeDefined();
+    expect(await store.findByUsername(fresh.username)).toBeUndefined();
+    expect(await store.findDeletedByUsername(fresh.username)).toBeDefined();
+  });
+
+  it("hasOwner не считает удалённого овнера", async () => {
+    const owner = await createAdminUser({ role: "owner" });
+
+    expect(await store.hasOwner()).toBe(true);
+
+    await store.deleteUser(owner.username);
+
+    const { rows: otherLiveOwners } = await execute(
+      "SELECT 1 FROM users WHERE role = 'owner' AND deleted = false AND uuid <> $1 LIMIT 1",
+      [owner.uuid],
+    );
+    expect(await store.hasOwner()).toBe(otherLiveOwners.length > 0);
+
+    await store.restoreUser(owner.username);
+    expect(await store.hasOwner()).toBe(true);
   });
 
   it("deleteUser неизвестного пользователя возвращает undefined", async () => {

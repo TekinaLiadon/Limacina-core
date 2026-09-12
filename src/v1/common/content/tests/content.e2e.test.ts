@@ -27,15 +27,11 @@ import GlobalConfig from "../../../../config/global-config";
 import { AppConfigToken } from "../../../../config/app-config.provider";
 import { Jwt_authGuard } from "../../../../common/jwt_auth.guard";
 import { RolesGuard } from "../../../../common/roles.guard";
+import { buildTestPng } from "../../../../utils/tests/test-png";
 
 const TEST_UUID = "v1user-uuid-0001";
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-const pngBuffer = (extraBytes = 16): Buffer => {
-  const buffer = Buffer.alloc(PNG_SIGNATURE.length + extraBytes);
-  buffer.set(PNG_SIGNATURE);
-  return buffer;
-};
+const pngBuffer = (variant = 16): Buffer => buildTestPng({ variant });
 
 @Injectable()
 class TestJwtStrategy extends PassportStrategy(Strategy) {
@@ -168,7 +164,7 @@ describe("V1 common/content эндпоинты", (): void => {
       await supertest(app.getHttpServer())
         .post("/v1/common/content/skins")
         .set("Authorization", `Bearer ${userToken}`)
-        .attach("file", pngBuffer(512 * 1024), "skin.png")
+        .attach("file", buildTestPng({ totalBytes: 512 * 1024 + 1 }), "skin.png")
         .expect(400);
     });
 

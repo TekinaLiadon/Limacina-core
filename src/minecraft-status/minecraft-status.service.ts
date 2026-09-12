@@ -7,14 +7,18 @@ import { CacheStoreToken, type ICacheStore } from "../cache/cache.store";
 
 export const STATUS_CACHE_KEY = "minecraft-status";
 const STATUS_CACHE_TTL_MS = 60_000;
+export const FAILURE_COOLDOWN_MS = 5_000;
 const TARGET_PARSE_ERROR =
   "Некорректный MINECRAFT_HOST — ожидается host, host:port или [ipv6]:port";
+const SERVER_UNAVAILABLE_MESSAGE = "Игровой сервер недоступен";
 
 @Injectable()
 export class MinecraftStatusService {
   private readonly logger = new Logger(MinecraftStatusService.name);
   private readonly target: MinecraftTarget | undefined;
   private pendingPing: Promise<MinecraftStatusDto> | undefined;
+  private failureCooldownUntil = 0;
+  readonly failureCooldownMs: number = FAILURE_COOLDOWN_MS;
 
   constructor(
     @Inject(AppConfigToken) config: AppConfigType,
@@ -36,6 +40,10 @@ export class MinecraftStatusService {
 
     if (this.pendingPing) return this.pendingPing;
 
+    if (Date.now() < this.failureCooldownUntil) {
+      throw new ServiceUnavailableException(SERVER_UNAVAILABLE_MESSAGE);
+    }
+
     this.pendingPing = this.pingAndCache(this.target);
     try {
       return await this.pendingPing;
@@ -47,11 +55,12 @@ export class MinecraftStatusService {
   private async pingAndCache(target: MinecraftTarget): Promise<MinecraftStatusDto> {
     const result = await status(target.host, target.port);
     if (!result.ok) {
+      this.failureCooldownUntil = Date.now() + this.failureCooldownMs;
       this.logger.error(
         { host: target.host, port: target.port, error: result.error },
         "Игровой сервер недоступен",
       );
-      throw new ServiceUnavailableException("Игровой сервер недоступен");
+      throw new ServiceUnavailableException(SERVER_UNAVAILABLE_MESSAGE);
     }
 
     const response: MinecraftStatusDto = {

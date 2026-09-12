@@ -25,6 +25,7 @@ import {
   ApiTags,
 } from "@nestjs/swagger";
 import { Public } from "../common/public.decorator";
+import { BatchProfilesPipe } from "./batch-profiles.pipe";
 import { YggdrasilService } from "./service/yggdrasil.service";
 import {
   AuthenticateDto,
@@ -35,6 +36,7 @@ import {
   InvalidateDto,
   SignoutDto,
   JoinDto,
+  HasJoinedQueryDto,
   YggdrasilErrorDto,
   SessionProfileDto,
   ApiMetadataResponseDto,
@@ -117,18 +119,15 @@ export class YggdrasilController {
 
   @Get("sessionserver/session/minecraft/hasJoined")
   @ApiOperation({ summary: "Server verifies client session" })
-  @ApiQuery({ name: "username" })
-  @ApiQuery({ name: "serverId" })
-  @ApiQuery({ name: "ip", required: false })
+  @ApiQuery({ name: "username", required: true })
+  @ApiQuery({ name: "serverId", required: true })
   @ApiResponse({ status: 200, type: SessionProfileDto })
   @ApiResponse({ status: 204, description: "Session not found" })
   async getHasJoined(
-    @Query("username") username: string,
-    @Query("serverId") serverId: string,
-    @Query("ip") ip: string | undefined,
+    @Query() query: HasJoinedQueryDto,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<SessionProfileDto | undefined> {
-    const profile = await this.yggdrasilService.hasJoined(username, serverId, ip);
+    const profile = await this.yggdrasilService.hasJoined(query.username, query.serverId);
     if (!profile) {
       reply.status(HttpStatus.NO_CONTENT).send();
       return undefined;
@@ -166,7 +165,9 @@ export class YggdrasilController {
   @ApiOperation({ summary: "Batch query profiles by name" })
   @ApiBody({ type: [String] })
   @ApiResponse({ status: 200, type: [GameProfileDto] })
-  async postBatchProfiles(@Body() names: string[]): Promise<GameProfileDto[]> {
+  async postBatchProfiles(
+    @Body(new BatchProfilesPipe()) names: string[],
+  ): Promise<GameProfileDto[]> {
     return this.yggdrasilService.batchProfiles(names);
   }
 

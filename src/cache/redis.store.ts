@@ -137,6 +137,9 @@ export class RedisCacheStore implements ICacheStore, OnModuleDestroy {
 
     try {
       return await Promise.race([operation, expiration]);
+    } catch (error) {
+      operation.catch(() => {});
+      throw error;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }

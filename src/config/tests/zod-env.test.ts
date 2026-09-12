@@ -24,17 +24,30 @@ function expectFailure(config: ZodEnvConfig<typeof schema>, env: Record<string, 
 }
 
 describe("ZodEnvConfig — мердж SECRETS", (): void => {
-  it("мержит SECRETS в переменные окружения", (): void => {
+  it("мержит SECRETS для переменных, отсутствующих в env", (): void => {
     const result = buildConfig().tryParseEnv({
       NODE_ENV: "test",
       JWT_ACCESS: "from-env",
-      SECRETS: '{"JWT_ACCESS":"from-secrets","MASTER_PASSWORD":"from-secrets"}',
+      SECRETS: '{"MASTER_PASSWORD":"from-secrets"}',
     });
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.JWT_ACCESS).toBe("from-secrets");
       expect(result.data.MASTER_PASSWORD).toBe("from-secrets");
+      expect(result.data.JWT_ACCESS).toBe("from-env");
+    }
+  });
+
+  it("env перекрывает SECRETS при конфликте", (): void => {
+    const result = buildConfig().tryParseEnv({
+      NODE_ENV: "test",
+      JWT_ACCESS: "from-env",
+      SECRETS: '{"JWT_ACCESS":"from-secrets"}',
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.JWT_ACCESS).toBe("from-env");
     }
   });
 

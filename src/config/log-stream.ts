@@ -1,11 +1,5 @@
-import {
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  unlinkSync,
-  type WriteStream,
-} from "node:fs";
+import { createWriteStream, type WriteStream } from "node:fs";
+import { mkdir, readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 
@@ -26,29 +20,35 @@ function logToStderr(message: string): void {
   process.stderr.write(`[log-stream] ${message}\n`);
 }
 
-function cleanupOldLogs(): void {
+async function cleanupOldLogs(): Promise<void> {
   try {
     const now = new Date();
     const cutoff = new Date(now);
     cutoff.setDate(cutoff.getDate() - RETENTION_DAYS);
 
-    for (const file of readdirSync(LOGS_DIR)) {
-      if (!file.endsWith(".log")) continue;
-      const dateStr = file.replace(".log", "");
-      const fileDate = new Date(dateStr);
-      if (Number.isNaN(fileDate.getTime())) continue;
-      if (fileDate < cutoff) unlinkSync(join(LOGS_DIR, file));
-    }
+    const files = await readdir(LOGS_DIR);
+    await Promise.all(
+      files.map(async (file) => {
+        if (!file.endsWith(".log")) return;
+        const fileDate = new Date(file.replace(".log", ""));
+        if (Number.isNaN(fileDate.getTime())) return;
+        if (fileDate < cutoff) await unlink(join(LOGS_DIR, file));
+      }),
+    );
   } catch (error) {
     logToStderr(`ошибка очистки старых логов: ${String(error)}`);
   }
 }
 
-function ensureLogsDir(): void {
+async function ensureLogsDir(): Promise<void> {
   try {
-    readdirSync(LOGS_DIR);
+    await readdir(LOGS_DIR);
   } catch {
-    mkdirSync(LOGS_DIR, { recursive: true });
+    try {
+      await mkdir(LOGS_DIR, { recursive: true });
+    } catch (error) {
+      logToStderr(`ошибка создания каталога логов: ${String(error)}`);
+    }
   }
 }
 
@@ -66,35 +66,39 @@ function closeLogStream(stream: WriteStream): void {
 }
 
 export function createLogStream(): Writable {
-  ensureLogsDir();
-  cleanupOldLogs();
+  void ensureLogsDir();
+  void cleanupOldLogs();
 
   let currentDate = today();
   let stream = openLogStream(currentDate);
   let streamFailed = false;
-  let lastCleanup = Date.now();
-  let lastFileCheck = Date.now();
+
+  const cleanupTimer = setInterval(() => {
+    void cleanupOldLogs();
+  }, CLEANUP_INTERVAL_MS);
+  cleanupTimer.unref();
+
+  const fileCheckTimer = setInterval(() => {
+    stat(currentLogPath(currentDate))
+      .then(() => {
+        if (!streamFailed) return;
+        streamFailed = false;
+        closeLogStream(stream);
+        stream = openLogStream(currentDate);
+      })
+      .catch(() => {
+        streamFailed = true;
+      });
+  }, FILE_CHECK_INTERVAL_MS);
+  fileCheckTimer.unref();
 
   const wrapper = new Writable({
     write(chunk, encoding, callback) {
-      const now = Date.now();
-      if (now - lastCleanup > CLEANUP_INTERVAL_MS) {
-        cleanupOldLogs();
-        lastCleanup = now;
-      }
-
-      if (now - lastFileCheck > FILE_CHECK_INTERVAL_MS) {
-        lastFileCheck = now;
-        if (!existsSync(currentLogPath(currentDate))) {
-          streamFailed = true;
-        }
-      }
-
       const date = today();
       if (date !== currentDate || streamFailed) {
         closeLogStream(stream);
-        ensureLogsDir();
         currentDate = date;
+        void ensureLogsDir();
         stream = openLogStream(currentDate);
         streamFailed = false;
       }

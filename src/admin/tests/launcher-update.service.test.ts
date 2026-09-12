@@ -9,8 +9,9 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { LauncherUpdateService } from "../launcher-update.service";
+import { LauncherUpdateService, type LauncherPlatformFile } from "../launcher-update.service";
 import { OLD_VERSIONS_DIR } from "../../launcher/launcher-files";
 
 const VERSION_FILE = "public/version.json";
@@ -20,6 +21,7 @@ const OLD_DIR = join(PLATFORM_DIR, "old");
 const MACOS_PLATFORM_DIR = "public/macos/arm64";
 const MACOS_PARENT_DIR = "public/macos";
 const MACOS_ZIP_PATH = join(MACOS_PLATFORM_DIR, "Limacina-1.0.0-macos-arm64.zip");
+const UPLOAD_TMP_DIR = "public/.upload-tmp";
 
 function zipPath(version: string): string {
   return join(PLATFORM_DIR, `Limacina-${version}-linux-x86_64.zip`);
@@ -28,6 +30,13 @@ function zipPath(version: string): string {
 function oldZipPath(version: string): string {
   return join(OLD_DIR, `Limacina-${version}-linux-x86_64.zip`);
 }
+
+const stageZip = (os: string, arch: string, content: string): LauncherPlatformFile => {
+  mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
+  const tempPath = join(UPLOAD_TMP_DIR, `${randomUUID()}.zip`);
+  writeFileSync(tempPath, content);
+  return { os, arch, tempPath };
+};
 
 describe("LauncherUpdateService — архивирование старых версий", (): void => {
   let service: LauncherUpdateService;
@@ -83,12 +92,11 @@ describe("LauncherUpdateService — архивирование старых ве
     if (existsSync(VERSION_BACKUP)) {
       renameSync(VERSION_BACKUP, VERSION_FILE);
     }
+    rmSync(UPLOAD_TMP_DIR, { recursive: true, force: true });
   });
 
   const resetToBaseline = (): void => {
-    service.update("1.0.0", [
-      { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.0.0") },
-    ]);
+    service.update("1.0.0", [stageZip("linux", "x86_64", "content-1.0.0")]);
     for (const dir of [PLATFORM_DIR, OLD_DIR]) {
       if (!existsSync(dir)) continue;
       for (const file of readdirSync(dir)) {
@@ -102,9 +110,7 @@ describe("LauncherUpdateService — архивирование старых ве
   };
 
   it("переносит старый zip в old/ при загрузке новой версии", () => {
-    const result = service.update("1.1.0", [
-      { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.1.0") },
-    ]);
+    const result = service.update("1.1.0", [stageZip("linux", "x86_64", "content-1.1.0")]);
     createdFiles.push(zipPath("1.1.0"));
 
     expect(result).toEqual({ version: "1.1.0", updated: ["linux/x86_64"] });
@@ -116,13 +122,9 @@ describe("LauncherUpdateService — архивирование старых ве
   });
 
   it("копит несколько версий в old/", () => {
-    service.update("1.1.0", [
-      { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.1.0") },
-    ]);
+    service.update("1.1.0", [stageZip("linux", "x86_64", "content-1.1.0")]);
     createdFiles.push(zipPath("1.1.0"));
-    service.update("1.2.0", [
-      { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.2.0") },
-    ]);
+    service.update("1.2.0", [stageZip("linux", "x86_64", "content-1.2.0")]);
     createdFiles.push(zipPath("1.2.0"));
 
     expect(readFileSync(zipPath("1.2.0"), "utf-8")).toBe("content-1.2.0");
@@ -136,13 +138,9 @@ describe("LauncherUpdateService — архивирование старых ве
   });
 
   it("перезаливает ту же версию на месте, не дублируя её в old/", () => {
-    service.update("1.2.0", [
-      { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.2.0") },
-    ]);
+    service.update("1.2.0", [stageZip("linux", "x86_64", "content-1.2.0")]);
     createdFiles.push(zipPath("1.2.0"));
-    service.update("1.2.0", [
-      { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.2.0-hotfix") },
-    ]);
+    service.update("1.2.0", [stageZip("linux", "x86_64", "content-1.2.0-hotfix")]);
 
     expect(readFileSync(zipPath("1.2.0"), "utf-8")).toBe("content-1.2.0-hotfix");
     expect(existsSync(oldZipPath("1.2.0"))).toBe(false);
@@ -152,23 +150,26 @@ describe("LauncherUpdateService — архивирование старых ве
   });
 
   it("перезаписывает архивную копию при возврате к старой версии", () => {
-    service.update("1.2.0", [
-      { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.2.0") },
-    ]);
+    service.update("1.2.0", [stageZip("linux", "x86_64", "content-1.2.0")]);
     createdFiles.push(zipPath("1.2.0"));
-    service.update("1.3.0", [
-      { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.3.0") },
-    ]);
+    service.update("1.3.0", [stageZip("linux", "x86_64", "content-1.3.0")]);
     createdFiles.push(zipPath("1.3.0"));
     expect(existsSync(oldZipPath("1.2.0"))).toBe(true);
 
-    service.update("1.2.0", [
-      { os: "linux", arch: "x86_64", buffer: Buffer.from("content-1.2.0-again") },
-    ]);
+    service.update("1.2.0", [stageZip("linux", "x86_64", "content-1.2.0-again")]);
 
     expect(readFileSync(zipPath("1.2.0"), "utf-8")).toBe("content-1.2.0-again");
     expect(existsSync(zipPath("1.3.0"))).toBe(false);
     expect(existsSync(oldZipPath("1.3.0"))).toBe(true);
+
+    resetToBaseline();
+  });
+
+  it("переименовывает temp-файл: в .upload-tmp ничего не остаётся", () => {
+    service.update("1.4.0", [stageZip("linux", "x86_64", "content-1.4.0")]);
+    createdFiles.push(zipPath("1.4.0"));
+
+    expect(existsSync(UPLOAD_TMP_DIR) ? readdirSync(UPLOAD_TMP_DIR) : []).toEqual([]);
 
     resetToBaseline();
   });
@@ -203,12 +204,11 @@ describe("LauncherUpdateService — macos/arm64", (): void => {
     if (existsSync(VERSION_BACKUP)) {
       renameSync(VERSION_BACKUP, VERSION_FILE);
     }
+    rmSync(UPLOAD_TMP_DIR, { recursive: true, force: true });
   });
 
   it("создаёт zip для macos/arm64", () => {
-    const result = service.update("1.0.0", [
-      { os: "macos", arch: "arm64", buffer: Buffer.from("macos-content") },
-    ]);
+    const result = service.update("1.0.0", [stageZip("macos", "arm64", "macos-content")]);
 
     expect(result).toEqual({ version: "1.0.0", updated: ["macos/arm64"] });
     expect(readFileSync(MACOS_ZIP_PATH, "utf-8")).toBe("macos-content");
@@ -285,6 +285,7 @@ describe("LauncherUpdateService — порядок мутаций и атома�
     if (existsSync(VERSION_BACKUP)) {
       renameSync(VERSION_BACKUP, VERSION_FILE);
     }
+    rmSync(UPLOAD_TMP_DIR, { recursive: true, force: true });
   });
 
   it("отклоняет невалидную платформу до любых мутаций: version.json и zip не тронуты", () => {
@@ -292,8 +293,8 @@ describe("LauncherUpdateService — порядок мутаций и атома�
 
     expect(() =>
       service.update("2.0.0", [
-        { os: "windows", arch: "x86_64", buffer: Buffer.from("v2") },
-        { os: "windows", arch: "riscv", buffer: Buffer.from("v2-bad") },
+        stageZip("windows", "x86_64", "v2"),
+        stageZip("windows", "riscv", "v2-bad"),
       ]),
     ).toThrow();
 
@@ -301,14 +302,13 @@ describe("LauncherUpdateService — порядок мутаций и атома�
     expect(readFileSync(sandboxZipPath("1.0.0"), "utf-8")).toBe("content-1.0.0");
     expect(zipsInDir(sandboxDir)).toEqual(["Limacina-1.0.0-windows-x86_64.zip"]);
     expect(zipsInDir(sandboxOldDir)).toEqual([]);
+    expect(existsSync(UPLOAD_TMP_DIR) ? readdirSync(UPLOAD_TMP_DIR) : []).toEqual([]);
   });
 
   it("отклоняет невалидную версию до любых мутаций", () => {
     seedBaseline();
 
-    expect(() =>
-      service.update("bad-version", [{ os: "windows", arch: "x86_64", buffer: Buffer.from("v2") }]),
-    ).toThrow();
+    expect(() => service.update("bad-version", [stageZip("windows", "x86_64", "v2")])).toThrow();
 
     expect(readVersionFile()).toBe("1.0.0");
     expect(zipsInDir(sandboxDir)).toEqual(["Limacina-1.0.0-windows-x86_64.zip"]);
@@ -317,9 +317,7 @@ describe("LauncherUpdateService — порядок мутаций и атома�
   it("пишет zip до version.json: после успешного update оба обновлены", () => {
     seedBaseline();
 
-    const result = service.update("2.0.0", [
-      { os: "windows", arch: "x86_64", buffer: Buffer.from("content-2.0.0") },
-    ]);
+    const result = service.update("2.0.0", [stageZip("windows", "x86_64", "content-2.0.0")]);
 
     expect(result.version).toBe("2.0.0");
     expect(readFileSync(sandboxZipPath("2.0.0"), "utf-8")).toBe("content-2.0.0");
@@ -330,9 +328,7 @@ describe("LauncherUpdateService — порядок мутаций и атома�
   it("пишет version.json атомарно через temp+rename: временных файлов не остаётся", () => {
     seedBaseline();
 
-    service.update("2.1.0", [
-      { os: "windows", arch: "x86_64", buffer: Buffer.from("content-2.1.0") },
-    ]);
+    service.update("2.1.0", [stageZip("windows", "x86_64", "content-2.1.0")]);
 
     expect(readVersionFile()).toBe("2.1.0");
     const leftovers = readdirSync("public").filter(
@@ -343,14 +339,12 @@ describe("LauncherUpdateService — порядок мутаций и атома�
 
   it("мультиплатформенный update не оставляет частичного состояния при сбое второй платформы", () => {
     seedBaseline();
-    service.update("2.0.0", [
-      { os: "windows", arch: "x86_64", buffer: Buffer.from("content-2.0.0") },
-    ]);
+    service.update("2.0.0", [stageZip("windows", "x86_64", "content-2.0.0")]);
 
     expect(() =>
       service.update("3.0.0", [
-        { os: "windows", arch: "x86_64", buffer: Buffer.from("content-3.0.0") },
-        { os: "macos", arch: "x86_64", buffer: Buffer.from("bad-platform") },
+        stageZip("windows", "x86_64", "content-3.0.0"),
+        stageZip("macos", "x86_64", "bad-platform"),
       ]),
     ).toThrow();
 
@@ -358,5 +352,6 @@ describe("LauncherUpdateService — порядок мутаций и атома�
     expect(existsSync(sandboxZipPath("3.0.0"))).toBe(false);
     expect(readFileSync(sandboxZipPath("2.0.0"), "utf-8")).toBe("content-2.0.0");
     expect(readFileSync(sandboxOldZipPath("1.0.0"), "utf-8")).toBe("content-1.0.0");
+    expect(existsSync(UPLOAD_TMP_DIR) ? readdirSync(UPLOAD_TMP_DIR) : []).toEqual([]);
   });
 });

@@ -34,6 +34,7 @@ import { V1PanelLogsController } from "../logs.controller";
 import { V1PanelLauncherController } from "../launcher.controller";
 import { V1PanelServerController } from "../server.controller";
 import { AdminService } from "../../../admin/admin.service";
+import { CronService } from "../../../cron/cron.service";
 import { LogsService } from "../../../admin/logs.service";
 import { LauncherUpdateService } from "../../../admin/launcher-update.service";
 import { ConfigUpdateService } from "../../../admin/config-update.service";
@@ -112,6 +113,7 @@ describe("V1 panel эндпоинты", (): void => {
       ],
       providers: [
         AdminService,
+        CronService,
         LogsService,
         LauncherUpdateService,
         ConfigUpdateService,
@@ -422,6 +424,16 @@ describe("V1 panel эндпоинты", (): void => {
         banned: false,
       });
     });
+
+    it("отклоняет юзернейм длиннее 64 символов (400, а не ошибка БД)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/approve")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "x".repeat(65), approved: true })
+        .expect(400);
+
+      expect(JSON.stringify(res.body)).toContain("username: максимум 64 символов");
+    });
   });
 
   describe("PATCH /v1/panel/users/ban", () => {
@@ -653,8 +665,24 @@ describe("V1 panel эндпоинты", (): void => {
       expect(res.body.success).toBe(true);
       expect(res.body.username).toBe("modtarget");
 
+      const live = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?username=modtarget")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+      expect(live.body.items.map((u: { username: string }) => u.username)).not.toContain(
+        "modtarget",
+      );
+
       const store = app.get(AdminMapStoreToken, { strict: false });
       await store.restoreUser("modtarget");
+
+      const restored = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?username=modtarget")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+      expect(restored.body.items.map((u: { username: string }) => u.username)).toContain(
+        "modtarget",
+      );
     });
 
     it("возвращает 404 для несуществующего пользователя", async () => {
@@ -686,6 +714,44 @@ describe("V1 panel эндпоинты", (): void => {
 
       const store = app.get(AdminMapStoreToken, { strict: false });
       await store.restoreUser("modtarget");
+    });
+
+    it("удаление отзывает доступ в auth-сторе и чистит refresh-токены (TASK-15)", async () => {
+      const adminStore = app.get(AdminMapStoreToken, { strict: false });
+      const authStore = app.get(AuthMapStoreToken, { strict: false });
+      await adminStore.saveUser({
+        uuid: "deletable-uuid",
+        username: "deletable",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      await authStore.saveUser({
+        uuid: "deletable-uuid",
+        username: "deletable",
+        passwordHash: await Bun.password.hash("deletemepass"),
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      await authStore.saveRefresh("deletable-jti", {
+        userId: "deletable-uuid",
+        username: "deletable",
+      });
+
+      try {
+        await supertest(app.getHttpServer())
+          .delete("/v1/panel/users/deletable")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+
+        expect(await authStore.findByUsername("deletable")).toBeUndefined();
+        expect(await authStore.userExists("deletable")).toBe(false);
+        expect(await authStore.findRefresh("deletable-jti")).toBeUndefined();
+      } finally {
+        await adminStore.__test__deleteUser("deletable");
+        await authStore.__test__deleteUser("deletable");
+      }
     });
 
     it("возвращает 400 для юзернейма длиннее 64 символов", async () => {
@@ -860,6 +926,48 @@ describe("V1 panel эндпоинты", (): void => {
 
       const store = app.get(AdminMapStoreToken, { strict: false });
       await store.deleteUser("deletedadmin");
+    });
+
+    it("восстановление возвращает доступ в auth-сторе (TASK-15)", async () => {
+      const adminStore = app.get(AdminMapStoreToken, { strict: false });
+      const authStore = app.get(AuthMapStoreToken, { strict: false });
+      const passwordHash = await Bun.password.hash("restorablepass");
+      await adminStore.saveUser({
+        uuid: "restorable-uuid",
+        username: "restorable",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      await authStore.saveUser({
+        uuid: "restorable-uuid",
+        username: "restorable",
+        passwordHash,
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+
+      try {
+        await supertest(app.getHttpServer())
+          .delete("/v1/panel/users/restorable")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+
+        expect(await authStore.findByUsername("restorable")).toBeUndefined();
+
+        await supertest(app.getHttpServer())
+          .patch("/v1/panel/users/restorable/restore")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+
+        const restored = await authStore.findByUsername("restorable");
+        expect(restored?.uuid).toBe("restorable-uuid");
+        expect(restored?.passwordHash).toBe(passwordHash);
+      } finally {
+        await adminStore.__test__deleteUser("restorable");
+        await authStore.__test__deleteUser("restorable");
+      }
     });
 
     it("возвращает 404 для несуществующего удалённого пользователя", async () => {
@@ -1416,6 +1524,19 @@ describe("V1 panel эндпоинты", (): void => {
 
       const content = readFileSync(CONFIG_FILE, "utf-8");
       expect(content).toContain("V1TestProject");
+      expect(existsSync(`${CONFIG_FILE}.tmp`)).toBe(false);
+    });
+
+    it("повторная запись конфига заменяет файл целиком и подчищает temp (TASK-21)", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher/config")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ ...validConfig, projectName: "V1SecondWrite" })
+        .expect(200);
+
+      const content = readFileSync(CONFIG_FILE, "utf-8");
+      expect(content).toContain("V1SecondWrite");
+      expect(existsSync(`${CONFIG_FILE}.tmp`)).toBe(false);
     });
 
     it("возвращает 403 для не-админа", async () => {
@@ -1491,6 +1612,33 @@ describe("V1 panel эндпоинты", (): void => {
 
       const data = JSON.parse(readFileSync(VERSION_FILE, "utf-8")) as { version: string };
       expect(data.version).toBe("9.9.9");
+    });
+
+    it("загрузка zip через multipart стримится в temp и не оставляет временных файлов (TASK-20)", async () => {
+      const zipDir = join("public", "linux", "x86_64");
+      try {
+        const res = await supertest(app.getHttpServer())
+          .patch("/v1/panel/launcher")
+          .set("Authorization", `Bearer ${adminToken}`)
+          .field("version", "7.7.7")
+          .attach("linux_x86_64", Buffer.from("streamed-zip-content"), "launcher.zip")
+          .expect(200);
+
+        expect(res.body.updated).toContain("linux/x86_64");
+
+        const tmpDir = join("public", ".upload-tmp");
+        const leftovers = existsSync(tmpDir) ? readdirSync(tmpDir) : [];
+        expect(leftovers).toEqual([]);
+        expect(readFileSync(join(zipDir, "Limacina-7.7.7-linux-x86_64.zip"), "utf-8")).toBe(
+          "streamed-zip-content",
+        );
+      } finally {
+        for (const dir of [zipDir, join(zipDir, "old")]) {
+          const zipPath = join(dir, "Limacina-7.7.7-linux-x86_64.zip");
+          if (existsSync(zipPath)) unlinkSync(zipPath);
+        }
+        rmSync(join("public", ".upload-tmp"), { recursive: true, force: true });
+      }
     });
 
     it("конкурентные PATCH оставляют консистентное состояние", async () => {

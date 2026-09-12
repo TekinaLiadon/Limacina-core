@@ -3,6 +3,7 @@ import {
   cleanupTrackedUsers,
   createPostgresUser,
   ensurePostgresSchema,
+  markPostgresUserDeleted,
   postgresDescribe,
 } from "../../../utils/tests/postgres-suite";
 import { generateUuid } from "../../../utils/uuid";
@@ -64,6 +65,25 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
     expect(await store.userExists(uniqueUsername())).toBe(false);
   });
 
+  it("userExists находит существующий ник в другом регистре", async () => {
+    const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
+
+    expect(await store.userExists(saved.username.toUpperCase())).toBe(true);
+  });
+
+  it("saveUser отклоняет ник, отличающийся только регистром", async () => {
+    const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
+    const variant = {
+      ...saved,
+      uuid: generateUuid(),
+      username: saved.username.toUpperCase(),
+    };
+
+    expect(await store.saveUser(variant)).toBe(false);
+    expect(await store.findByUsername(saved.username)).toBeDefined();
+    expect(await store.findByUsername(variant.username)).toBeUndefined();
+  });
+
   it("approveUser одобряет пользователя", async () => {
     const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
 
@@ -80,16 +100,33 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
     expect((await store.findByUsername(saved.username))?.role).toBe("admin");
   });
 
-  it("updatePasswordHash пишет хеш и метку времени", async () => {
+  it("replacePassword пишет хеш, метку времени и отзывает refresh-токены одной операцией", async () => {
     const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
     const changedAt = new Date();
+    const jti = generateUuid();
+    await store.saveRefresh(jti, { userId: saved.uuid, username: saved.username });
 
-    await store.updatePasswordHash(saved.uuid, "changed-hash", changedAt);
+    await store.replacePassword(saved.uuid, "changed-hash", changedAt);
 
     const found = await store.findByUsername(saved.username);
     expect(found?.passwordHash).toBe("changed-hash");
     const storedAt = found?.passwordChangedAt?.getTime() ?? 0;
     expect(Math.abs(storedAt - changedAt.getTime())).toBeLessThan(2000);
+    expect(await store.findRefresh(jti)).toBeUndefined();
+  });
+
+  it("claimRefresh атомарно забирает запись: повторный вызов пуст (TASK-9)", async () => {
+    const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
+    const jti = generateUuid();
+    await store.saveRefresh(jti, { userId: saved.uuid, username: saved.username });
+
+    expect(await store.claimRefresh(jti)).toEqual({
+      userId: saved.uuid,
+      username: saved.username,
+    });
+    expect(await store.claimRefresh(jti)).toBeUndefined();
+    expect(await store.findRefresh(jti)).toBeUndefined();
+    expect(await store.claimRefresh(generateUuid())).toBeUndefined();
   });
 
   it("saveRefresh и findRefresh возвращают запись по jti", async () => {
@@ -130,5 +167,52 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
 
     expect(await store.findRefresh(firstJti)).toBeUndefined();
     expect(await store.findRefresh(secondJti)).toBeDefined();
+  });
+
+  it("удалённый пользователь не находится, ник можно занять заново", async () => {
+    const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
+    await markPostgresUserDeleted(saved.uuid);
+
+    expect(await store.findByUsername(saved.username)).toBeUndefined();
+    expect(await store.userExists(saved.username)).toBe(false);
+
+    const reissued = { ...saved, uuid: generateUuid(), approved: true };
+    expect(await store.saveUser(reissued)).toBe(true);
+
+    const live = await store.findByUsername(saved.username);
+    expect(live?.uuid).toBe(reissued.uuid);
+    expect(live?.approved).toBe(true);
+  });
+
+  it("deleteUser помечает пользователя удалённым, не трогая строку (TASK-15)", async () => {
+    const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
+
+    await store.deleteUser(saved.uuid);
+
+    expect(await store.findByUsername(saved.username)).toBeUndefined();
+    expect(await store.userExists(saved.username)).toBe(false);
+    expect(await store.claimRefresh(generateUuid())).toBeUndefined();
+  });
+
+  it("restoreUser снимает флаг удаления у записи с тем же uuid (TASK-15)", async () => {
+    const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
+
+    await store.deleteUser(saved.uuid);
+    await store.restoreUser(saved.uuid);
+
+    const restored = await store.findByUsername(saved.username);
+    expect(restored?.uuid).toBe(saved.uuid);
+    expect(restored?.passwordHash).toBe(saved.passwordHash);
+  });
+
+  it("повторные deleteUser и restoreUser идемпотентны", async () => {
+    const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
+
+    await store.deleteUser(saved.uuid);
+    await store.deleteUser(saved.uuid);
+    await store.restoreUser(saved.uuid);
+    await store.restoreUser(saved.uuid);
+
+    expect(await store.findByUsername(saved.username)).toBeDefined();
   });
 });

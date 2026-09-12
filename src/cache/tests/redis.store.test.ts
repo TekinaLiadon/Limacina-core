@@ -181,6 +181,50 @@ describe("RedisCacheStore — таймаут команд", (): void => {
   });
 });
 
+class LateFailureRedisClient implements RedisClientLike {
+  rejectGet: ((error: Error) => void) | undefined;
+
+  async get(): Promise<string | null> {
+    return new Promise<string | null>((_resolve, reject) => {
+      this.rejectGet = reject;
+    });
+  }
+
+  async set(): Promise<unknown> {
+    return new Promise<unknown>(() => {});
+  }
+
+  async del(): Promise<number> {
+    return new Promise<number>(() => {});
+  }
+
+  close(): void {}
+}
+
+describe("RedisCacheStore — поздние результаты команд", (): void => {
+  it("сбой зависшей команды после таймаута не создаёт unhandled rejection", async (): Promise<void> => {
+    const client = new LateFailureRedisClient();
+    const store = new RedisCacheStore(client);
+    const unhandled: unknown[] = [];
+    const handler = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", handler);
+
+    try {
+      const cached = await store.get("status");
+      expect(cached).toBeUndefined();
+
+      client.rejectGet?.(new Error("late failure"));
+      await Bun.sleep(50);
+
+      expect(unhandled).toHaveLength(0);
+    } finally {
+      process.off("unhandledRejection", handler);
+    }
+  });
+});
+
 describe("RedisCacheStore — префикс ключей", (): void => {
   it("применяет префикс ко всем операциям", async (): Promise<void> => {
     const client = new FakeRedisClient();

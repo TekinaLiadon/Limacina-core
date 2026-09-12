@@ -4,7 +4,7 @@ setupTestEnv();
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { type INestApplication } from "@nestjs/common";
+import { type INestApplication, ValidationPipe } from "@nestjs/common";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
@@ -83,6 +83,7 @@ describe("V1 launcher эндпоинты", (): void => {
     }).compile();
 
     app = moduleFixture.createNestApplication(new FastifyAdapter());
+    app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
     filesService = app.get(FilesService);
@@ -322,6 +323,66 @@ describe("V1 launcher эндпоинты", (): void => {
         filesService.launcherHash.delete(TEST_MOD_KEY);
         unlinkSync(TEST_MOD_FILE);
       }
+    });
+
+    it("getList режет отсортированный список по offset/limit без пересечения страниц", () => {
+      const seededKeys = [
+        "pagination-aaa.txt",
+        "pagination-bbb.txt",
+        "pagination-ccc.txt",
+        "pagination-ddd.txt",
+      ];
+      try {
+        seededKeys.forEach((key, index) => {
+          filesService.launcherHash.set(key, `pagination-hash-${index}`);
+        });
+
+        const full = filesService.getList();
+        const firstPage = filesService.getList(0, 2);
+        const secondPage = filesService.getList(2, 2);
+        const allKeys = Object.keys(full.files).sort();
+
+        expect(Object.keys(firstPage.files)).toEqual(allKeys.slice(0, 2));
+        expect(Object.keys(secondPage.files)).toEqual(allKeys.slice(2, 4));
+        expect(firstPage.total).toBe(full.total);
+        expect(secondPage.total).toBe(full.total);
+
+        expect(filesService.getList().files).toEqual(full.files);
+        expect(filesService.getList(undefined, undefined).files).toEqual(full.files);
+      } finally {
+        seededKeys.forEach((key) => filesService.launcherHash.delete(key));
+      }
+    });
+
+    it("GET /v1/launcher/files/list?limit=1 отдаёт страницу с X-Total-Count", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/launcher/files/list?limit=1&offset=0")
+        .expect(200);
+
+      expect(Object.keys(res.body)).toHaveLength(1);
+      expect(Number(res.headers["x-total-count"])).toBeGreaterThanOrEqual(1);
+    });
+
+    it("GET /v1/launcher/files/mods поддерживает пагинацию", async () => {
+      try {
+        filesService.launcherHash.set("mods/pagination-x.jar", "pagination-hash-x");
+        filesService.launcherHash.set("mods/pagination-y.jar", "pagination-hash-y");
+
+        const res = await supertest(app.getHttpServer())
+          .get("/v1/launcher/files/mods?limit=1&offset=0")
+          .expect(200);
+
+        expect(Object.keys(res.body)).toHaveLength(1);
+        expect(Number(res.headers["x-total-count"])).toBeGreaterThanOrEqual(2);
+      } finally {
+        filesService.launcherHash.delete("mods/pagination-x.jar");
+        filesService.launcherHash.delete("mods/pagination-y.jar");
+      }
+    });
+
+    it("GET /v1/launcher/files/list отклоняет невалидный limit (400)", async () => {
+      await supertest(app.getHttpServer()).get("/v1/launcher/files/list?limit=0").expect(400);
+      await supertest(app.getHttpServer()).get("/v1/launcher/files/list?limit=nope").expect(400);
     });
 
     it("getHash отдаёт sha1-хеш (40 hex)", async () => {

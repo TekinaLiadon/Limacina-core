@@ -10,6 +10,7 @@ import { AuthMapStore, type StoredUser } from "../auth/service/auth_store.servic
 import { AuthService } from "../auth/service/auth.service";
 import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS } from "../auth/token.constants";
 import { AdminService } from "../admin/admin.service";
+import { CronService } from "../cron/cron.service";
 import { AdminMapStore } from "../admin/admin.store";
 import GlobalConfig from "../config/global-config";
 
@@ -272,7 +273,7 @@ describe("Смена пароля деактивирует выданные acce
     const login = await authService.login(TEST_USERNAME, OLD_PASSWORD);
     await Bun.sleep(1100);
 
-    const adminService = new AdminService(adminStore, authStore);
+    const adminService = new AdminService(adminStore, authStore, new CronService());
     await adminService.setUserPassword(TEST_USERNAME, "ownernewpass", {
       uuid: "owner-uuid-000000000000000000000000000",
       username: "owner",

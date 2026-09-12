@@ -1,7 +1,13 @@
+export interface ExecutedMigration {
+  name: string;
+  checksum: string | null;
+}
+
 export interface MigrationDriver {
   install(): Promise<void>;
-  listExecuted(): Promise<string[]>;
-  record(migration: string): Promise<void>;
+  listExecuted(): Promise<ExecutedMigration[]>;
+  record(migration: string, checksum: string): Promise<void>;
+  setChecksum(migration: string, checksum: string): Promise<void>;
   remove(migration: string): Promise<void>;
   close(): Promise<void>;
 }

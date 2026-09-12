@@ -1,4 +1,5 @@
-import { describe, expect, it, beforeAll, afterAll } from "bun:test";
+import { describe, expect, it, beforeAll, afterAll, spyOn } from "bun:test";
+import { Logger } from "@nestjs/common";
 import { limaFetch } from "./fetch";
 
 let server: ReturnType<typeof Bun.serve>;
@@ -156,5 +157,21 @@ describe("yggFetch", () => {
 
     expect(res.ok).toBe(false);
     expect(res.error).toBe("Request timeout");
+  });
+
+  it("не-2xx ответ логируется на error, а не на warn (TASK-65)", async () => {
+    const errorSpy = spyOn(Logger.prototype, "error");
+    const warnSpy = spyOn(Logger.prototype, "warn");
+    try {
+      const res = await limaFetch(`${baseUrl}/404`);
+
+      expect(res.ok).toBe(false);
+      expect(res.status).toBe(404);
+      expect(errorSpy).toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 });

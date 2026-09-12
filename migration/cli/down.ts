@@ -16,7 +16,7 @@ try {
     process.exit(0);
   }
 
-  const file = executed[executed.length - 1]!;
+  const file = executed[executed.length - 1]!.name;
   const mod = await import(path.join(listDir, file));
 
   if (typeof mod.down !== "function") {

@@ -1,5 +1,7 @@
 export const AdminMapStoreToken = Symbol("AdminMapStore");
 
+export const DELETED_USERS_RETENTION_DAYS = 30;
+
 export interface AdminUser {
   uuid: string;
   username: string;
@@ -40,7 +42,13 @@ export interface IAdminStore {
   deleteUser(username: string): Promise<AdminUser | undefined>;
   findDeletedByUsername(username: string): Promise<DeletedUser | undefined>;
   restoreUser(username: string): Promise<void>;
+  purgeOldDeletedUsers(retentionDays: number): Promise<number>;
   hasOwner(): Promise<boolean>;
+}
+
+interface StoredAdminUser extends AdminUser {
+  deleted: boolean;
+  deletedAt: Date | null;
 }
 
 function userMatchesFilter(user: AdminUser, filter: UsersFilter): boolean {
@@ -57,28 +65,47 @@ function userMatchesFilter(user: AdminUser, filter: UsersFilter): boolean {
 }
 
 function compareByUsername(left: AdminUser, right: AdminUser): number {
+  const leftKey = left.username.toLowerCase();
+  const rightKey = right.username.toLowerCase();
+  if (leftKey < rightKey) return -1;
+  if (leftKey > rightKey) return 1;
   if (left.username < right.username) return -1;
   if (left.username > right.username) return 1;
   return 0;
 }
 
+function toDeletedUser(user: AdminUser, deletedAt: Date): DeletedUser {
+  return { ...user, deletedAt };
+}
+
+function toAdminView(user: StoredAdminUser): AdminUser {
+  return {
+    uuid: user.uuid,
+    username: user.username,
+    role: user.role,
+    approved: user.approved,
+    banned: user.banned,
+  };
+}
+
 export class AdminMapStore implements IAdminStore {
-  private readonly users = new Map<string, AdminUser>();
-  private readonly deletedUsers = new Map<string, DeletedUser>();
+  private readonly users = new Map<string, StoredAdminUser>();
 
   async findByUsername(username: string): Promise<AdminUser | undefined> {
-    return this.users.get(username);
+    const user = this.liveUser(username);
+    if (!user) return undefined;
+    return toAdminView(user);
   }
 
   async saveUser(user: AdminUser): Promise<void> {
-    this.users.set(user.username, user);
+    this.users.set(user.uuid, { ...user, deleted: false, deletedAt: null });
   }
 
   async searchUsers(filter: UsersFilter): Promise<UsersPage> {
     const matched: AdminUser[] = [];
     for (const user of this.users.values()) {
-      if (!userMatchesFilter(user, filter)) continue;
-      matched.push(user);
+      if (user.deleted || !userMatchesFilter(user, filter)) continue;
+      matched.push(toAdminView(user));
     }
 
     const sorted = matched.toSorted(compareByUsername);
@@ -89,35 +116,35 @@ export class AdminMapStore implements IAdminStore {
   }
 
   async setApproved(username: string, approved: boolean): Promise<void> {
-    const user = this.users.get(username);
+    const user = this.liveUser(username);
     if (user) user.approved = approved;
   }
 
   async setBanned(username: string, banned: boolean): Promise<void> {
-    const user = this.users.get(username);
+    const user = this.liveUser(username);
     if (user) user.banned = banned;
   }
 
   async setRole(username: string, role: string): Promise<void> {
-    const user = this.users.get(username);
+    const user = this.liveUser(username);
     if (user) user.role = role;
   }
 
   async deleteUser(username: string): Promise<AdminUser | undefined> {
-    const user = this.users.get(username);
+    const user = this.liveUser(username);
     if (!user) return undefined;
 
-    this.users.delete(username);
-    this.deletedUsers.set(username, { ...user, deletedAt: new Date() });
-    this.cleanupOldDeleted();
-    return user;
+    user.deleted = true;
+    user.deletedAt = new Date();
+    return toAdminView(user);
   }
 
   async searchDeletedUsers(filter: UsersFilter): Promise<DeletedUsersPage> {
     const matched: DeletedUser[] = [];
-    for (const user of this.deletedUsers.values()) {
+    for (const user of this.users.values()) {
+      if (!user.deleted || user.deletedAt === null) continue;
       if (!userMatchesFilter(user, filter)) continue;
-      matched.push(user);
+      matched.push(toDeletedUser(user, user.deletedAt));
     }
 
     const sorted = matched.toSorted(compareByUsername);
@@ -128,35 +155,65 @@ export class AdminMapStore implements IAdminStore {
   }
 
   async findDeletedByUsername(username: string): Promise<DeletedUser | undefined> {
-    return this.deletedUsers.get(username);
+    const user = this.newestDeletedUser(username);
+    if (!user || user.deletedAt === null) return undefined;
+    return toDeletedUser(user, user.deletedAt);
   }
 
   async restoreUser(username: string): Promise<void> {
-    const deleted = this.deletedUsers.get(username);
-    if (!deleted) return;
+    const user = this.newestDeletedUser(username);
+    if (!user) return;
 
-    const { deletedAt: _, ...user } = deleted;
-    this.users.set(username, user);
-    this.deletedUsers.delete(username);
+    user.deleted = false;
+    user.deletedAt = null;
+    this.removeStaleDeletedDuplicates(username, user.uuid);
+  }
+
+  async purgeOldDeletedUsers(retentionDays: number): Promise<number> {
+    const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+    let purged = 0;
+    for (const [uuid, user] of this.users) {
+      if (!user.deleted || user.deletedAt === null) continue;
+      if (user.deletedAt.getTime() >= cutoff) continue;
+      this.users.delete(uuid);
+      purged += 1;
+    }
+    return purged;
   }
 
   async hasOwner(): Promise<boolean> {
     for (const user of this.users.values()) {
-      if (user.role === "owner") return true;
+      if (user.role === "owner" && !user.deleted) return true;
     }
     return false;
   }
 
   async __test__deleteUser(username: string): Promise<void> {
-    this.users.delete(username);
-    this.deletedUsers.delete(username);
+    for (const [uuid, user] of this.users) {
+      if (user.username === username) this.users.delete(uuid);
+    }
   }
 
-  private cleanupOldDeleted(): void {
-    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    for (const [username, user] of this.deletedUsers) {
-      if (user.deletedAt.getTime() < cutoff) {
-        this.deletedUsers.delete(username);
+  private liveUser(username: string): StoredAdminUser | undefined {
+    for (const user of this.users.values()) {
+      if (user.username === username && !user.deleted) return user;
+    }
+    return undefined;
+  }
+
+  private newestDeletedUser(username: string): StoredAdminUser | undefined {
+    let newest: StoredAdminUser | undefined;
+    for (const user of this.users.values()) {
+      if (user.username !== username || !user.deleted) continue;
+      if (!newest || (user.deletedAt ?? 0) > (newest.deletedAt ?? 0)) newest = user;
+    }
+    return newest;
+  }
+
+  private removeStaleDeletedDuplicates(username: string, keptUuid: string): void {
+    for (const [uuid, user] of this.users) {
+      if (uuid !== keptUuid && user.username === username && user.deleted) {
+        this.users.delete(uuid);
       }
     }
   }
