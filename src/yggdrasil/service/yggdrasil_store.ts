@@ -70,8 +70,9 @@ export interface IYggdrasilStore {
     uuid: string,
     textures: { skinUrl?: string | null; skinModel?: string | null; capeUrl?: string | null },
   ): Promise<void>;
+  countProfilesByTextureUrl(url: string): Promise<number>;
 
-  findUserByUsername(username: string): Promise<{ uuid: string; passwordHash: string } | undefined>;
+  findUserByUsername(username: string): Promise<YggdrasilUserCredentials | undefined>;
 }
 
 @Injectable()
@@ -79,7 +80,7 @@ export class YggdrasilMapStore implements IYggdrasilStore {
   private readonly profilesByUuid = new Map<string, YggdrasilProfile>();
   private readonly profilesByUsername = new Map<string, string>();
   private readonly profilesByUserId = new Map<string, string[]>();
-  private readonly users = new Map<string, { uuid: string; passwordHash: string }>();
+  private readonly users = new Map<string, YggdrasilUserCredentials>();
 
   async findProfileByUuid(uuid: string): Promise<YggdrasilProfile | undefined> {
     return this.profilesByUuid.get(uuid);
@@ -133,14 +134,26 @@ export class YggdrasilMapStore implements IYggdrasilStore {
     }
   }
 
-  async findUserByUsername(
-    username: string,
-  ): Promise<{ uuid: string; passwordHash: string } | undefined> {
+  async countProfilesByTextureUrl(url: string): Promise<number> {
+    let count = 0;
+    for (const profile of this.profilesByUuid.values()) {
+      if (profile.skinUrl === url || profile.capeUrl === url) count++;
+    }
+    return count;
+  }
+
+  async findUserByUsername(username: string): Promise<YggdrasilUserCredentials | undefined> {
     return this.users.get(username);
   }
 
-  async __test__addUser(username: string, uuid: string, passwordHash: string): Promise<void> {
-    this.users.set(username, { uuid, passwordHash });
+  async __test__addUser(
+    username: string,
+    uuid: string,
+    passwordHash: string,
+    banned = false,
+    approved = true,
+  ): Promise<void> {
+    this.users.set(username, { uuid, passwordHash, banned, approved });
   }
 
   async __test__deleteProfile(uuid: string): Promise<void> {

@@ -108,7 +108,7 @@ describe("V1 common/content — лимиты и валидация загруз�
     const store = app.get(UserContentMapStoreToken);
     for (const type of ["skin", "cape", "model"] as const) {
       for (const item of await store.findByUserUuid(TEST_UUID, type)) {
-        await store.deleteById(item.id, type);
+        await store.deleteByIdAndCountRemaining(item.id, type);
       }
     }
     for (const filePath of uploadedFiles) {

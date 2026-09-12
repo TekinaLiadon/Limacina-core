@@ -172,6 +172,41 @@ describe("V1 common/content эндпоинты", (): void => {
         .attach("file", pngBuffer(512 * 1024), "skin.png")
         .expect(400);
     });
+
+    it("одинаковый скин разных пользователей пишет разные файлы", async () => {
+      const bytes = pngBuffer(210);
+      const firstRes = await supertest(app.getHttpServer())
+        .post("/v1/common/content/skins")
+        .set("Authorization", `Bearer ${userToken}`)
+        .attach("file", bytes, "skin.png")
+        .expect(201);
+      trackUploadedFile(firstRes.body.url);
+
+      const secondRes = await supertest(app.getHttpServer())
+        .post("/v1/common/content/skins")
+        .set("Authorization", `Bearer ${otherUserToken}`)
+        .attach("file", bytes, "skin.png")
+        .expect(201);
+      trackUploadedFile(secondRes.body.url);
+
+      const firstUrl: string = firstRes.body.url;
+      const secondUrl: string = secondRes.body.url;
+      expect(firstUrl).toContain("/textures/v1user-");
+      expect(secondUrl).toContain("/textures/other-");
+      expect(firstUrl).not.toBe(secondUrl);
+
+      await supertest(app.getHttpServer())
+        .delete(`/v1/common/content/skins/${firstRes.body.id}`)
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(200);
+      await supertest(app.getHttpServer())
+        .delete(`/v1/common/content/skins/${secondRes.body.id}`)
+        .set("Authorization", `Bearer ${otherUserToken}`)
+        .expect(200);
+
+      expect(existsSync(firstUrl.replace(/^https?:\/\/[^/]+\//, "public/"))).toBe(false);
+      expect(existsSync(secondUrl.replace(/^https?:\/\/[^/]+\//, "public/"))).toBe(false);
+    });
   });
 
   describe("GET /v1/common/content/skins/:uuid", () => {
@@ -380,7 +415,7 @@ describe("V1 common/content эндпоинты", (): void => {
         expect(existsSync("public/textures/default.png")).toBe(true);
       } finally {
         for (const id of seededIds) {
-          await store.deleteById(id, "skin");
+          await store.deleteByIdAndCountRemaining(id, "skin");
         }
       }
     });
@@ -495,7 +530,7 @@ describe("V1 common/content эндпоинты", (): void => {
         .send({ id: seeded.id })
         .expect(400);
 
-      await store.deleteById(seeded.id, "skin");
+      await store.deleteByIdAndCountRemaining(seeded.id, "skin");
     });
   });
 

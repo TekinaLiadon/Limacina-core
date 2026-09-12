@@ -67,7 +67,12 @@ export class V1AuthController {
 
   @Post("invalidate")
   @Public()
-  @ApiOperation({ summary: "Инвалидация refresh токена" })
+  @ApiOperation({
+    summary: "Инвалидация refresh токена",
+    description:
+      "Идемпотентен: проверяется только подпись refresh-токена. " +
+      "Если jti уже удалён (повторный logout, ротация через refresh), ответ всё равно 201.",
+  })
   @ApiBody({ type: AuthRefreshDto })
   @ApiResponse({
     status: 201,

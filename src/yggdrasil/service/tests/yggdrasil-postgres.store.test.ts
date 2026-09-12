@@ -103,12 +103,55 @@ postgresDescribe("YggdrasilPostgresStore (postgres)", () => {
     expect(untouched?.capeUrl).toBe("http://localhost:3005/capes/new.png");
   });
 
-  it("findUserByUsername отдаёт uuid и хеш пароля", async () => {
-    const user = await createPostgresUser({ usernamePrefix: "pgygg" });
+  it("countProfilesByTextureUrl считает профили по skin_url и cape_url", async () => {
+    const first = await createPostgresUser({ usernamePrefix: "pgygg" });
+    const second = await createPostgresUser({ usernamePrefix: "pgygg" });
+    await store.updateProfileTexture(first.uuid, {
+      skinUrl: "http://localhost:3005/textures/shared.png",
+    });
+    await store.updateProfileTexture(second.uuid, {
+      capeUrl: "http://localhost:3005/textures/shared.png",
+    });
+    await store.updateProfileTexture(first.uuid, {
+      capeUrl: "http://localhost:3005/capes/own.png",
+    });
+
+    expect(await store.countProfilesByTextureUrl("http://localhost:3005/textures/shared.png")).toBe(
+      2,
+    );
+    expect(await store.countProfilesByTextureUrl("http://localhost:3005/capes/own.png")).toBe(1);
+    expect(
+      await store.countProfilesByTextureUrl("http://localhost:3005/textures/missing.png"),
+    ).toBe(0);
+  });
+
+  it("findUserByUsername отдаёт uuid, хеш пароля и статус banned/approved", async () => {
+    const user = await createPostgresUser({ usernamePrefix: "pgygg", approved: true });
+    const bannedUser = await createPostgresUser({
+      usernamePrefix: "pgygg",
+      banned: true,
+      approved: true,
+    });
+    const pendingUser = await createPostgresUser({
+      usernamePrefix: "pgygg",
+      banned: false,
+      approved: false,
+    });
 
     const found = await store.findUserByUsername(user.username);
     expect(found?.uuid).toBe(user.uuid);
     expect(found?.passwordHash).toBe(user.passwordHash);
+    expect(found?.banned).toBe(false);
+    expect(found?.approved).toBe(true);
+
+    const foundBanned = await store.findUserByUsername(bannedUser.username);
+    expect(foundBanned?.banned).toBe(true);
+    expect(foundBanned?.approved).toBe(true);
+
+    const foundPending = await store.findUserByUsername(pendingUser.username);
+    expect(foundPending?.banned).toBe(false);
+    expect(foundPending?.approved).toBe(false);
+
     expect(await store.findUserByUsername("pgygg_missing")).toBeUndefined();
   });
 });

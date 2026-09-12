@@ -6,11 +6,17 @@ type RateLimitHook = (request: FastifyRequest, reply: FastifyReply) => Promise<v
 const AUTH_ROUTES_PREFIX = "/v1/common/auth";
 const LOGIN_ENDPOINTS = ["/login", "/registration"];
 const PASSWORD_CHANGE_ENDPOINT = "/password";
+const SIGNOUT_ENDPOINT = "/authserver/signout";
 
 export function isAuthLoginRoute(url: string): boolean {
   const path = url.split("?")[0] ?? url;
   if (!path.startsWith(AUTH_ROUTES_PREFIX)) return false;
   return LOGIN_ENDPOINTS.some((endpoint) => path.endsWith(endpoint));
+}
+
+export function isSignoutRoute(url: string): boolean {
+  const path = url.split("?")[0] ?? url;
+  return path === SIGNOUT_ENDPOINT;
 }
 
 export function isPasswordChangeRoute(url: string): boolean {
@@ -70,7 +76,7 @@ export async function registerAuthRateLimit(
 
   instance.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     const url = request.raw.url ?? "";
-    if (isAuthLoginRoute(url)) {
+    if (isAuthLoginRoute(url) || isSignoutRoute(url)) {
       await limitLoginAttempts(request, reply);
       return;
     }

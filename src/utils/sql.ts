@@ -65,6 +65,7 @@ export interface SelectBuilder {
   orderBy: (column: string, direction?: OrderDirection) => SelectBuilder;
   limit: (n: number) => SelectBuilder;
   offset: (n: number) => SelectBuilder;
+  forUpdate: () => SelectBuilder;
   build: () => BuiltQuery;
 }
 
@@ -163,14 +164,16 @@ export function selectQuery(...columns: string[]): {
       let fromClause = `SELECT ${cols} FROM ${tableRef}`;
       let limitValue: number | undefined;
       let offsetValue: number | undefined;
+      let forUpdateValue = false;
 
       const buildSelect = (): BuiltQuery => {
         const whereClause = buildWhereClause(state);
         const orderClause = orderParts.length > 0 ? ` ORDER BY ${orderParts.join(", ")}` : "";
         const limitClause = limitValue !== undefined ? ` LIMIT ${limitValue}` : "";
         const offsetClause = offsetValue !== undefined ? ` OFFSET ${offsetValue}` : "";
+        const forUpdateClause = forUpdateValue ? " FOR UPDATE" : "";
         return {
-          sql: `${fromClause}${whereClause}${orderClause}${limitClause}${offsetClause}`,
+          sql: `${fromClause}${whereClause}${orderClause}${limitClause}${offsetClause}${forUpdateClause}`,
           values: state.values,
         };
       };
@@ -202,6 +205,10 @@ export function selectQuery(...columns: string[]): {
         },
         offset: (n: number) => {
           offsetValue = n;
+          return builder;
+        },
+        forUpdate: () => {
+          forUpdateValue = true;
           return builder;
         },
         build: buildSelect,
@@ -333,4 +340,18 @@ export async function executeInTransaction(statements: BuiltQuery[]): Promise<vo
       await tx.unsafe(statement.sql, statement.values as unknown[]);
     }
   });
+}
+
+export async function executeInTransactionReturning<T extends Record<string, unknown>>(
+  statements: BuiltQuery[],
+): Promise<QueryResult<T>[]> {
+  const results: QueryResult<T>[] = [];
+  await bunSql.begin(async (tx) => {
+    for (const statement of statements) {
+      const result = await tx.unsafe(statement.sql, statement.values as unknown[]);
+      const rows = (Array.isArray(result) ? result : (result?.rows ?? [])) as T[];
+      results.push({ rows, count: rows.length });
+    }
+  });
+  return results;
 }

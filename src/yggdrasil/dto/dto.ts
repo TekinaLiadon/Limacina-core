@@ -52,8 +52,9 @@ export class AuthenticateDto {
   @Type(() => AgentDto)
   agent?: AgentDto;
 
-  @ApiProperty({ example: "player1" })
+  @ApiProperty({ example: "player1", maxLength: 64 })
   @IsString({ message: validationMessages.string("username") })
+  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
   username!: string;
 
   @ApiProperty({ example: "secret123", maxLength: 128 })
@@ -61,9 +62,10 @@ export class AuthenticateDto {
   @MaxLength(128, { message: validationMessages.maxLength("password", 128) })
   password!: string;
 
-  @ApiPropertyOptional({ example: "client-token-123" })
+  @ApiPropertyOptional({ example: "client-token-123", maxLength: 512 })
   @IsOptional()
   @IsString({ message: validationMessages.string("clientToken") })
+  @MaxLength(512, { message: validationMessages.maxLength("clientToken", 512) })
   clientToken?: string;
 
   @ApiPropertyOptional({ default: true })
@@ -73,18 +75,20 @@ export class AuthenticateDto {
 }
 
 export class RefreshDto {
-  @ApiProperty()
-  @IsString()
+  @ApiProperty({ maxLength: 512 })
+  @IsString({ message: validationMessages.string("accessToken") })
+  @MaxLength(512, { message: validationMessages.maxLength("accessToken", 512) })
   accessToken!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ maxLength: 512 })
   @IsOptional()
-  @IsString()
+  @IsString({ message: validationMessages.string("clientToken") })
+  @MaxLength(512, { message: validationMessages.maxLength("clientToken", 512) })
   clientToken?: string;
 
   @ApiPropertyOptional({ default: true })
   @IsOptional()
-  @IsBoolean()
+  @IsBoolean({ message: validationMessages.boolean("requestUser") })
   requestUser?: boolean;
 
   @ApiPropertyOptional({ type: GameProfileDto })
@@ -95,30 +99,35 @@ export class RefreshDto {
 }
 
 export class ValidateDto {
-  @ApiProperty()
-  @IsString()
+  @ApiProperty({ maxLength: 512 })
+  @IsString({ message: validationMessages.string("accessToken") })
+  @MaxLength(512, { message: validationMessages.maxLength("accessToken", 512) })
   accessToken!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ maxLength: 512 })
   @IsOptional()
-  @IsString()
+  @IsString({ message: validationMessages.string("clientToken") })
+  @MaxLength(512, { message: validationMessages.maxLength("clientToken", 512) })
   clientToken?: string;
 }
 
 export class InvalidateDto {
-  @ApiProperty()
-  @IsString()
+  @ApiProperty({ maxLength: 512 })
+  @IsString({ message: validationMessages.string("accessToken") })
+  @MaxLength(512, { message: validationMessages.maxLength("accessToken", 512) })
   accessToken!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ maxLength: 512 })
   @IsOptional()
-  @IsString()
+  @IsString({ message: validationMessages.string("clientToken") })
+  @MaxLength(512, { message: validationMessages.maxLength("clientToken", 512) })
   clientToken?: string;
 }
 
 export class SignoutDto {
-  @ApiProperty({ example: "player1" })
-  @IsString()
+  @ApiProperty({ example: "player1", maxLength: 64 })
+  @IsString({ message: validationMessages.string("username") })
+  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
   username!: string;
 
   @ApiProperty({ example: "secret123", maxLength: 128 })
@@ -128,16 +137,19 @@ export class SignoutDto {
 }
 
 export class JoinDto {
-  @ApiProperty()
+  @ApiProperty({ maxLength: 512 })
   @IsString({ message: validationMessages.string("accessToken") })
+  @MaxLength(512, { message: validationMessages.maxLength("accessToken", 512) })
   accessToken!: string;
 
-  @ApiProperty()
+  @ApiProperty({ maxLength: 64 })
   @IsString({ message: validationMessages.string("selectedProfile") })
+  @MaxLength(64, { message: validationMessages.maxLength("selectedProfile", 64) })
   selectedProfile!: string;
 
-  @ApiProperty()
+  @ApiProperty({ maxLength: 64 })
   @IsString({ message: validationMessages.string("serverId") })
+  @MaxLength(64, { message: validationMessages.maxLength("serverId", 64) })
   serverId!: string;
 }
 
@@ -236,12 +248,18 @@ export class ApiMetadataResponseDto {
 }
 
 export class UploadTextureDto {
-  @ApiPropertyOptional({ example: "slim", description: "Модель скина (slim/classic)" })
+  @ApiPropertyOptional({
+    example: "slim",
+    description: "Модель скина (slim/classic)",
+    maxLength: 16,
+  })
   @IsOptional()
-  @IsString()
+  @IsString({ message: validationMessages.string("model") })
+  @MaxLength(16, { message: validationMessages.maxLength("model", 16) })
   model?: string;
 
-  @ApiProperty({ description: "PNG в base64" })
-  @IsString()
+  @ApiProperty({ description: "PNG в base64", maxLength: 700000 })
+  @IsString({ message: validationMessages.string("file") })
+  @MaxLength(700000, { message: validationMessages.maxLength("file", 700000) })
   file!: string;
 }

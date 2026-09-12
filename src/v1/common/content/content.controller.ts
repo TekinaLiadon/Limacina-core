@@ -64,7 +64,7 @@ export class V1ContentController {
     model?: SkinModel,
   ): Promise<UserContentUploadResponseDto> {
     const buffer = await this.extractFile(request, SKIN_STREAM_LIMIT_BYTES);
-    return this.userContentService.uploadSkin(user.uuid, buffer, model ?? undefined);
+    return this.userContentService.uploadSkin(user.uuid, user.username, buffer, model ?? undefined);
   }
 
   @Get("skins/:uuid")
@@ -117,7 +117,7 @@ export class V1ContentController {
     @Req() request: FastifyRequest,
   ): Promise<UserContentUploadResponseDto> {
     const buffer = await this.extractFile(request, SKIN_STREAM_LIMIT_BYTES);
-    return this.userContentService.uploadCape(user.uuid, buffer);
+    return this.userContentService.uploadCape(user.uuid, user.username, buffer);
   }
 
   @Get("capes/:uuid")
@@ -152,7 +152,7 @@ export class V1ContentController {
     @Req() request: FastifyRequest,
   ): Promise<UserContentUploadResponseDto> {
     const buffer = await this.extractFile(request, MODEL_STREAM_LIMIT_BYTES);
-    return this.userContentService.uploadModel(user.uuid, buffer);
+    return this.userContentService.uploadModel(user.uuid, user.username, buffer);
   }
 
   @Get("models/:uuid")
