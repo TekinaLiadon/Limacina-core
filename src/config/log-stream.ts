@@ -93,6 +93,7 @@ export function createLogStream(): Writable {
       const date = today();
       if (date !== currentDate || streamFailed) {
         closeLogStream(stream);
+        ensureLogsDir();
         currentDate = date;
         stream = openLogStream(currentDate);
         streamFailed = false;

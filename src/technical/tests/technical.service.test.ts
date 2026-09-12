@@ -6,6 +6,7 @@ import { ConflictException, InternalServerErrorException, Logger } from "@nestjs
 import {
   TechnicalService,
   buildInstallCommand,
+  buildStepEnv,
   currentRevision,
   runStep,
 } from "../technical.service";
@@ -431,6 +432,22 @@ describe("TechnicalService", (): void => {
 
     it("без лок-файла запускает обычную установку", () => {
       expect(buildInstallCommand(false)).toEqual(["bun", "install"]);
+    });
+  });
+
+  describe("buildStepEnv", () => {
+    it("передаёт GIT_SSH_COMMAND и не пропускает SECRETS дочерним процессам", () => {
+      const savedSecrets = process.env["SECRETS"];
+      process.env["SECRETS"] = JSON.stringify({ JWT_ACCESS: "super-secret-value" });
+      try {
+        const stepEnv = buildStepEnv();
+        expect(stepEnv["GIT_SSH_COMMAND"]).toBe("ssh -o BatchMode=yes");
+        expect("SECRETS" in stepEnv).toBe(false);
+        expect(JSON.stringify(stepEnv)).not.toContain("super-secret-value");
+      } finally {
+        if (savedSecrets === undefined) delete process.env["SECRETS"];
+        else process.env["SECRETS"] = savedSecrets;
+      }
     });
   });
 });

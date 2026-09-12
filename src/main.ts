@@ -72,9 +72,9 @@ async function bootstrap() {
     );
   }
 
-  const corsOrigins = process.env["CORS_ORIGINS"];
+  const corsOrigins = envConfig.CORS_ORIGINS;
   await instance.register(cors, {
-    origin: corsOrigins ? corsOrigins.split(",").map((o) => o.trim()) : true,
+    origin: corsOrigins ?? true,
     credentials: true,
     methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE"],
   });

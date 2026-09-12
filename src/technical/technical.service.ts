@@ -25,7 +25,12 @@ const BINARY_PATH = "dist/Limacina";
 const BINARY_BACKUP_PATH = "dist/Limacina.previous";
 const LOCKFILE_PATHS = ["bun.lockb", "bun.lock"];
 
-const STEP_ENV = { ...process.env, GIT_SSH_COMMAND: "ssh -o BatchMode=yes" };
+export function buildStepEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const { SECRETS: _secrets, ...stepEnv } = env;
+  return { ...stepEnv, GIT_SSH_COMMAND: "ssh -o BatchMode=yes" };
+}
+
+const STEP_ENV = buildStepEnv();
 
 function truncateOutput(output: string): string {
   if (output.length <= STEP_OUTPUT_LIMIT) return output;

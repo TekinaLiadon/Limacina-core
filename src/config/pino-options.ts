@@ -2,10 +2,15 @@ import type { Options } from "pino-http";
 import LogConfig from "./log-config";
 import { createLogStream } from "./log-stream";
 
-export function buildPinoHttpOptions(): Options {
+export interface PinoEnvConfig {
+  NODE_ENV: string;
+  LOG_LEVEL: string;
+}
+
+export function buildPinoHttpOptions(env: PinoEnvConfig = LogConfig.parseEnvOrExit()): Options {
   return {
     name: "Limacina",
-    level: LogConfig.parseEnvOrExit().LOG_LEVEL,
+    level: env.LOG_LEVEL,
     customLogLevel: (_req, res, err) => (err || res.statusCode >= 500 ? "error" : "info"),
     redact: [
       "req.headers.authorization",
@@ -23,7 +28,7 @@ export function buildPinoHttpOptions(): Options {
       "*.clientToken",
       "*.refreshToken",
     ],
-    ...(process.env.NODE_ENV !== "production"
+    ...(env.NODE_ENV !== "production"
       ? { transport: { target: "pino-pretty" } }
       : { stream: createLogStream() }),
   };

@@ -1,6 +1,20 @@
 import { z } from "zod";
 import { ZodEnvConfig } from "./zod-env";
 
+const CORS_ORIGINS_MAX = 100;
+
+const corsOriginsSchema = z
+  .string()
+  .transform((raw) => {
+    const origins = raw
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter((origin) => origin.length > 0);
+    if (origins.length === 0) return undefined;
+    return origins.slice(0, CORS_ORIGINS_MAX);
+  })
+  .optional();
+
 const configSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]),
@@ -11,6 +25,7 @@ const configSchema = z
     AUTH_PROXY_URL: z.string().url().optional(),
     BASE_URL: z.string().url(),
     MASTER_PASSWORD: z.string().min(1).optional(),
+    CORS_ORIGINS: corsOriginsSchema,
     MAX_SKINS_PER_USER: z.coerce.number().int().min(0).default(1),
     MAX_MODELS_PER_USER: z.coerce.number().int().min(0).default(1),
     MAX_CAPES_PER_USER: z.coerce.number().int().min(0).default(1),

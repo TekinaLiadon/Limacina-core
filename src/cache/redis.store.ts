@@ -1,5 +1,5 @@
 import { Injectable, Logger, type OnModuleDestroy } from "@nestjs/common";
-import { DEFAULT_CACHE_TTL_MS, type ICacheStore } from "./cache.store";
+import { DEFAULT_CACHE_TTL_MS, isValidCacheTtl, type ICacheStore } from "./cache.store";
 
 export const COMMAND_TIMEOUT_MS = 500;
 const FAILURE_LOG_INTERVAL = 100;
@@ -58,8 +58,24 @@ export class RedisCacheStore implements ICacheStore, OnModuleDestroy {
   }
 
   async set<T>(key: string, value: T, ttlMs?: number): Promise<void> {
+    if (!isValidCacheTtl(ttlMs)) {
+      this.logger.error({ key, ttlMs }, "Невалидный ttl, значение не сохранено в кеш");
+      return;
+    }
+
+    let payload: string;
     try {
-      const payload = JSON.stringify(value);
+      payload = JSON.stringify(value);
+    } catch (error) {
+      this.logger.error({ err: error, key }, "Несериализуемое значение не сохранено в кеш");
+      return;
+    }
+    if (typeof payload !== "string") {
+      this.logger.error({ key }, "Несериализуемое значение не сохранено в кеш");
+      return;
+    }
+
+    try {
       await this.withTimeout(
         this.client.set(this.buildKey(key), payload, "PX", ttlMs ?? DEFAULT_CACHE_TTL_MS),
         "set",

@@ -35,16 +35,21 @@ export class ZodEnvConfig<T extends z.ZodType<Record<string, unknown>>> {
             code: "custom",
             path: ["SECRETS"],
             message: "SECRETS must be a JSON object",
-            input: env["SECRETS"],
           },
         ]),
       };
     }
 
-    return this.schema.safeParse({
-      ...env,
-      ...secrets.value,
-    });
+    const mergedEnv = { ...env, ...secrets.value };
+    const result = this.schema.safeParse(mergedEnv);
+    if (result.success) {
+      return { success: true as const, data: result.data };
+    }
+
+    const sanitizedIssues: z.core.$ZodIssue[] = result.error.issues.map(
+      ({ input: _input, ...issue }) => issue,
+    );
+    return { success: false as const, error: new z.ZodError(sanitizedIssues) };
   }
 
   parseEnvOrExit(env = process.env): z.output<T> {
