@@ -1,8 +1,6 @@
-process.env["JWT_ACCESS"] = "test-access-secret-0123456789abcdef0123";
-process.env["JWT_REFRESH"] = "test-refresh-secret-0123456789abcdef0123";
-process.env["NODE_ENV"] = "test";
-process.env["BASE_URL"] = "http://localhost:3005";
-process.env["DB_DRIVER"] = "map";
+import { setupTestEnv } from "../../../../utils/tests/test-env";
+
+setupTestEnv();
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { type INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
@@ -213,6 +211,13 @@ describe("V1 common/auth эндпоинты", (): void => {
       await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
         .send({ username: "loginuser", password: "" })
+        .expect(400);
+    });
+
+    it("возвращает 400 при username длиннее 64 символов (TASK-11)", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "a".repeat(65), password: "pass123" })
         .expect(400);
     });
 

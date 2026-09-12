@@ -28,9 +28,10 @@ export class RegisterDto {
 }
 
 export class AuthDto {
-  @ApiProperty({ example: "john" })
+  @ApiProperty({ example: "john", maxLength: 64 })
   @IsString({ message: validationMessages.string("username") })
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })
+  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
   username!: string;
 
   @ApiProperty({ example: "secret123", minLength: 6, maxLength: 128 })

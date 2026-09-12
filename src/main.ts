@@ -7,7 +7,7 @@ import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { apiReference } from "@scalar/nestjs-api-reference";
 import { ValidationPipe, Logger as NestLogger } from "@nestjs/common";
-import { Logger, LoggerErrorInterceptor } from "nestjs-pino";
+import { Logger } from "nestjs-pino";
 import GlobalConfig from "./config/global-config";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import fastifyStatic from "@fastify/static";
@@ -15,7 +15,7 @@ import cors from "@fastify/cors";
 import fastifyMultipart from "@fastify/multipart";
 import { registerAuthRateLimit } from "./common/auth-rate-limit";
 
-const DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
+const DEFAULT_BODY_LIMIT_BYTES = Math.round(1.3 * 1024 * 1024);
 
 async function bootstrap() {
   const envConfig = GlobalConfig.parseEnvOrExit();
@@ -31,14 +31,10 @@ async function bootstrap() {
 
   const logger = app.get(Logger);
   app.useLogger(logger);
-  app.useGlobalInterceptors(new LoggerErrorInterceptor());
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
   app.enableShutdownHooks();
 
   registerProcessErrorHandlers(logger);
-  if (process.env.NODE_ENV === "production") {
-    logger.warn = () => undefined;
-  }
 
   const instance = app.getHttpAdapter().getInstance();
   await instance.register(fastifyStatic, {
@@ -62,7 +58,7 @@ async function bootstrap() {
             await servePanelFallback(request, reply, panelDir, panelIndexPath);
           } catch (error) {
             logger.error({ err: error, url: request.url }, "Ошибка отдачи panel SPA");
-            if (!reply.sent) {
+            if (!reply.raw.headersSent) {
               reply.code(404).send("Not found");
             }
           }

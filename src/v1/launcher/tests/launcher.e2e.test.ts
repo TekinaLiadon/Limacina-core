@@ -1,8 +1,6 @@
-process.env["JWT_ACCESS"] = "test-access-secret-0123456789abcdef0123";
-process.env["JWT_REFRESH"] = "test-refresh-secret-0123456789abcdef0123";
-process.env["NODE_ENV"] = "test";
-process.env["BASE_URL"] = "http://localhost:3005";
-process.env["DB_DRIVER"] = "map";
+import { setupTestEnv } from "../../../utils/tests/test-env";
+
+setupTestEnv();
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -112,6 +110,30 @@ describe("V1 launcher эндпоинты", (): void => {
       expect(typeof res.body.version).toBe("string");
       expect(Array.isArray(res.body.platforms)).toBe(true);
     });
+
+    it("использует 0.0.0, если version.json не соответствует форме (TASK-69)", async () => {
+      await sleep(MUTATION_SETTLE_MS);
+      writeFileSync(VERSION_FILE, JSON.stringify({ version: 123 }));
+
+      try {
+        let version = "";
+        await waitFor(async () => {
+          const res = await supertest(app.getHttpServer())
+            .get("/v1/launcher/update/version")
+            .expect(200);
+          ({ version } = res.body);
+          return version === "0.0.0";
+        });
+
+        expect(version).toBe("0.0.0");
+      } finally {
+        if (hadVersionFile) {
+          writeFileSync(VERSION_FILE, originalVersionContent);
+        } else if (existsSync(VERSION_FILE)) {
+          unlinkSync(VERSION_FILE);
+        }
+      }
+    });
   });
 
   describe("GET /v1/launcher/update/:os/:arch/download", () => {
@@ -195,6 +217,31 @@ describe("V1 launcher эндпоинты", (): void => {
         if (backupContent) {
           writeFileSync(CONFIG_FILE, backupContent);
           await waitForConfig(() => true);
+        }
+      }
+    });
+
+    it("возвращает 404 при битом config.toml, а не 500 (TASK-68)", async () => {
+      const backupContent = existsSync(CONFIG_FILE) ? readFileSync(CONFIG_FILE, "utf-8") : "";
+      await sleep(MUTATION_SETTLE_MS);
+
+      try {
+        writeFileSync(CONFIG_FILE, "это не toml [");
+
+        let status = 200;
+        await waitFor(async () => {
+          const res = await supertest(app.getHttpServer()).get("/v1/launcher/config");
+          ({ status } = res);
+          return status === 404;
+        });
+
+        expect(status).toBe(404);
+      } finally {
+        if (backupContent) {
+          writeFileSync(CONFIG_FILE, backupContent);
+          await waitForConfig(() => true);
+        } else {
+          unlinkSync(CONFIG_FILE);
         }
       }
     });

@@ -1,12 +1,15 @@
 import { Injectable } from "@nestjs/common";
 
-export interface YggdrasilProfile {
-  uuid: string;
-  userId: string;
-  username: string;
+export interface YggdrasilTextures {
   skinUrl?: string | null;
   skinModel?: string | null;
   capeUrl?: string | null;
+}
+
+export interface YggdrasilProfile extends YggdrasilTextures {
+  uuid: string;
+  userId: string;
+  username: string;
 }
 
 export interface TokenEntry {
@@ -40,6 +43,14 @@ export interface YggdrasilSessionRecord {
   expiresAt: number;
 }
 
+export interface YggdrasilSeedUser {
+  username: string;
+  uuid: string;
+  passwordHash: string;
+  banned?: boolean | undefined;
+  approved?: boolean | undefined;
+}
+
 export const TOKEN_TTL_MS = 15 * 24 * 60 * 60 * 1000;
 export const SESSION_TTL_MS = 30 * 1000;
 export const MAX_TOKENS_PER_USER = 4;
@@ -66,10 +77,7 @@ export interface IYggdrasilStore {
   findProfilesByUserId(userId: string): Promise<YggdrasilProfile[]>;
   findProfilesByUsernames(usernames: string[]): Promise<YggdrasilProfile[]>;
   saveProfile(profile: YggdrasilProfile): Promise<void>;
-  updateProfileTexture(
-    uuid: string,
-    textures: { skinUrl?: string | null; skinModel?: string | null; capeUrl?: string | null },
-  ): Promise<void>;
+  updateProfileTexture(uuid: string, textures: YggdrasilTextures): Promise<void>;
   countProfilesByTextureUrl(url: string): Promise<number>;
 
   findUserByUsername(username: string): Promise<YggdrasilUserCredentials | undefined>;
@@ -80,7 +88,24 @@ export class YggdrasilMapStore implements IYggdrasilStore {
   private readonly profilesByUuid = new Map<string, YggdrasilProfile>();
   private readonly profilesByUsername = new Map<string, string>();
   private readonly profilesByUserId = new Map<string, string[]>();
-  private readonly users = new Map<string, YggdrasilUserCredentials>();
+  private readonly users: Map<string, YggdrasilUserCredentials>;
+
+  constructor(seed: { users?: YggdrasilSeedUser[]; profiles?: YggdrasilProfile[] } = {}) {
+    this.users = new Map(
+      seed.users?.map((user) => [
+        user.username,
+        {
+          uuid: user.uuid,
+          passwordHash: user.passwordHash,
+          banned: user.banned ?? false,
+          approved: user.approved ?? true,
+        },
+      ]),
+    );
+    for (const profile of seed.profiles ?? []) {
+      this.indexProfile(profile);
+    }
+  }
 
   async findProfileByUuid(uuid: string): Promise<YggdrasilProfile | undefined> {
     return this.profilesByUuid.get(uuid);
@@ -112,6 +137,10 @@ export class YggdrasilMapStore implements IYggdrasilStore {
   }
 
   async saveProfile(profile: YggdrasilProfile): Promise<void> {
+    this.indexProfile(profile);
+  }
+
+  private indexProfile(profile: YggdrasilProfile): void {
     this.profilesByUuid.set(profile.uuid, profile);
     this.profilesByUsername.set(profile.username, profile.uuid);
     const existing = this.profilesByUserId.get(profile.userId) ?? [];
@@ -121,10 +150,7 @@ export class YggdrasilMapStore implements IYggdrasilStore {
     }
   }
 
-  async updateProfileTexture(
-    uuid: string,
-    textures: { skinUrl?: string | null; skinModel?: string | null; capeUrl?: string | null },
-  ): Promise<void> {
+  async updateProfileTexture(uuid: string, textures: YggdrasilTextures): Promise<void> {
     const profile = this.profilesByUuid.get(uuid);
     if (!profile) return;
     const updated = { ...profile, ...textures };
@@ -144,30 +170,5 @@ export class YggdrasilMapStore implements IYggdrasilStore {
 
   async findUserByUsername(username: string): Promise<YggdrasilUserCredentials | undefined> {
     return this.users.get(username);
-  }
-
-  async __test__addUser(
-    username: string,
-    uuid: string,
-    passwordHash: string,
-    banned = false,
-    approved = true,
-  ): Promise<void> {
-    this.users.set(username, { uuid, passwordHash, banned, approved });
-  }
-
-  async __test__deleteProfile(uuid: string): Promise<void> {
-    const profile = this.profilesByUuid.get(uuid);
-    if (!profile) return;
-
-    this.profilesByUuid.delete(uuid);
-    this.profilesByUsername.delete(profile.username);
-    const userIds = this.profilesByUserId.get(profile.userId);
-    if (userIds) {
-      this.profilesByUserId.set(
-        profile.userId,
-        userIds.filter((id) => id !== uuid),
-      );
-    }
   }
 }

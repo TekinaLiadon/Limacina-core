@@ -234,6 +234,9 @@ export class ApiMetaDto {
 
   @ApiPropertyOptional({ type: ApiMetaLinksDto })
   links?: ApiMetaLinksDto;
+
+  @ApiPropertyOptional({ name: "feature.non_email_login" })
+  "feature.non_email_login"?: boolean;
 }
 
 export class ApiMetadataResponseDto {

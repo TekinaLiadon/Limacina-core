@@ -3,6 +3,7 @@ import { readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { sign, createHmac } from "node:crypto";
 import type {
+  ApiMetadataResponseDto,
   AuthenticateDto,
   AuthenticateResponseDto,
   RefreshDto,
@@ -22,6 +23,7 @@ import {
   type IYggdrasilTokenStore,
   type IYggdrasilSessionStore,
   type YggdrasilProfile,
+  type YggdrasilTextures,
   type YggdrasilUserCredentials,
 } from "./yggdrasil_store";
 import {
@@ -36,11 +38,6 @@ import { sanitizeFilePrefix } from "../../utils/file-prefix";
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_TEXTURE_BYTES = 512 * 1024;
 
-type Textures = {
-  skinUrl?: string | null;
-  skinModel?: string | null;
-  capeUrl?: string | null;
-}; // TODO
 @Injectable()
 export class YggdrasilService {
   private readonly logger = new Logger(YggdrasilService.name);
@@ -275,7 +272,7 @@ export class YggdrasilService {
     };
   }
 
-  async getProfile(uuid: string): Promise<SessionProfileDto | null> {
+  async getProfile(uuid: string, signed = true): Promise<SessionProfileDto | null> {
     const normalized = uuid.replace(/-/g, "");
     const profile = await this.store.findProfileByUuid(normalized);
     if (!profile) return null;
@@ -283,7 +280,7 @@ export class YggdrasilService {
     return {
       id: profile.uuid,
       name: profile.username,
-      properties: await this.buildTextureProperties(profile),
+      properties: await this.buildTextureProperties(profile, signed),
     };
   }
 
@@ -316,7 +313,7 @@ export class YggdrasilService {
     const previousUrl = textureType === "skin" ? profile.skinUrl : profile.capeUrl;
     const url = await this.writeTexture(file, profile.username, normalizedUuid);
 
-    const textures: Textures = this.createTextures(textureType, model ?? null, url);
+    const textures: YggdrasilTextures = this.createTextures(textureType, model ?? null, url);
     await this.store.updateProfileTexture(normalizedUuid, textures);
     await this.releaseTextureFile(previousUrl, textureType);
   }
@@ -365,7 +362,7 @@ export class YggdrasilService {
     await this.assertTextureOwnership(profile, authorization);
 
     const previousUrl = textureType === "skin" ? profile.skinUrl : profile.capeUrl;
-    const textures: Textures = this.createTextures(textureType);
+    const textures: YggdrasilTextures = this.createTextures(textureType);
     await this.store.updateProfileTexture(normalizedUuid, textures);
     await this.releaseTextureFile(previousUrl, textureType);
   }
@@ -458,12 +455,8 @@ export class YggdrasilService {
     textureType: "skin" | "cape",
     model: string | null = null,
     url: string | null = null,
-  ): Textures {
-    const textures: {
-      skinUrl?: string | null;
-      skinModel?: string | null;
-      capeUrl?: string | null;
-    } = {};
+  ): YggdrasilTextures {
+    const textures: YggdrasilTextures = {};
     if (textureType === "skin") {
       textures.skinUrl = url;
       textures.skinModel = model;
@@ -473,31 +466,37 @@ export class YggdrasilService {
     return textures;
   }
 
-  getMetadata() {
-    const skinDomains: string[] = [];
-    try {
-      const url = new URL(this.config.BASE_URL);
-      const host = url.hostname;
-      skinDomains.push(host);
-      if (host.includes(".")) {
-        const dotIndex = host.indexOf(".");
-        skinDomains.push(host.slice(dotIndex));
-      }
-    } catch {}
-
+  getMetadata(): ApiMetadataResponseDto {
     return {
       meta: {
         serverName: "Limacina",
         implementationName: "limacina-core",
         implementationVersion: "1.0.0",
         links: {
-          homepage: "https://limacina.example.com",
+          homepage: this.config.BASE_URL,
         },
         "feature.non_email_login": true,
       },
-      skinDomains,
+      skinDomains: this.resolveSkinDomains(),
       signaturePublickey: this.publicKeyPem,
     };
+  }
+
+  private resolveSkinDomains(): string[] {
+    const skinDomains: string[] = [];
+    try {
+      const host = new URL(this.config.BASE_URL).hostname;
+      skinDomains.push(host);
+      if (host.includes(".")) {
+        skinDomains.push(host.slice(host.indexOf(".")));
+      }
+    } catch (error) {
+      this.logger.warn(
+        { err: error, baseUrl: this.config.BASE_URL },
+        "Не удалось вычислить skinDomains из BASE_URL",
+      );
+    }
+    return skinDomains;
   }
 
   private async createAuthResponse(
@@ -550,6 +549,7 @@ export class YggdrasilService {
 
   private async buildTextureProperties(
     profile: YggdrasilProfile,
+    signed = true,
   ): Promise<Array<{ name: string; value: string; signature?: string }>> {
     const properties: Array<{ name: string; value: string; signature?: string }> = [];
 
@@ -581,7 +581,7 @@ export class YggdrasilService {
       value: texturesValue,
     };
 
-    if (this.privateKey) {
+    if (this.privateKey && signed) {
       const sig = sign("sha1", new Uint8Array(Buffer.from(texturesValue)), this.privateKey);
       property.signature = sig.toString("base64");
     }

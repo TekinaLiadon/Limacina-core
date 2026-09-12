@@ -1,13 +1,12 @@
-process.env["JWT_ACCESS"] = "test-access-secret-0123456789abcdef0123";
-process.env["JWT_REFRESH"] = "test-refresh-secret-0123456789abcdef0123";
-process.env["NODE_ENV"] = "test";
-process.env["BASE_URL"] = "http://localhost:3005";
-process.env["DB_DRIVER"] = "map";
+import { setupTestEnv } from "../../../utils/tests/test-env";
+
+setupTestEnv();
 
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -41,6 +40,7 @@ import { ConfigUpdateService } from "../../../admin/config-update.service";
 import { TechnicalService } from "../../../technical/technical.service";
 import { AdminMapStore, AdminMapStoreToken } from "../../../admin/admin.store";
 import { AuthMapStore, AuthMapStoreToken } from "../../../auth/service/auth_store.service";
+import { buildLauncherZipName } from "../../../launcher/launcher-files";
 import GlobalConfig from "../../../config/global-config";
 import { AppConfigToken } from "../../../config/app-config.provider";
 import { Jwt_authGuard } from "../../../common/jwt_auth.guard";
@@ -1491,6 +1491,54 @@ describe("V1 panel эндпоинты", (): void => {
 
       const data = JSON.parse(readFileSync(VERSION_FILE, "utf-8")) as { version: string };
       expect(data.version).toBe("9.9.9");
+    });
+
+    it("конкурентные PATCH оставляют консистентное состояние", async () => {
+      const versions = ["8.8.1", "8.8.2", "8.8.3"];
+      const platformDir = join("public", "linux", "x86_64");
+      const oldDir = join(platformDir, "old");
+      const existingZips = existsSync(platformDir)
+        ? readdirSync(platformDir).filter((file) => file.endsWith(".zip"))
+        : [];
+      try {
+        const responses = await Promise.all(
+          versions.map((version) =>
+            supertest(app.getHttpServer())
+              .patch("/v1/panel/launcher")
+              .set("Authorization", `Bearer ${adminToken}`)
+              .field("version", version)
+              .attach("linux_x86_64", Buffer.from(`zip-${version}`), "launcher.zip"),
+          ),
+        );
+
+        for (const res of responses) {
+          expect(res.status).toBe(200);
+          expect(versions).toContain(res.body.version);
+          expect(res.body.updated).toContain("linux/x86_64");
+        }
+
+        const data = JSON.parse(readFileSync(VERSION_FILE, "utf-8")) as { version: string };
+        expect(versions).toContain(data.version);
+        expect(
+          existsSync(join(platformDir, buildLauncherZipName(data.version, "linux", "x86_64"))),
+        ).toBe(true);
+        expect(existsSync(`${VERSION_FILE}.tmp`)).toBe(false);
+      } finally {
+        for (const dir of [platformDir, oldDir]) {
+          for (const version of versions) {
+            const zipPath = join(dir, buildLauncherZipName(version, "linux", "x86_64"));
+            if (existsSync(zipPath)) unlinkSync(zipPath);
+          }
+        }
+        for (const file of existingZips) {
+          if (existsSync(join(oldDir, file))) {
+            renameSync(join(oldDir, file), join(platformDir, file));
+          }
+        }
+        if (existsSync(oldDir) && readdirSync(oldDir).length === 0) {
+          rmSync(oldDir, { recursive: true });
+        }
+      }
     });
 
     it("возвращает 401 без токена", async () => {

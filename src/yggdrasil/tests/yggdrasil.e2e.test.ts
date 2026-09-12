@@ -1,3 +1,7 @@
+import { setupTestEnv } from "../../utils/tests/test-env";
+
+setupTestEnv();
+
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 import { createHmac } from "node:crypto";
@@ -13,6 +17,8 @@ import {
   YggdrasilStoreToken,
   YggdrasilTokenStoreToken,
   YggdrasilSessionStoreToken,
+  type YggdrasilProfile,
+  type YggdrasilSeedUser,
 } from "../service/yggdrasil_store";
 import { YggdrasilMapTokenStore, YggdrasilMapSessionStore } from "../../memory/yggdrasil-map.store";
 import { MemoryModule } from "../../memory/memory.module";
@@ -37,6 +43,11 @@ const BANNED_USER_UUID = "33333333333333333333333333333333";
 const BANNED_PROFILE_UUID = "e5f6a7b8c9d4e5f6a7b8c9d4e5f6a7b8";
 const PENDING_USERNAME = "pendingplayer";
 const PENDING_USER_UUID = "44444444444444444444444444444444";
+const BIND_USERNAME = "profilebinder";
+const BIND_USER_UUID = "55555555555555555555555555555555";
+const BIND_PROFILE_UUID = "d4e5f6a7b8c9d4e5f6a7b8c9d4e5f6a7";
+const BIND_SECOND_PROFILE_UUID = "f6a7b8c9d4e5f6a7b8c9d4e5f6a7b8c9";
+const BIND_SECOND_PROFILE_NAME = "profilebinder2";
 const SIGNOUT_LIMIT_USERNAME = "signoutlimiter";
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const buildPngBase64 = (body: string): string => {
@@ -55,6 +66,25 @@ describe("Yggdrasil эндпоинты", () => {
   beforeAll(async () => {
     const appConfig = GlobalConfig.parseEnvOrExit();
     jwtAccessSecret = appConfig.JWT_ACCESS;
+    const passwordHash = await Bun.password.hash(TEST_PASSWORD);
+    const seedUsers: YggdrasilSeedUser[] = [
+      { username: TEST_USERNAME, uuid: TEST_USER_UUID, passwordHash },
+      { username: ATTACKER_USERNAME, uuid: ATTACKER_USER_UUID, passwordHash },
+      { username: BANNED_USERNAME, uuid: BANNED_USER_UUID, passwordHash, banned: true },
+      { username: PENDING_USERNAME, uuid: PENDING_USER_UUID, passwordHash, approved: false },
+      { username: BIND_USERNAME, uuid: BIND_USER_UUID, passwordHash },
+    ];
+    const seedProfiles: YggdrasilProfile[] = [
+      { uuid: TEST_UUID, userId: TEST_USER_UUID, username: TEST_USERNAME },
+      { uuid: ATTACKER_UUID, userId: ATTACKER_USER_UUID, username: ATTACKER_USERNAME },
+      { uuid: BANNED_PROFILE_UUID, userId: BANNED_USER_UUID, username: BANNED_USERNAME },
+      { uuid: BIND_PROFILE_UUID, userId: BIND_USER_UUID, username: BIND_USERNAME },
+      {
+        uuid: BIND_SECOND_PROFILE_UUID,
+        userId: BIND_USER_UUID,
+        username: BIND_SECOND_PROFILE_NAME,
+      },
+    ];
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [MemoryModule],
@@ -64,7 +94,7 @@ describe("Yggdrasil эндпоинты", () => {
         { provide: AppConfigToken, useFactory: () => appConfig },
         {
           provide: YggdrasilStoreToken,
-          useClass: YggdrasilMapStore,
+          useFactory: () => new YggdrasilMapStore({ users: seedUsers, profiles: seedProfiles }),
         },
         {
           provide: YggdrasilTokenStoreToken,
@@ -93,22 +123,6 @@ describe("Yggdrasil эндпоинты", () => {
     store = moduleFixture.get(YggdrasilStoreToken) as YggdrasilMapStore;
     tokenStore = moduleFixture.get(YggdrasilTokenStoreToken) as YggdrasilMapTokenStore;
     contentStore = moduleFixture.get(UserContentMapStoreToken) as UserContentMapStore;
-    const passwordHash = await Bun.password.hash(TEST_PASSWORD);
-    await store.__test__addUser(TEST_USERNAME, TEST_USER_UUID, passwordHash);
-    await store.saveProfile({ uuid: TEST_UUID, userId: TEST_USER_UUID, username: TEST_USERNAME });
-    await store.__test__addUser(ATTACKER_USERNAME, ATTACKER_USER_UUID, passwordHash);
-    await store.saveProfile({
-      uuid: ATTACKER_UUID,
-      userId: ATTACKER_USER_UUID,
-      username: ATTACKER_USERNAME,
-    });
-    await store.__test__addUser(BANNED_USERNAME, BANNED_USER_UUID, passwordHash, true, true);
-    await store.saveProfile({
-      uuid: BANNED_PROFILE_UUID,
-      userId: BANNED_USER_UUID,
-      username: BANNED_USERNAME,
-    });
-    await store.__test__addUser(PENDING_USERNAME, PENDING_USER_UUID, passwordHash, false, false);
   });
 
   afterAll(async () => {
@@ -134,6 +148,13 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer()).get("/").expect(200);
 
       expect(res.body.meta["feature.non_email_login"]).toBe(true);
+    });
+
+    it("homepage берётся из BASE_URL, skinDomains вычисляются из хоста", async () => {
+      const res = await supertest(app.getHttpServer()).get("/").expect(200);
+
+      expect(res.body.meta.links.homepage).toBe("http://localhost:3005");
+      expect(res.body.skinDomains).toEqual(["localhost"]);
     });
   });
 
@@ -286,31 +307,24 @@ describe("Yggdrasil эндпоинты", () => {
     });
 
     it("selectedProfile: привязка профиля к токену", async () => {
-      const secondProfileUuid = "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5";
-      await store.saveProfile({
-        uuid: secondProfileUuid,
-        userId: TEST_USER_UUID,
-        username: "testplayer2",
-      });
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: BIND_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
 
-      try {
-        const authRes = await supertest(app.getHttpServer())
-          .post("/authserver/authenticate")
-          .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-          .expect(200);
+      const refreshRes = await supertest(app.getHttpServer())
+        .post("/authserver/refresh")
+        .send({
+          accessToken: authRes.body.accessToken,
+          selectedProfile: {
+            id: BIND_SECOND_PROFILE_UUID,
+            name: BIND_SECOND_PROFILE_NAME,
+            properties: [],
+          },
+        })
+        .expect(200);
 
-        const refreshRes = await supertest(app.getHttpServer())
-          .post("/authserver/refresh")
-          .send({
-            accessToken: authRes.body.accessToken,
-            selectedProfile: { id: secondProfileUuid, name: "testplayer2", properties: [] },
-          })
-          .expect(200);
-
-        expect(refreshRes.body.selectedProfile.id).toBe(secondProfileUuid);
-      } finally {
-        await store.__test__deleteProfile(secondProfileUuid);
-      }
+      expect(refreshRes.body.selectedProfile.id).toBe(BIND_SECOND_PROFILE_UUID);
     });
   });
 
@@ -636,6 +650,41 @@ describe("Yggdrasil эндпоинты", () => {
       await supertest(app.getHttpServer())
         .get("/sessionserver/session/minecraft/profile/00000000000000000000000000000000")
         .expect(204);
+    });
+
+    it("по умолчанию отдаёт текстуры без подписи (unsigned=true)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get(`/sessionserver/session/minecraft/profile/${TEST_UUID}`)
+        .expect(200);
+
+      const texProp = res.body.properties.find((p: { name: string }) => p.name === "textures");
+      expect(texProp).toBeDefined();
+      expect(texProp.signature).toBeUndefined();
+    });
+
+    it("unsigned=false добавляет подпись, если включено подписывание", async () => {
+      const meta = await supertest(app.getHttpServer()).get("/").expect(200);
+      const signingEnabled =
+        typeof meta.body.signaturePublickey === "string" && meta.body.signaturePublickey.length > 0;
+
+      const res = await supertest(app.getHttpServer())
+        .get(`/sessionserver/session/minecraft/profile/${TEST_UUID}?unsigned=false`)
+        .expect(200);
+
+      const texProp = res.body.properties.find((p: { name: string }) => p.name === "textures");
+      expect(texProp).toBeDefined();
+      if (signingEnabled) {
+        expect(typeof texProp.signature).toBe("string");
+        expect(texProp.signature.length).toBeGreaterThan(0);
+      } else {
+        expect(texProp.signature).toBeUndefined();
+      }
+    });
+
+    it("некорректное значение unsigned отклоняется с 400", async () => {
+      await supertest(app.getHttpServer())
+        .get(`/sessionserver/session/minecraft/profile/${TEST_UUID}?unsigned=maybe`)
+        .expect(400);
     });
 
     it("корректно кодирует текстуры в base64", async () => {

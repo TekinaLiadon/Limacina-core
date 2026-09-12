@@ -1,5 +1,6 @@
-process.env["NODE_ENV"] = "test";
-process.env["BASE_URL"] = "http://localhost:3005";
+import { setupTestEnv } from "../../utils/tests/test-env";
+
+setupTestEnv();
 process.env["LOG_LEVEL"] = "info";
 
 import pino from "pino";
@@ -56,5 +57,30 @@ describe("buildPinoHttpOptions", (): void => {
     expect(line).not.toContain("yggdrasil-token");
     expect(line).not.toContain("nested-refresh-token");
     expect(line).not.toContain("nested-client-token");
+  });
+
+  it("warn проходит при уровне info — security-события видны в проде (TASK-67)", (): void => {
+    const lines: string[] = [];
+    buildLogger(lines).warn({ event: "login_failed" }, "Подозрительная активность");
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("Подозрительная активность");
+  });
+
+  it("редактирует old_password и new_password на верхнем и вложенном уровне (TASK-58)", (): void => {
+    const lines: string[] = [];
+    buildLogger(lines).info(
+      {
+        old_password: "old-plain-password",
+        new_password: "new-plain-password",
+        user: { new_password: "nested-new-password" },
+      },
+      "change password",
+    );
+
+    const line = lines[0] ?? "";
+    expect(line).not.toContain("old-plain-password");
+    expect(line).not.toContain("new-plain-password");
+    expect(line).not.toContain("nested-new-password");
   });
 });

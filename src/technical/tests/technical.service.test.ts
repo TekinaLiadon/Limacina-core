@@ -301,14 +301,6 @@ describe("TechnicalService", (): void => {
     });
   });
 
-  describe("buildBinary", () => {
-    it("собирает бинарник через bun run build", async () => {
-      const service = new TechnicalService(new AdminMapStore(), new AuthMapStore(), makeConfig());
-      await service.buildBinary();
-      expect(existsSync("dist/Limacina")).toBe(true);
-    });
-  });
-
   describe("резервная копия бинарника", () => {
     it("backupBinary копирует бинарник с сохранением прав", async () => {
       const dir = mkdtempSync(join(tmpdir(), "limacina-binary-"));

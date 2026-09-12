@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Delete,
   Get,
   Headers,
@@ -50,7 +51,7 @@ export class YggdrasilController {
   @Get()
   @ApiOperation({ summary: "API metadata for authlib-injector auto-configuration" })
   @ApiResponse({ status: 200, type: ApiMetadataResponseDto })
-  getMetadata() {
+  getMetadata(): ApiMetadataResponseDto {
     return this.yggdrasilService.getMetadata();
   }
 
@@ -138,14 +139,21 @@ export class YggdrasilController {
   @Get("sessionserver/session/minecraft/profile/:uuid")
   @ApiOperation({ summary: "Get player session profile" })
   @ApiParam({ name: "uuid", description: "Player UUID (with or without dashes)" })
-  @ApiQuery({ name: "unsigned", required: false })
+  @ApiQuery({
+    name: "unsigned",
+    required: false,
+    enum: ["true", "false"],
+    description: "false — вернуть текстуры с цифровой подписью; по умолчанию без подписи",
+  })
   @ApiResponse({ status: 200, type: SessionProfileDto })
   @ApiResponse({ status: 204, description: "Profile not found" })
   async getProfile(
     @Param("uuid") uuid: string,
+    @Query("unsigned", new DefaultValuePipe("true"), new ParseEnumPipe(["true", "false"]))
+    unsigned: "true" | "false",
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<SessionProfileDto | undefined> {
-    const profile = await this.yggdrasilService.getProfile(uuid);
+    const profile = await this.yggdrasilService.getProfile(uuid, unsigned === "false");
     if (!profile) {
       reply.status(HttpStatus.NO_CONTENT).send();
       return undefined;

@@ -13,8 +13,8 @@ import type { LauncherUpdateResponseDto } from "./dto/dto";
 import {
   LAUNCHER_VERSION_REGEX,
   OLD_VERSIONS_DIR,
-  SUPPORTED_PLATFORMS,
   buildLauncherZipName,
+  isSupportedPlatform,
   parseLauncherZipName,
 } from "../launcher/launcher-files";
 
@@ -64,8 +64,7 @@ export class LauncherUpdateService {
   }
 
   private validatePlatform(os: string, arch: string): void {
-    const platform = SUPPORTED_PLATFORMS[os];
-    if (!platform || !platform.includes(arch)) {
+    if (!isSupportedPlatform(os, arch)) {
       throw new BadRequestException(`Неподдерживаемая платформа: ${os}/${arch}`);
     }
   }

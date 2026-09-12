@@ -27,6 +27,11 @@ export class V1AuthController {
     type: AuthResponseDto,
   })
   @ApiResponse({ status: 409, description: "Юзернейм уже занят" })
+  @ApiResponse({
+    status: 400,
+    description:
+      "Ошибка валидации: username — 3–16 символов (латиница, цифры, _), password — 6–128 символов",
+  })
   async postRegistration(@Body() dto: RegisterDto): Promise<AuthResponseDto> {
     return this.authService.register(dto.username, dto.password);
   }
@@ -43,6 +48,10 @@ export class V1AuthController {
   @ApiResponse({
     status: 401,
     description: "Неверное имя пользователя или пароль",
+  })
+  @ApiResponse({
+    status: 400,
+    description: "Ошибка валидации: username — до 64 символов, password — 6–128 символов",
   })
   async postLogin(@Body() dto: AuthDto): Promise<AuthResponseDto> {
     return this.authService.login(dto.username, dto.password);
@@ -61,6 +70,7 @@ export class V1AuthController {
     status: 401,
     description: "Невалидный или инвалидированный refresh токен",
   })
+  @ApiResponse({ status: 400, description: "Ошибка валидации: refresh_token обязателен" })
   async postRefresh(@Body() dto: AuthRefreshDto): Promise<AuthResponseDto> {
     return this.authService.refresh(dto.refresh_token);
   }
@@ -80,6 +90,7 @@ export class V1AuthController {
     type: SuccessResponseDto,
   })
   @ApiResponse({ status: 401, description: "Невалидный refresh токен" })
+  @ApiResponse({ status: 400, description: "Ошибка валидации: refresh_token обязателен" })
   async postInvalidate(@Body() dto: AuthRefreshDto): Promise<SuccessResponseDto> {
     await this.authService.invalidate(dto.refresh_token);
     return { success: true };
