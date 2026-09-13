@@ -3,12 +3,13 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const SQLITE_URL = "sqlite::memory:";
-process.env["DATABASE_URL"] = SQLITE_URL;
+const originalDatabaseUrl = process.env["DATABASE_URL"];
 
 const testDir = path.resolve(import.meta.dir, "__test_updown__");
 const listDir = path.join(testDir, "list");
 
 beforeAll(() => {
+  process.env["DATABASE_URL"] = SQLITE_URL;
   mkdirSync(listDir, { recursive: true });
   writeFileSync(
     path.join(listDir, "2025_01_01_120000_create_users.js"),
@@ -26,6 +27,11 @@ export { up, down };
 });
 
 afterAll(() => {
+  if (originalDatabaseUrl === undefined) {
+    delete process.env["DATABASE_URL"];
+  } else {
+    process.env["DATABASE_URL"] = originalDatabaseUrl;
+  }
   rmSync(testDir, { recursive: true, force: true });
 });
 

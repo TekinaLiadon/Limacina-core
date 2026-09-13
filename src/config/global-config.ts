@@ -21,7 +21,7 @@ const configSchema = z
     PORT: z.coerce.number().default(3005),
     JWT_ACCESS: z.string().min(32),
     JWT_REFRESH: z.string().min(32),
-    DB_DRIVER: z.enum(["map", "postgres"]).default("map"),
+    DB_DRIVER: z.enum(["map", "postgres", "mariadb"]).default("map"),
     AUTH_PROXY_URL: z.string().url().optional(),
     BASE_URL: z.string().url(),
     MASTER_PASSWORD: z.string().min(1).optional(),
@@ -43,13 +43,21 @@ const configSchema = z
       .optional(),
   })
   .refine((config) => config.NODE_ENV !== "production" || config.DB_DRIVER !== "map", {
-    message: "DB_DRIVER=map is not allowed in production — use DB_DRIVER=postgres",
+    message: "DB_DRIVER=map is not allowed in production — use DB_DRIVER=postgres or mariadb",
     path: ["DB_DRIVER"],
   })
-  .refine((config) => config.DB_DRIVER !== "postgres" || config.DATABASE_URL !== undefined, {
-    message: "DATABASE_URL is required when DB_DRIVER=postgres",
+  .refine((config) => !isSqlDriver(config.DB_DRIVER) || config.DATABASE_URL !== undefined, {
+    message: "DATABASE_URL is required when DB_DRIVER=postgres or mariadb",
     path: ["DATABASE_URL"],
   });
+
+const SQL_DRIVERS = ["postgres", "mariadb"] as const;
+
+export type SqlDriver = (typeof SQL_DRIVERS)[number];
+
+export function isSqlDriver(driver: string): driver is SqlDriver {
+  return (SQL_DRIVERS as readonly string[]).includes(driver);
+}
 
 const AppConfig = new ZodEnvConfig("app", configSchema);
 

@@ -6,7 +6,10 @@ import {
   execute,
   executeInTransaction,
   executeInTransactionReturning,
+  sqlDialect,
+  toBoolean,
   TABLES,
+  type BuiltQuery,
   type SqlValue,
 } from "../utils/sql";
 
@@ -82,7 +85,7 @@ function rowToItem(row: ContentRow): UserContentItem {
     userUuid: row.user_uuid,
     filePath: row.file_path,
     skinModel: row.skin_model ?? null,
-    active: row.active ?? false,
+    active: toBoolean(row.active),
   };
 }
 
@@ -179,8 +182,11 @@ export class UserContentPostgresStore implements IUserContentStore {
     skinModel?: string | null,
   ): Promise<UserContentItem> {
     const table = getTable(type);
-    const returningColumns =
-      type === "skin" ? "id, user_uuid, file_path, skin_model, active" : "id, user_uuid, file_path";
+    const selectColumns =
+      type === "skin"
+        ? ["id", "user_uuid", "file_path", "skin_model", "active"]
+        : ["id", "user_uuid", "file_path"];
+    const returningColumns = selectColumns.join(", ");
 
     const lock = selectQuery("uuid")
       .from(TABLES.users)
@@ -196,18 +202,40 @@ export class UserContentPostgresStore implements IUserContentStore {
     const insertSql =
       `INSERT INTO ${table} (${insertColumns}) ` +
       `SELECT ${insertPlaceholders} ` +
-      `WHERE (SELECT COUNT(*) FROM ${table} WHERE user_uuid = $1) < $${insertValues.length + 2} ` +
-      `RETURNING ${returningColumns}`;
+      `WHERE (SELECT COUNT(*) FROM ${table} WHERE user_uuid = $1) < $${insertValues.length + 2}`;
 
-    const insert = {
-      sql: insertSql,
-      values: [userUuid, ...insertValues, maxPerUser] as SqlValue[],
-    };
+    const statements: BuiltQuery[] =
+      sqlDialect() === "mariadb"
+        ? [
+            lock,
+            { sql: insertSql, values: [userUuid, ...insertValues, maxPerUser] as SqlValue[] },
+            selectQuery(...selectColumns)
+              .from(table)
+              .where("user_uuid = $1 AND file_path = $2", userUuid, filePath)
+              .orderBy("id", "desc")
+              .limit(1)
+              .build(),
+          ]
+        : [
+            lock,
+            {
+              sql: `${insertSql} RETURNING ${returningColumns}`,
+              values: [userUuid, ...insertValues, maxPerUser] as SqlValue[],
+            },
+          ];
 
-    const transactionResults = await executeInTransactionReturning<ContentRow>([lock, insert]);
-    const insertedRows = transactionResults[1]?.rows ?? [];
-    const [row] = insertedRows;
-    if (!row) throw createUserContentLimitExceededError(userUuid, type, maxPerUser);
+    const transactionResults = await executeInTransactionReturning<ContentRow>(statements);
+    const mariadb = sqlDialect() === "mariadb";
+    const insertSucceeded = mariadb
+      ? (transactionResults[1]?.count ?? 0) > 0
+      : (transactionResults[1]?.rows ?? []).length > 0;
+    const results = mariadb
+      ? (transactionResults[2]?.rows ?? [])
+      : (transactionResults[1]?.rows ?? []);
+    const [row] = results;
+    if (!insertSucceeded || !row) {
+      throw createUserContentLimitExceededError(userUuid, type, maxPerUser);
+    }
     return rowToItem(row);
   }
 
@@ -232,25 +260,34 @@ export class UserContentPostgresStore implements IUserContentStore {
     type: ContentType,
   ): Promise<ContentDeletionResult | undefined> {
     const table = getTable(type);
-    const columns =
-      type === "skin" ? "id, user_uuid, file_path, skin_model, active" : "id, user_uuid, file_path";
     const selectColumns =
       type === "skin"
-        ? "d.id, d.user_uuid, d.file_path, d.skin_model, d.active"
-        : "d.id, d.user_uuid, d.file_path";
-    const querySql =
-      `WITH deleted AS (DELETE FROM ${table} WHERE id = $1 RETURNING ${columns}) ` +
-      `SELECT ${selectColumns}, ` +
-      `(SELECT COUNT(*) FROM ${table} t WHERE t.file_path = d.file_path) AS same_path_total ` +
-      `FROM deleted d`;
+        ? ["id", "user_uuid", "file_path", "skin_model", "active"]
+        : ["id", "user_uuid", "file_path"];
+    const existingQuery = selectQuery(...selectColumns)
+      .from(table)
+      .where("id = $1", id)
+      .build();
+    const existing = await execute<ContentRow>(existingQuery.sql, existingQuery.values);
+    const [item] = existing.rows;
+    if (!item) return undefined;
 
-    const { rows } = await execute<ContentRow & { same_path_total: number | string }>(querySql, [
-      id,
+    const results = await executeInTransactionReturning<
+      ContentRow & { same_path_total: number | string }
+    >([
+      {
+        sql: `SELECT COUNT(*) AS same_path_total FROM ${table} WHERE file_path = $1`,
+        values: [item.file_path],
+      },
+      {
+        sql: `DELETE FROM ${table} WHERE id = $1 RETURNING id`,
+        values: [id],
+      },
     ]);
-    const [row] = rows;
-    if (!row) return undefined;
+    if ((results[1]?.count ?? 0) === 0) return undefined;
 
-    return { item: rowToItem(row), remainingCount: Number(row.same_path_total) - 1 };
+    const samePathTotal = Number(results[0]?.rows[0]?.same_path_total ?? 0);
+    return { item: rowToItem(item), remainingCount: samePathTotal - 1 };
   }
 }
 

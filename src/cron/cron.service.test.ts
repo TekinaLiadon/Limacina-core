@@ -98,4 +98,44 @@ describe("CronService", () => {
 
     expect(fireAt.getTime() - from).toBe(24 * 60 * 60 * 1000);
   });
+
+  it("при недоступном Bun.cron фолбэк на таймер выполняет задачи", async (): Promise<void> => {
+    const originalCron = Bun.cron;
+    const realNow = Date.now;
+    (Bun as unknown as { cron: () => never }).cron = (): never => {
+      throw new TypeError("Bun.cron is not supported in this runtime");
+    };
+
+    const target = new Date();
+    target.setHours(3, 59, 59, 998);
+    let nowPatched = false;
+    Date.now = (): number => {
+      if (!nowPatched) {
+        nowPatched = true;
+        return target.getTime();
+      }
+      return target.getTime() + 26 * 3600 * 1000;
+    };
+
+    const service = new CronService();
+    const runs: string[] = [];
+    service.registerTasks({
+      name: "fallback-task",
+      run: (): void => {
+        runs.push("run");
+      },
+    });
+    service.onModuleInit();
+
+    try {
+      await Bun.sleep(200);
+      expect(runs).toEqual(["run"]);
+    } finally {
+      Date.now = realNow;
+      service.onModuleDestroy();
+      (Bun as unknown as { cron: unknown }).cron = originalCron;
+    }
+
+    expect(runs).toEqual(["run"]);
+  });
 });

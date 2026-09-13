@@ -3,6 +3,7 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 setupTestEnv();
 
 import { describe, expect, it } from "bun:test";
+import { ConfigService } from "@nestjs/config";
 import { z } from "zod";
 import { ZodEnvConfig } from "../zod-env";
 
@@ -133,5 +134,30 @@ describe("ZodEnvConfig — санитизация ошибок", (): void => {
     const serialized = JSON.stringify(error.issues);
     expect(serialized).not.toContain("12345");
     expect(JSON.stringify(z.flattenError(error).fieldErrors)).toContain("MASTER_PASSWORD");
+  });
+});
+
+describe("ZodEnvConfig — DI-интерфейс", (): void => {
+  it("providerKey и factory регистрируются под именем конфига", (): void => {
+    const config = buildConfig();
+
+    expect(config.providerKey).toBe(config.factory.KEY);
+    expect(config.providerKey).toBe("CONFIGURATION(test-env)");
+  });
+
+  it("from достаёт распарсенный конфиг из ConfigService", (): void => {
+    const config = buildConfig();
+    const parsed = config.parseEnvOrExit({ NODE_ENV: "test", JWT_ACCESS: "secret" });
+    const service = new ConfigService({ "test-env": parsed } as never);
+
+    expect(config.from(service)).toEqual(parsed);
+  });
+
+  it("конструктор нового экземпляра регистрирует собственный factory", (): void => {
+    const first = buildConfig();
+    const second = buildConfig();
+
+    expect(second.providerKey).toBe(first.providerKey);
+    expect(second.asModule.module).toBe(first.asModule.module);
   });
 });

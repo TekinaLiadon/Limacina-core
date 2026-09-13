@@ -1,5 +1,15 @@
-import { describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { afterAll, describe, expect, it } from "bun:test";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -621,6 +631,152 @@ describe("TechnicalService", (): void => {
         if (savedSecrets === undefined) delete process.env["SECRETS"];
         else process.env["SECRETS"] = savedSecrets;
       }
+    });
+  });
+
+  describe("реальные шаги конвейера", () => {
+    const previousCwd = process.cwd();
+    const tempDirs: string[] = [];
+
+    afterAll((): void => {
+      for (const dir of tempDirs) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    function makeTempProject(files: Record<string, string> = {}): string {
+      const dir = mkdtempSync(join(tmpdir(), "limacina-pipeline-"));
+      tempDirs.push(dir);
+      for (const [name, content] of Object.entries(files)) {
+        const filePath = join(dir, name);
+        mkdirSync(join(filePath, ".."), { recursive: true });
+        writeFileSync(filePath, content);
+      }
+      return dir;
+    }
+
+    async function withCwd<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+      process.chdir(dir);
+      try {
+        return await fn();
+      } finally {
+        process.chdir(previousCwd);
+      }
+    }
+
+    it("sendShutdownSignal подаёт SIGTERM собственному процессу", () => {
+      const service = new TechnicalService(new AdminMapStore(), new AuthMapStore(), makeConfig());
+      const originalKill = process.kill;
+      const captured: { pid: number; signal: NodeJS.Signals | number | undefined }[] = [];
+      process.kill = ((pid: number, signal?: NodeJS.Signals | number) => {
+        captured.push({ pid, signal });
+      }) as typeof process.kill;
+      try {
+        service.sendShutdownSignal();
+      } finally {
+        process.kill = originalKill;
+      }
+      expect(captured).toEqual([{ pid: process.pid, signal: "SIGTERM" }]);
+    });
+
+    it("installDependencies выполняет установку в проекте с лок-файлом", async () => {
+      const service = new TechnicalService(new AdminMapStore(), new AuthMapStore(), makeConfig());
+      const dir = makeTempProject({
+        "package.json": JSON.stringify({
+          name: "limacina-pipeline",
+          private: true,
+          dependencies: { localdep: "file:./localdep" },
+        }),
+        "localdep/package.json": JSON.stringify({ name: "localdep", version: "1.0.0" }),
+      });
+      execSync("bun install", { cwd: dir });
+
+      await withCwd(dir, () => service.installDependencies());
+
+      expect(existsSync(join(dir, "bun.lock"))).toBeTrue();
+      expect(existsSync(join(dir, "node_modules", "localdep"))).toBeTrue();
+    });
+
+    it("runMigrations выполняет скрипт migrate:up проекта", async () => {
+      const service = new TechnicalService(new AdminMapStore(), new AuthMapStore(), makeConfig());
+      const dir = makeTempProject({
+        "package.json": JSON.stringify({
+          name: "limacina-pipeline",
+          private: true,
+          scripts: { "migrate:up": "true" },
+        }),
+      });
+
+      await withCwd(dir, () => service.runMigrations());
+    });
+
+    it("runMigrations без проекта отклоняется с доменной ошибкой", async () => {
+      const service = new TechnicalService(new AdminMapStore(), new AuthMapStore(), makeConfig());
+      const dir = makeTempProject();
+
+      await withCwd(dir, async () => {
+        await expect(service.runMigrations()).rejects.toBeInstanceOf(InternalServerErrorException);
+      });
+    });
+
+    it("buildBinary без бинарника и с успешной сборкой проходит", async () => {
+      const service = new TechnicalService(new AdminMapStore(), new AuthMapStore(), makeConfig());
+      const dir = makeTempProject({
+        "package.json": JSON.stringify({
+          name: "limacina-pipeline",
+          private: true,
+          scripts: { build: "true" },
+        }),
+      });
+
+      await withCwd(dir, () => service.buildBinary());
+
+      expect(existsSync(join(dir, "dist", "Limacina.previous"))).toBeFalse();
+    });
+
+    it("buildBinary при упавшей сборке восстанавливает бинарник из копии", async () => {
+      const service = new TechnicalService(new AdminMapStore(), new AuthMapStore(), makeConfig());
+      const dir = makeTempProject({
+        "package.json": JSON.stringify({
+          name: "limacina-pipeline",
+          private: true,
+          scripts: { build: "false" },
+        }),
+        "dist/Limacina": "previous-binary-content",
+      });
+
+      await withCwd(dir, async () => {
+        await expect(service.buildBinary()).rejects.toBeInstanceOf(InternalServerErrorException);
+      });
+
+      expect(readFileSync(join(dir, "dist", "Limacina"), "utf8")).toBe("previous-binary-content");
+    });
+
+    it("gitPull в репозитории с локальным remote возвращает ревизии до и после", async () => {
+      const service = new TechnicalService(new AdminMapStore(), new AuthMapStore(), makeConfig());
+      const baseDir = mkdtempSync(join(tmpdir(), "limacina-gitpull-"));
+      tempDirs.push(baseDir);
+      const repoDir = join(baseDir, "repo");
+      execSync("git init -q --bare origin.git", { cwd: baseDir });
+      execSync("git clone -q origin.git repo", { cwd: baseDir });
+      execSync("git -c user.email=test@test -c user.name=test commit -q --allow-empty -m init", {
+        cwd: repoDir,
+      });
+      execSync("git push -q -u origin HEAD", { cwd: repoDir });
+
+      const revisions = await withCwd(repoDir, () => service.gitPull());
+
+      expect(revisions.before).toMatch(/^[0-9a-f]{40}$/);
+      expect(revisions.after).toBe(revisions.before);
+    });
+
+    it("gitPull вне репозитория отклоняется с доменной ошибкой", async () => {
+      const service = new TechnicalService(new AdminMapStore(), new AuthMapStore(), makeConfig());
+      const dir = makeTempProject();
+
+      await withCwd(dir, async () => {
+        await expect(service.gitPull()).rejects.toBeInstanceOf(InternalServerErrorException);
+      });
     });
   });
 });

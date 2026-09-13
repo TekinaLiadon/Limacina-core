@@ -73,3 +73,113 @@ describe("validatePngStructure (TASK-24)", (): void => {
     expect(() => validatePngStructure(file)).toThrow(/zero dimension/);
   });
 });
+
+describe("validatePngStructure — поля IHDR и порядок чанков", (): void => {
+  interface IhdrOptions {
+    bitDepth?: number;
+    colorType?: number;
+    compression?: number;
+    filterMethod?: number;
+    interlace?: number;
+    length?: number;
+  }
+
+  function ihdrData(options: IhdrOptions = {}): Buffer {
+    const data = Buffer.alloc(13);
+    data.writeUInt32BE(64, 0);
+    data.writeUInt32BE(64, 4);
+    data[8] = options.bitDepth ?? 8;
+    data[9] = options.colorType ?? 6;
+    data[10] = options.compression ?? 0;
+    data[11] = options.filterMethod ?? 0;
+    data[12] = options.interlace ?? 0;
+    return data;
+  }
+
+  function buildFromChunks(chunks: Buffer[]): Buffer {
+    return Buffer.concat([TEST_PNG_SIGNATURE, ...chunks]);
+  }
+
+  function expectRejects(file: Buffer, message: string): void {
+    expect(() => validatePngStructure(file)).toThrow(PngStructureError);
+    expect(() => validatePngStructure(file)).toThrow(message);
+  }
+
+  it("отклоняет невалидную глубину цвета", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ bitDepth: 3 })),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, "invalid bit depth 3");
+  });
+
+  it("отклоняет невалидный тип цвета", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ colorType: 1 })),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, "invalid color type 1");
+  });
+
+  it("отклоняет невалидный метод сжатия", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ compression: 1 })),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, "invalid compression method");
+  });
+
+  it("отклоняет невалидный метод фильтрации", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ filterMethod: 1 })),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, "invalid filter method");
+  });
+
+  it("отклоняет невалидный метод интерлейса", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ interlace: 2 })),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, "invalid interlace method");
+  });
+
+  it("отклоняет невалидную длину IHDR", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", Buffer.alloc(12)),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, "invalid IHDR length");
+  });
+
+  it("отклоняет чанк с не-буквенным типом", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData()),
+      pngChunk("IH@R", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, "invalid chunk type");
+  });
+
+  it("отклоняет повторный IHDR", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData()),
+      pngChunk("IHDR", ihdrData()),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, "duplicate IHDR");
+  });
+
+  it("отклоняет файл без IEND-чанка", (): void => {
+    const file = buildFromChunks([pngChunk("IHDR", ihdrData()), pngChunk("IDAT", Buffer.alloc(4))]);
+    expectRejects(file, "IEND chunk not found");
+  });
+});

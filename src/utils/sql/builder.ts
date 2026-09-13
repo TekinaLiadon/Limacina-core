@@ -1,46 +1,14 @@
-import { Logger } from "@nestjs/common";
-
-const sqlLogger = new Logger("Sql");
-
-interface SqlResult {
-  rows: Record<string, unknown>[];
-  count: number;
-}
-
-type BunSqlClient = {
-  (strings: TemplateStringsArray, ...values: unknown[]): Promise<SqlResult>;
-  unsafe(sql: string, values: unknown[]): Promise<SqlResult>;
-};
-
-type BunSqlFn = BunSqlClient & {
-  begin(callback: (tx: BunSqlClient) => Promise<unknown>): Promise<unknown>;
-  close(options?: { timeout?: number }): Promise<void>;
-};
-
-const bunSql: BunSqlFn = ((await import("bun")) as unknown as { sql: BunSqlFn }).sql;
-
-export const TABLES = {
-  users: "users",
-  refresh_tokens: "refresh_tokens",
-  user_textures: "user_textures",
-  user_skins: "user_skins",
-  user_models: "user_models",
-  user_capes: "user_capes",
-} as const;
-
-export type TableName = (typeof TABLES)[keyof typeof TABLES];
-
-export type SqlValue = string | number | boolean | null | Date;
-
-export interface QueryResult<T> {
-  rows: T[];
-  count: number;
-}
-
-export interface BuiltQuery {
-  sql: string;
-  values: SqlValue[];
-}
+import { currentDialect } from "./client";
+import {
+  addAnd,
+  addWhere,
+  assertStaticFragment,
+  buildWhereClause,
+  buildWithWhere,
+  createWhereState,
+  type WhereState,
+} from "./fragments";
+import type { BuiltQuery, OrderDirection, SelectBuilder, SqlValue, TableName } from "./types";
 
 interface WithBuild {
   build: () => BuiltQuery;
@@ -61,19 +29,6 @@ interface InsertAfterValues {
   build: () => BuiltQuery;
 }
 
-export type OrderDirection = "asc" | "desc";
-
-export interface SelectBuilder {
-  join: (type: string, table: TableName, alias: string, on: string) => SelectBuilder;
-  where: (condition: string, ...args: SqlValue[]) => SelectBuilder;
-  and: (condition: string, ...args: SqlValue[]) => SelectBuilder;
-  orderBy: (column: string, direction?: OrderDirection) => SelectBuilder;
-  limit: (n: number) => SelectBuilder;
-  offset: (n: number) => SelectBuilder;
-  forUpdate: () => SelectBuilder;
-  build: () => BuiltQuery;
-}
-
 interface UpdateSet {
   set: (column: string, value: SqlValue) => UpdateSet;
   where: (condition: string, ...args: SqlValue[]) => WithReturning;
@@ -85,58 +40,14 @@ interface DeleteBuilder {
   build: () => BuiltQuery;
 }
 
-const FORBIDDEN_FRAGMENT_SEQUENCES = [";", "--", "/*"] as const;
-
-function assertStaticFragment(fragment: string): void {
-  for (const sequence of FORBIDDEN_FRAGMENT_SEQUENCES) {
-    if (fragment.includes(sequence)) {
-      throw new Error(
-        `Фрагмент SQL содержит запрещённую последовательность "${sequence}" — значения передаются через плейсхолдеры`,
-      );
-    }
+function appendReturning(baseSql: string, columns: string[]): string {
+  const clause = currentDialect().renderReturning(columns);
+  if (clause === null) {
+    throw new Error(
+      `Диалект "${currentDialect().name}" не поддерживает RETURNING — используйте SELECT после записи`,
+    );
   }
-}
-
-function createQueryBuilder(): { parts: string[]; values: SqlValue[] } {
-  return { parts: [], values: [] };
-}
-
-function addWhere(
-  state: { parts: string[]; values: SqlValue[] },
-  condition: string,
-  ...args: SqlValue[]
-): void {
-  assertStaticFragment(condition);
-  state.parts.push(condition);
-  state.values.push(...args);
-}
-
-function addAnd(
-  state: { parts: string[]; values: SqlValue[] },
-  condition: string,
-  ...args: SqlValue[]
-): void {
-  assertStaticFragment(condition);
-  if (state.parts.length > 0) {
-    state.parts.push("AND");
-  }
-  state.parts.push(condition);
-  state.values.push(...args);
-}
-
-function buildWhereClause(state: { parts: string[]; values: SqlValue[] }): string {
-  return state.parts.length > 0 ? ` WHERE ${state.parts.join(" ")}` : "";
-}
-
-function buildWithWhere(
-  baseSql: string,
-  state: { parts: string[]; values: SqlValue[] },
-): BuiltQuery {
-  const whereClause = buildWhereClause(state);
-  return {
-    sql: `${baseSql}${whereClause}`,
-    values: state.values,
-  };
+  return `${baseSql}${clause}`;
 }
 
 function buildInsert(
@@ -157,7 +68,7 @@ function buildInsert(
     rows.push(`(${placeholders})`);
   }
   const base = `INSERT INTO ${table} (${columns.join(", ")}) VALUES ${rows.join(", ")}`;
-  const sqlStr = returning ? `${base} RETURNING ${returning.join(", ")}` : base;
+  const sqlStr = returning ? appendReturning(base, returning) : base;
   return { sql: sqlStr, values: allValues.flat() };
 }
 
@@ -168,7 +79,7 @@ export function selectQuery(...columns: string[]): {
 
   return {
     from: (table: TableName, alias?: string) => {
-      const state = createQueryBuilder();
+      const state = createWhereState();
       const orderParts: string[] = [];
       const tableRef = alias ? `${table} ${alias}` : table;
       let fromClause = `SELECT ${cols} FROM ${tableRef}`;
@@ -266,7 +177,7 @@ export function updateQuery(): {
     from: (table: TableName) => {
       const setClauses: string[] = [];
       const values: SqlValue[] = [];
-      const whereState = createQueryBuilder();
+      const whereState: WhereState = createWhereState();
 
       const buildUpdate = (): BuiltQuery => {
         const whereClause = buildWhereClause(whereState);
@@ -295,7 +206,7 @@ export function updateQuery(): {
                 build: () => {
                   const built = buildUpdate();
                   return {
-                    sql: `${built.sql} RETURNING ${ret.join(", ")}`,
+                    sql: appendReturning(built.sql, ret),
                     values: built.values,
                   };
                 },
@@ -317,7 +228,7 @@ export function deleteQuery(): {
 } {
   return {
     from: (table: TableName) => {
-      const state = createQueryBuilder();
+      const state = createWhereState();
 
       const buildDelete = (): BuiltQuery => buildWithWhere(`DELETE FROM ${table}`, state);
 
@@ -333,63 +244,4 @@ export function deleteQuery(): {
       };
     },
   };
-}
-
-export async function execute<T extends Record<string, unknown>>(
-  querySql: string,
-  values: SqlValue[],
-): Promise<QueryResult<T>> {
-  try {
-    const result = await bunSql.unsafe(querySql, values as unknown[]);
-    const rows = (Array.isArray(result) ? result : (result?.rows ?? [])) as T[];
-    const count = Array.isArray(result) ? result.length : (result?.count ?? 0);
-    return { rows, count };
-  } catch (error) {
-    sqlLogger.error({ err: error, sql: querySql }, "SQL-запрос не выполнен");
-    throw error;
-  }
-}
-
-export async function executeInTransaction(statements: BuiltQuery[]): Promise<void> {
-  await runTransaction(statements);
-}
-
-export async function executeInTransactionReturning<T extends Record<string, unknown>>(
-  statements: BuiltQuery[],
-): Promise<QueryResult<T>[]> {
-  const results: QueryResult<T>[] = [];
-  try {
-    await bunSql.begin(async (tx) => {
-      for (const statement of statements) {
-        const result = await tx.unsafe(statement.sql, statement.values as unknown[]);
-        const rows = (Array.isArray(result) ? result : (result?.rows ?? [])) as T[];
-        results.push({ rows, count: rows.length });
-      }
-    });
-  } catch (error) {
-    sqlLogger.error({ err: error, statements: statements.length }, "SQL-транзакция не выполнена");
-    throw error;
-  }
-  return results;
-}
-
-async function runTransaction(statements: BuiltQuery[]): Promise<void> {
-  try {
-    await bunSql.begin(async (tx) => {
-      for (const statement of statements) {
-        await tx.unsafe(statement.sql, statement.values as unknown[]);
-      }
-    });
-  } catch (error) {
-    sqlLogger.error({ err: error, statements: statements.length }, "SQL-транзакция не выполнена");
-    throw error;
-  }
-}
-
-export async function closeSqlPool(): Promise<void> {
-  try {
-    await bunSql.close();
-  } catch (error) {
-    sqlLogger.error({ err: error }, "Не удалось закрыть пул SQL-соединений");
-  }
 }

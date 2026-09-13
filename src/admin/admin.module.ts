@@ -8,14 +8,13 @@ import { AdminPostgresStore } from "./admin_postgres.store";
 import { AuthStoreModule } from "../auth/service/auth_store.module";
 import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
 import { CronModule } from "../cron/cron.module";
-import type { AppConfigType } from "../config/global-config";
+import { isSqlDriver, type AppConfigType } from "../config/global-config";
 
 const useFactory = (db: string) => {
-  return (
-    {
-      postgres: new AdminPostgresStore(),
-    }[db] ?? new AdminMapStore()
-  );
+  if (isSqlDriver(db)) {
+    return new AdminPostgresStore();
+  }
+  return new AdminMapStore();
 };
 
 @Module({

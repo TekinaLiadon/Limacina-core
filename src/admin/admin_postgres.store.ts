@@ -17,6 +17,7 @@ import type {
   UsersPage,
   DeletedUsersPage,
 } from "./admin.store";
+import { toBoolean } from "../utils/sql";
 import type { UserRow } from "./dto/dto";
 
 interface DeletedUserRow extends Record<string, unknown> {
@@ -37,8 +38,8 @@ function toAdminUser(row: UserRow): AdminUser {
     uuid: row.uuid,
     username: row.username,
     role: row.role,
-    approved: row.approved,
-    banned: row.banned,
+    approved: toBoolean(row.approved),
+    banned: toBoolean(row.banned),
   };
 }
 
@@ -47,8 +48,8 @@ function toDeletedUser(row: DeletedUserRow): DeletedUser {
     uuid: row.uuid,
     username: row.username,
     role: row.role,
-    approved: row.approved,
-    banned: row.banned,
+    approved: toBoolean(row.approved),
+    banned: toBoolean(row.banned),
     deletedAt: new Date(row.deleted_at),
   };
 }
@@ -212,11 +213,10 @@ export class AdminPostgresStore implements IAdminStore {
       .set("deleted", true)
       .set("deleted_at", new Date())
       .where("username = $1 AND deleted = false", username)
-      .returning("uuid")
       .build();
 
-    const { rows } = await execute<{ uuid: string }>(query.sql, query.values);
-    return rows.length > 0 ? user : undefined;
+    await execute(query.sql, query.values);
+    return user;
   }
 
   async findDeletedByUsername(username: string): Promise<DeletedUser | undefined> {
@@ -254,13 +254,12 @@ export class AdminPostgresStore implements IAdminStore {
   }
 
   async purgeOldDeletedUsers(retentionDays: number): Promise<number> {
-    const { rows } = await execute<{ uuid: string }>(
-      `DELETE FROM ${TABLES.users} ` +
-        `WHERE deleted = true AND deleted_at < now() - make_interval(days => $1) ` +
-        `RETURNING uuid`,
-      [retentionDays],
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+    const { count } = await execute(
+      `DELETE FROM ${TABLES.users} WHERE deleted = true AND deleted_at < $1 RETURNING uuid`,
+      [cutoff],
     );
-    return rows.length;
+    return count;
   }
 
   async hasOwner(): Promise<boolean> {

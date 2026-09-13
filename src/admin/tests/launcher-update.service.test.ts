@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -81,6 +82,15 @@ describe("LauncherUpdateService — архивирование старых ве
     for (const { path, backupPath } of backedUpFiles) {
       if (existsSync(backupPath)) {
         renameSync(backupPath, path);
+      }
+    }
+    if (existsSync(OLD_DIR)) {
+      const originals = new Set(backedUpFiles.map(({ path }) => path));
+      for (const file of readdirSync(OLD_DIR)) {
+        const filePath = join(OLD_DIR, file);
+        if (file.endsWith(".zip") && !originals.has(filePath)) {
+          unlinkSync(filePath);
+        }
       }
     }
     if (oldDirCreatedByTest) {
@@ -335,6 +345,35 @@ describe("LauncherUpdateService — порядок мутаций и атома�
       (file) => file.startsWith("version.json.") && !file.endsWith(".bak"),
     );
     expect(leftovers).toEqual([]);
+  });
+
+  it("getCurrentVersion читает version.json или отдаёт 0.0.0", () => {
+    const version = service.getCurrentVersion();
+
+    if (existsSync(VERSION_FILE)) {
+      expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+    } else {
+      expect(version).toBe("0.0.0");
+    }
+  });
+
+  it("откатывает zip-файлы при сбое записи version.json", () => {
+    seedBaseline();
+
+    chmodSync("public", 0o555);
+    try {
+      expect(() =>
+        service.update("4.0.0", [stageZip("windows", "x86_64", "content-4.0.0")]),
+      ).toThrow();
+    } finally {
+      chmodSync("public", 0o755);
+    }
+
+    expect(readVersionFile()).toBe("1.0.0");
+    expect(readFileSync(sandboxZipPath("1.0.0"), "utf-8")).toBe("content-1.0.0");
+    expect(existsSync(sandboxZipPath("4.0.0"))).toBe(false);
+    expect(zipsInDir(sandboxOldDir)).toEqual([]);
+    expect(existsSync(UPLOAD_TMP_DIR) ? readdirSync(UPLOAD_TMP_DIR) : []).toEqual([]);
   });
 
   it("мультиплатформенный update не оставляет частичного состояния при сбое второй платформы", () => {

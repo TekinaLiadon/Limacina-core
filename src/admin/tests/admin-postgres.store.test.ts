@@ -10,7 +10,7 @@ import {
   postgresDescribe,
   trackPostgresUser,
 } from "../../utils/tests/postgres-suite";
-import { execute, insertQuery, selectQuery, updateQuery, TABLES } from "../../utils/sql";
+import { execute, insertQuery, selectQuery, toBoolean, updateQuery, TABLES } from "../../utils/sql";
 import { generateUuid } from "../../utils/uuid";
 
 const store = new AdminPostgresStore();
@@ -189,7 +189,7 @@ postgresDescribe("AdminPostgresStore (postgres)", () => {
     expect(await store.findDeletedByUsername(user.username)).toBeDefined();
 
     const row = await findRawUser(user.uuid);
-    expect(row?.["deleted"]).toBe(true);
+    expect(toBoolean(row?.["deleted"])).toBe(true);
     expect(row?.["deleted_at"]).toBeInstanceOf(Date);
 
     const textures = await findTextureRow(user.uuid);
@@ -208,7 +208,7 @@ postgresDescribe("AdminPostgresStore (postgres)", () => {
     expect(await store.findDeletedByUsername(user.username)).toBeUndefined();
 
     const row = await findRawUser(user.uuid);
-    expect(row?.["deleted"]).toBe(false);
+    expect(toBoolean(row?.["deleted"])).toBe(false);
     expect(row?.["deleted_at"]).toBeNull();
     const textures = await findTextureRow(user.uuid);
     expect(textures?.["skin_url"]).toBe("http://localhost:3005/textures/test-skin.png");

@@ -6,8 +6,10 @@ import {
   deleteQuery,
   execute,
   executeInTransaction,
+  executeInTransactionReturning,
   TABLES,
 } from "../../utils/sql";
+import { toBoolean } from "../../utils/sql";
 import type { IAuthStore, StoredUser, RefreshEntry } from "./auth_store.service";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../token.constants";
 
@@ -28,11 +30,16 @@ interface RefreshRow extends Record<string, unknown> {
 }
 
 const PG_UNIQUE_VIOLATION_CODE = "23505";
+const MARIA_UNIQUE_VIOLATION_CODE = 1062;
 
 function isUniqueViolation(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const { code, errno } = error as { code?: unknown; errno?: unknown };
-  return code === PG_UNIQUE_VIOLATION_CODE || errno === PG_UNIQUE_VIOLATION_CODE;
+  return (
+    code === PG_UNIQUE_VIOLATION_CODE ||
+    errno === PG_UNIQUE_VIOLATION_CODE ||
+    errno === MARIA_UNIQUE_VIOLATION_CODE
+  );
 }
 
 @Injectable()
@@ -61,20 +68,30 @@ export class AuthPostgresStore implements IAuthStore {
       username: row.username,
       passwordHash: row.password_hash,
       role: row.role,
-      approved: row.approved,
-      banned: row.banned,
+      approved: toBoolean(row.approved),
+      banned: toBoolean(row.banned),
       passwordChangedAt: row.password_changed_at ?? undefined,
     };
   }
 
   async saveUser(user: StoredUser): Promise<boolean> {
+    const existing = await this.findByUsername(user.username);
+    if (existing) {
+      if (existing.uuid !== user.uuid) return false;
+
+      const update = updateQuery()
+        .from(TABLES.users)
+        .set("password_hash", user.passwordHash)
+        .where("uuid = $1", user.uuid)
+        .build();
+      await execute(update.sql, update.values);
+      return true;
+    }
+
     const insertSql = `INSERT INTO ${TABLES.users} (uuid, username, password_hash, role, approved, banned, password_changed_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (username) WHERE NOT deleted DO NOTHING
-      RETURNING uuid`;
-    let rows: { uuid: string }[];
+      VALUES ($1, $2, $3, $4, $5, $6, $7)`;
     try {
-      const { rows: inserted } = await execute<{ uuid: string }>(insertSql, [
+      await execute(insertSql, [
         user.uuid,
         user.username,
         user.passwordHash,
@@ -83,34 +100,11 @@ export class AuthPostgresStore implements IAuthStore {
         user.banned,
         user.passwordChangedAt ?? null,
       ]);
-      rows = inserted;
     } catch (error) {
       if (isUniqueViolation(error)) return false;
       throw error;
     }
-    if (rows.length > 0) return true;
-
-    const username = await this.findUsernameByUuid(user.uuid);
-    if (username !== user.username) return false;
-
-    const update = updateQuery()
-      .from(TABLES.users)
-      .set("password_hash", user.passwordHash)
-      .where("uuid = $1", user.uuid)
-      .build();
-    await execute(update.sql, update.values);
     return true;
-  }
-
-  private async findUsernameByUuid(uuid: string): Promise<string | undefined> {
-    const query = selectQuery("username")
-      .from(TABLES.users)
-      .where("uuid = $1", uuid)
-      .where("deleted = false")
-      .build();
-
-    const { rows } = await execute<{ username: string }>(query.sql, query.values);
-    return rows[0]?.username;
   }
 
   async setApproved(uuid: string, approved: boolean): Promise<void> {
@@ -198,7 +192,7 @@ export class AuthPostgresStore implements IAuthStore {
       deleteQuery()
         .from(TABLES.refresh_tokens)
         .where(
-          "user_id = $1 AND jti NOT IN (SELECT jti FROM refresh_tokens WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2)",
+          "user_id = $1 AND jti NOT IN (SELECT jti FROM (SELECT jti FROM refresh_tokens WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2) AS recent)",
           entry.userId,
           MAX_REFRESH_TOKENS_PER_USER,
         )
@@ -207,11 +201,15 @@ export class AuthPostgresStore implements IAuthStore {
   }
 
   async claimRefresh(jti: string): Promise<RefreshEntry | undefined> {
-    const { rows } = await execute<{ user_id: string; username: string }>(
-      `DELETE FROM ${TABLES.refresh_tokens} WHERE jti = $1 AND expires_at > now() RETURNING user_id, username`,
-      [jti],
-    );
-    const [row] = rows;
+    const results = await executeInTransactionReturning<{ user_id: string; username: string }>([
+      selectQuery("user_id", "username")
+        .from(TABLES.refresh_tokens)
+        .where("jti = $1 AND expires_at > now()", jti)
+        .forUpdate()
+        .build(),
+      deleteQuery().from(TABLES.refresh_tokens).where("jti = $1", jti).build(),
+    ]);
+    const [row] = results[0]?.rows ?? [];
     if (!row) return undefined;
 
     return { userId: row.user_id, username: row.username };

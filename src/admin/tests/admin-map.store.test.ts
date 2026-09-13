@@ -41,3 +41,28 @@ describe("AdminMapStore — порядок пагинации", (): void => {
     expect(page.items.map((item) => item.username)).toEqual(["aaAuser", "Aabuser", "BBBuser"]);
   });
 });
+
+describe("AdminMapStore — вычистка старых удалённых", (): void => {
+  it("purgeOldDeletedUsers удаляет удалённые записи старше retention", async (): Promise<void> => {
+    const store = new AdminMapStore();
+    await store.saveUser(buildUser("purgeuser"));
+    await store.deleteUser("purgeuser");
+    await Bun.sleep(2);
+
+    const purged = await store.purgeOldDeletedUsers(0);
+
+    expect(purged).toBe(1);
+    expect(await store.findDeletedByUsername("purgeuser")).toBeUndefined();
+  });
+
+  it("purgeOldDeletedUsers не трогает живых пользователей", async (): Promise<void> => {
+    const store = new AdminMapStore();
+    await store.saveUser(buildUser("liveuser"));
+    await Bun.sleep(2);
+
+    const purged = await store.purgeOldDeletedUsers(0);
+
+    expect(purged).toBe(0);
+    expect(await store.findByUsername("liveuser")).toBeDefined();
+  });
+});

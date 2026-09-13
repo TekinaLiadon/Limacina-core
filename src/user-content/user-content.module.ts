@@ -6,11 +6,11 @@ import {
   UserContentPostgresStore,
 } from "./user-content.store";
 import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
-import type { AppConfigType } from "../config/global-config";
+import { isSqlDriver, type AppConfigType } from "../config/global-config";
 import { YggdrasilProfileStoreModule } from "../yggdrasil/service/yggdrasil_store.module";
 
 const useFactory = (db: string) => {
-  if (db === "postgres") {
+  if (isSqlDriver(db)) {
     return new UserContentPostgresStore();
   }
   return new UserContentMapStore();
