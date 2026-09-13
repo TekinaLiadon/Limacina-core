@@ -18,7 +18,7 @@ jobs:
       - name: Setup bun
         uses: oven-sh/setup-bun@v2
       - name: Install dependencies
-        # bun-локфайла нет в репо (лежит npm'овский package-lock) — каждый запуск резолвит версии заново
+        # локфайла в репо нет (npm'овский package-lock удалён — bun резолвил по нему старые уязвимые версии) — каждый запуск резолвит версии заново
         run: bun install
 
       - name: Check types
@@ -70,8 +70,9 @@ jobs:
       - name: Update outdated dependencies
         run: |
           bun update
-          # bun.lockb не существует в репо — git diff падает с кодом 128, джоба умирает каждую неделю и пр не создается
-          CHANGED=$(git diff --stat package.json bun.lockb)
+          # локфайла в репо нет — meaningful изменения только в package.json (bun.lock некоммитится, TASK-86);
+          # bun.lockb/bun.lock в git diff указывать нельзя — несуществующий путь валит diff с кодом 128
+          CHANGED=$(git diff --stat package.json)
           if [ -z "$CHANGED" ]; then
             echo "Nothing to update"
             echo "updated=false" >> "$GITHUB_OUTPUT"
