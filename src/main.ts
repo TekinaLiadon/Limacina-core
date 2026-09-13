@@ -6,7 +6,7 @@ import { AppModule } from "./app.module";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { apiReference } from "@scalar/nestjs-api-reference";
-import { ValidationPipe, Logger as NestLogger } from "@nestjs/common";
+import { ValidationPipe, Logger as NestLogger, type INestApplication } from "@nestjs/common";
 import { Logger } from "nestjs-pino";
 import GlobalConfig from "./config/global-config";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
@@ -18,7 +18,7 @@ import { registerProcessErrorHandlers } from "./config/process-error-handlers";
 
 const DEFAULT_BODY_LIMIT_BYTES = Math.round(1.3 * 1024 * 1024);
 
-async function bootstrap() {
+export async function bootstrap(): Promise<INestApplication> {
   const envConfig = GlobalConfig.parseEnvOrExit();
   const adapterOptions: { trustProxy?: string; bodyLimit: number } = {
     bodyLimit: DEFAULT_BODY_LIMIT_BYTES,
@@ -140,6 +140,7 @@ async function bootstrap() {
   });
 
   await app.listen(envConfig.PORT, "0.0.0.0");
+  return app;
 }
 
 async function servePanelFallback(
@@ -166,9 +167,11 @@ async function servePanelFallback(
   return reply.type("text/html").send(html);
 }
 
-bootstrap().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  const stack = error instanceof Error ? error.stack : undefined;
-  new NestLogger("Bootstrap").error(message, stack);
-  process.exit(1);
-});
+if (import.meta.main) {
+  bootstrap().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : undefined;
+    new NestLogger("Bootstrap").error(message, stack);
+    process.exit(1);
+  });
+}

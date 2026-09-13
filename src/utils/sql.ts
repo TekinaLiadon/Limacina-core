@@ -17,7 +17,23 @@ type BunSqlFn = BunSqlClient & {
   close(options?: { timeout?: number }): Promise<void>;
 };
 
+export type SqlClient = BunSqlFn;
+
 const bunSql: BunSqlFn = ((await import("bun")) as unknown as { sql: BunSqlFn }).sql;
+
+let sqlClientOverride: BunSqlFn | undefined;
+
+export function overrideSqlClient(client: SqlClient): void {
+  sqlClientOverride = client;
+}
+
+export function resetSqlClient(): void {
+  sqlClientOverride = undefined;
+}
+
+function currentSqlClient(): BunSqlFn {
+  return sqlClientOverride ?? bunSql;
+}
 
 export const TABLES = {
   users: "users",
@@ -340,7 +356,7 @@ export async function execute<T extends Record<string, unknown>>(
   values: SqlValue[],
 ): Promise<QueryResult<T>> {
   try {
-    const result = await bunSql.unsafe(querySql, values as unknown[]);
+    const result = await currentSqlClient().unsafe(querySql, values as unknown[]);
     const rows = (Array.isArray(result) ? result : (result?.rows ?? [])) as T[];
     const count = Array.isArray(result) ? result.length : (result?.count ?? 0);
     return { rows, count };
@@ -359,7 +375,7 @@ export async function executeInTransactionReturning<T extends Record<string, unk
 ): Promise<QueryResult<T>[]> {
   const results: QueryResult<T>[] = [];
   try {
-    await bunSql.begin(async (tx) => {
+    await currentSqlClient().begin(async (tx) => {
       for (const statement of statements) {
         const result = await tx.unsafe(statement.sql, statement.values as unknown[]);
         const rows = (Array.isArray(result) ? result : (result?.rows ?? [])) as T[];
@@ -375,7 +391,7 @@ export async function executeInTransactionReturning<T extends Record<string, unk
 
 async function runTransaction(statements: BuiltQuery[]): Promise<void> {
   try {
-    await bunSql.begin(async (tx) => {
+    await currentSqlClient().begin(async (tx) => {
       for (const statement of statements) {
         await tx.unsafe(statement.sql, statement.values as unknown[]);
       }
@@ -388,7 +404,7 @@ async function runTransaction(statements: BuiltQuery[]): Promise<void> {
 
 export async function closeSqlPool(): Promise<void> {
   try {
-    await bunSql.close();
+    await currentSqlClient().close();
   } catch (error) {
     sqlLogger.error({ err: error }, "Не удалось закрыть пул SQL-соединений");
   }

@@ -96,6 +96,32 @@ describe("status — недоверенный игровой сервер", (): 
     }
   });
 
+  it("отклоняет заголовок с VarInt длиннее пяти байт", async () => {
+    const hostile = await startHostileServer((write, end) => {
+      write(Uint8Array.from([0x80, 0x80, 0x80, 0x80, 0x80, 0x01]));
+      end();
+    });
+    running = hostile.server;
+
+    const result = await status("127.0.0.1", hostile.port);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("Некорректная длина");
+  });
+
+  it("ждёт продолжение усечённого VarInt-заголовка и закрывается по концу соединения", async () => {
+    const hostile = await startHostileServer((write, end) => {
+      write(Uint8Array.from([0x80]));
+      end();
+    });
+    running = hostile.server;
+
+    const result = await status("127.0.0.1", hostile.port);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("Соединение закрыто");
+  });
+
   it("отклоняет заявленную длину больше лимита вместо буферизации потока", async () => {
     const hostile = await startHostileServer((write) => {
       write(writeVarInt(0x7fffffff));
