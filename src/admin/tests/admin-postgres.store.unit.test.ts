@@ -141,19 +141,14 @@ describe("AdminPostgresStore (мок SQL-клиента)", () => {
   });
 
   it("deleteUser возвращает пользователя при успешном удалении", async () => {
-    fake.onSql(({ sql }) =>
-      sql.includes("SELECT") ? [userRow()] : sql.includes("RETURNING") ? [{ uuid: "uuid-1" }] : [],
-    );
+    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [userRow()] : []));
 
     const deleted = await store.deleteUser("pgadm_user");
 
     expect(deleted).toEqual(adminUser());
-  });
-
-  it("deleteUser без RETURNING-строки отвечает undefined", async () => {
-    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [userRow()] : []));
-
-    expect(await store.deleteUser("pgadm_user")).toBeUndefined();
+    const update = lastCalls(2)[1];
+    expect(update?.sql).toContain("UPDATE users SET deleted = $1");
+    expect(update?.sql).not.toContain("RETURNING");
   });
 
   it("deleteUser несуществующего не выполняет удаление", async () => {
@@ -201,7 +196,8 @@ describe("AdminPostgresStore (мок SQL-клиента)", () => {
     expect(await store.purgeOldDeletedUsers(30)).toBe(2);
     const [call] = lastCalls(1);
     expect(call?.sql).toContain("DELETE FROM users");
-    expect(call?.values).toEqual([30]);
+    expect(call?.sql).not.toContain("make_interval");
+    expect(call?.values[0]).toBeInstanceOf(Date);
   });
 
   it("hasOwner отвечает по наличию owner-строки", async () => {

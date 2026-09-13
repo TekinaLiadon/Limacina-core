@@ -1,11 +1,11 @@
 import { Module } from "@nestjs/common";
 import { AppConfigModule, AppConfigToken } from "../../config/app-config.provider";
-import type { AppConfigType } from "../../config/global-config";
+import { isSqlDriver, type AppConfigType } from "../../config/global-config";
 import { YggdrasilMapStore, YggdrasilStoreToken } from "./yggdrasil_store";
 import { YggdrasilPostgresStore } from "./yggdrasil_postgres";
 
 const useFactory = (db: string) => {
-  if (db === "postgres") {
+  if (isSqlDriver(db)) {
     return new YggdrasilPostgresStore();
   }
   return new YggdrasilMapStore();

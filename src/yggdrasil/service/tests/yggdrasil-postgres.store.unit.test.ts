@@ -120,20 +120,33 @@ describe("YggdrasilPostgresStore (мок SQL-клиента)", () => {
     expect(fake.sqlCalls.length).toBe(before);
   });
 
-  it("updateProfileTexture пишет только переданные поля", async () => {
-    fake.onSql(() => []);
+  it("updateProfileTexture при отсутствии профиля вставляет строку", async () => {
+    fake.onSql(({ sql }) => (sql.includes("SELECT uuid FROM") ? [] : []));
 
     await store.updateProfileTexture("profile-uuid", {
       capeUrl: "http://localhost:3005/capes/c.png",
     });
 
-    const [call] = lastCalls(1);
-    expect(call?.sql).toContain("ON CONFLICT (uuid) DO UPDATE SET cape_url = $2");
-    expect(call?.values).toEqual(["profile-uuid", "http://localhost:3005/capes/c.png"]);
+    const insert = lastCalls(2)[1];
+    expect(insert?.sql).toContain("INSERT INTO user_textures");
+    expect(insert?.sql).not.toContain("ON CONFLICT");
+    expect(insert?.values).toEqual(["profile-uuid", "http://localhost:3005/capes/c.png"]);
+  });
+
+  it("updateProfileTexture при существующем профиле обновляет поля", async () => {
+    fake.onSql(({ sql }) => (sql.includes("SELECT uuid FROM") ? [{ uuid: "profile-uuid" }] : []));
+
+    await store.updateProfileTexture("profile-uuid", {
+      capeUrl: "http://localhost:3005/capes/c.png",
+    });
+
+    const update = lastCalls(2)[1];
+    expect(update?.sql).toContain("UPDATE user_textures SET cape_url = $1");
+    expect(update?.values).toEqual(["http://localhost:3005/capes/c.png", "profile-uuid"]);
   });
 
   it("updateProfileTexture пишет кожу с моделью и плащ", async () => {
-    fake.onSql(() => []);
+    fake.onSql(({ sql }) => (sql.includes("SELECT uuid FROM") ? [] : []));
 
     await store.updateProfileTexture("profile-uuid", {
       skinUrl: "http://localhost:3005/textures/skin.png",
@@ -141,11 +154,9 @@ describe("YggdrasilPostgresStore (мок SQL-клиента)", () => {
       capeUrl: null,
     });
 
-    const [call] = lastCalls(1);
-    expect(call?.sql).toContain("skin_url = $2");
-    expect(call?.sql).toContain("skin_model = $3");
-    expect(call?.sql).toContain("cape_url = $4");
-    expect(call?.values).toEqual([
+    const insert = lastCalls(2)[1];
+    expect(insert?.sql).toContain("INSERT INTO user_textures");
+    expect(insert?.values).toEqual([
       "profile-uuid",
       "http://localhost:3005/textures/skin.png",
       "classic",

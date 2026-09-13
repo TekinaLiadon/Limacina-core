@@ -26,7 +26,9 @@ async function waitFor(condition: () => boolean, timeoutMs = 5000): Promise<void
 beforeAll(async () => {
   await files.onApplicationBootstrap();
   await Promise.race([
-    new Promise<void>((resolve) => files.watcherLauncher.once("ready", resolve)),
+    new Promise<void>((resolve) => {
+      files.watcherLauncher.once("ready", resolve);
+    }),
     Bun.sleep(1000),
   ]);
 });
@@ -112,7 +114,7 @@ describe("FilesService — watcher и стриминг", () => {
 
     expect(headers["Content-Type"]).toBe("application/octet-stream");
     expect(headers["Content-Length"]).toBe(String("stream-body".length));
-    const stream = streams[0];
+    const [stream] = streams;
     expect(stream).toBeDefined();
     expect(stream?.emit("error", new Error("stream failed"))).toBeTrue();
   });

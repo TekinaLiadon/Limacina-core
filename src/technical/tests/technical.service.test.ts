@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -636,9 +636,17 @@ describe("TechnicalService", (): void => {
 
   describe("реальные шаги конвейера", () => {
     const previousCwd = process.cwd();
+    const tempDirs: string[] = [];
+
+    afterAll((): void => {
+      for (const dir of tempDirs) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
 
     function makeTempProject(files: Record<string, string> = {}): string {
       const dir = mkdtempSync(join(tmpdir(), "limacina-pipeline-"));
+      tempDirs.push(dir);
       for (const [name, content] of Object.entries(files)) {
         const filePath = join(dir, name);
         mkdirSync(join(filePath, ".."), { recursive: true });
@@ -687,7 +695,6 @@ describe("TechnicalService", (): void => {
 
       expect(existsSync(join(dir, "bun.lock"))).toBeTrue();
       expect(existsSync(join(dir, "node_modules", "localdep"))).toBeTrue();
-      rmSync(dir, { recursive: true, force: true });
     });
 
     it("runMigrations выполняет скрипт migrate:up проекта", async () => {
@@ -701,8 +708,6 @@ describe("TechnicalService", (): void => {
       });
 
       await withCwd(dir, () => service.runMigrations());
-
-      rmSync(dir, { recursive: true, force: true });
     });
 
     it("runMigrations без проекта отклоняется с доменной ошибкой", async () => {
@@ -712,8 +717,6 @@ describe("TechnicalService", (): void => {
       await withCwd(dir, async () => {
         await expect(service.runMigrations()).rejects.toBeInstanceOf(InternalServerErrorException);
       });
-
-      rmSync(dir, { recursive: true, force: true });
     });
 
     it("buildBinary без бинарника и с успешной сборкой проходит", async () => {
@@ -729,7 +732,6 @@ describe("TechnicalService", (): void => {
       await withCwd(dir, () => service.buildBinary());
 
       expect(existsSync(join(dir, "dist", "Limacina.previous"))).toBeFalse();
-      rmSync(dir, { recursive: true, force: true });
     });
 
     it("buildBinary при упавшей сборке восстанавливает бинарник из копии", async () => {
@@ -748,12 +750,12 @@ describe("TechnicalService", (): void => {
       });
 
       expect(readFileSync(join(dir, "dist", "Limacina"), "utf8")).toBe("previous-binary-content");
-      rmSync(dir, { recursive: true, force: true });
     });
 
     it("gitPull в репозитории с локальным remote возвращает ревизии до и после", async () => {
       const service = new TechnicalService(new AdminMapStore(), new AuthMapStore(), makeConfig());
       const baseDir = mkdtempSync(join(tmpdir(), "limacina-gitpull-"));
+      tempDirs.push(baseDir);
       const repoDir = join(baseDir, "repo");
       execSync("git init -q --bare origin.git", { cwd: baseDir });
       execSync("git clone -q origin.git repo", { cwd: baseDir });
@@ -766,7 +768,6 @@ describe("TechnicalService", (): void => {
 
       expect(revisions.before).toMatch(/^[0-9a-f]{40}$/);
       expect(revisions.after).toBe(revisions.before);
-      rmSync(baseDir, { recursive: true, force: true });
     });
 
     it("gitPull вне репозитория отклоняется с доменной ошибкой", async () => {
@@ -776,8 +777,6 @@ describe("TechnicalService", (): void => {
       await withCwd(dir, async () => {
         await expect(service.gitPull()).rejects.toBeInstanceOf(InternalServerErrorException);
       });
-
-      rmSync(dir, { recursive: true, force: true });
     });
   });
 });

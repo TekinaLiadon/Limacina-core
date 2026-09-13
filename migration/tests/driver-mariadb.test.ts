@@ -5,24 +5,28 @@ import { createDriver } from "../core/driver.js";
 
 const ENV_FILE = join(import.meta.dir, "..", "..", ".env");
 
-function loadMariaDbUrl(): string | undefined {
-  if (process.env["MARIADB_URL"]) return process.env["MARIADB_URL"];
+function loadDatabaseUrl(): string | undefined {
+  if (process.env["DATABASE_URL"]) return process.env["DATABASE_URL"];
   if (!existsSync(ENV_FILE)) return undefined;
   for (const line of readFileSync(ENV_FILE, "utf-8").split("\n")) {
     const [name, value] = line.split("=", 2);
-    if (name === "MARIADB_URL") return value?.trim();
+    if (name === "DATABASE_URL") return value?.trim();
   }
   return undefined;
 }
 
-const MARIADB_URL = loadMariaDbUrl();
-const itWithMariaDb = it.skipIf(MARIADB_URL === undefined);
+function isMariaDbUrl(url: string | undefined): url is string {
+  return url !== undefined && /^mariadb:|^mysql:/.test(new URL(url).protocol);
+}
+
+const DATABASE_URL = loadDatabaseUrl();
+const itWithMariaDb = it.skipIf(!isMariaDbUrl(DATABASE_URL));
 
 describe("MigrationDriver — MariaDB (интеграция)", () => {
   itWithMariaDb(
     "install/listExecuted/record/setChecksum/remove/close проходят на реальной базе",
     async () => {
-      const driver = await createDriver(MARIADB_URL as string);
+      const driver = await createDriver(DATABASE_URL as string);
       try {
         await driver.install();
         await driver.install();

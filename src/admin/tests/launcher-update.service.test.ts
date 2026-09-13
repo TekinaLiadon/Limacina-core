@@ -84,6 +84,15 @@ describe("LauncherUpdateService — архивирование старых ве
         renameSync(backupPath, path);
       }
     }
+    if (existsSync(OLD_DIR)) {
+      const originals = new Set(backedUpFiles.map(({ path }) => path));
+      for (const file of readdirSync(OLD_DIR)) {
+        const filePath = join(OLD_DIR, file);
+        if (file.endsWith(".zip") && !originals.has(filePath)) {
+          unlinkSync(filePath);
+        }
+      }
+    }
     if (oldDirCreatedByTest) {
       rmSync(OLD_DIR, { recursive: true });
     }

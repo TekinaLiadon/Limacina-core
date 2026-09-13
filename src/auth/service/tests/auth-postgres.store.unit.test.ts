@@ -95,7 +95,8 @@ describe("AuthPostgresStore (мок SQL-клиента)", () => {
   });
 
   it("saveUser при unique violation возвращает false", async () => {
-    fake.onSql(() => {
+    fake.onSql(({ sql }) => {
+      if (!sql.includes("INSERT INTO")) return [];
       throw Object.assign(new Error("duplicate key"), { code: "23505" });
     });
 
@@ -105,7 +106,8 @@ describe("AuthPostgresStore (мок SQL-клиента)", () => {
   });
 
   it("saveUser перекидывает не-unique ошибки", async () => {
-    fake.onSql(() => {
+    fake.onSql(({ sql }) => {
+      if (!sql.includes("INSERT INTO")) return [];
       throw new Error("connection refused");
     });
 
@@ -113,10 +115,7 @@ describe("AuthPostgresStore (мок SQL-клиента)", () => {
   });
 
   it("saveUser при конфликте обновляет существующую запись по uuid", async () => {
-    fake.onSql(({ sql }) => {
-      if (sql.includes("RETURNING uuid")) return [];
-      return [{ username: "pgauth_user" }];
-    });
+    fake.onSql(({ sql }) => (sql.includes("INSERT INTO") ? [] : [userRow()]));
 
     const inserted = await store.saveUser(storedUser({ passwordHash: "new-hash" }));
 
@@ -126,11 +125,8 @@ describe("AuthPostgresStore (мок SQL-клиента)", () => {
     expect(update?.values).toEqual(["new-hash", "uuid-1"]);
   });
 
-  it("saveUser при конфликте с другим ником возвращает false", async () => {
-    fake.onSql(({ sql }) => {
-      if (sql.includes("RETURNING uuid")) return [];
-      return [{ username: "someone-else" }];
-    });
+  it("saveUser при занятом нике другого пользователя возвращает false", async () => {
+    fake.onSql(({ sql }) => (sql.includes("INSERT INTO") ? [] : [userRow({ uuid: "uuid-2" })]));
 
     expect(await store.saveUser(storedUser())).toBeFalse();
   });
@@ -162,15 +158,19 @@ describe("AuthPostgresStore (мок SQL-клиента)", () => {
   });
 
   it("claimRefresh забирает токен и возвращает запись", async () => {
-    fake.onSql(() => [{ user_id: "uuid-1", username: "pgauth_user" }]);
+    fake.onSql(({ sql }) =>
+      sql.includes("FOR UPDATE") ? [{ user_id: "uuid-1", username: "pgauth_user" }] : [],
+    );
 
     const entry = await store.claimRefresh("jti-1");
 
     expect(entry).toEqual({ userId: "uuid-1", username: "pgauth_user" });
-    const [call] = lastCalls(1);
-    expect(call?.sql).toContain("DELETE FROM refresh_tokens WHERE jti = $1 AND expires_at > now()");
-    expect(call?.sql).toContain("RETURNING user_id, username");
-    expect(call?.values).toEqual(["jti-1"]);
+    const [lock, remove] = lastCalls(2);
+    expect(lock?.sql).toContain("SELECT user_id, username FROM refresh_tokens");
+    expect(lock?.sql).toContain("jti = $1 AND expires_at > now()");
+    expect(lock?.sql).toContain("FOR UPDATE");
+    expect(remove?.sql).toContain("DELETE FROM refresh_tokens WHERE jti = $1");
+    expect(remove?.values).toEqual(["jti-1"]);
   });
 
   it("claimRefresh без строк отвечает undefined", async () => {

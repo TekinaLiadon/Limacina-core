@@ -182,20 +182,34 @@ describe("UserContentPostgresStore (мок SQL-клиента)", () => {
   });
 
   it("deleteByIdAndCountRemaining возвращает удалённое и остаток ссылок", async () => {
-    fake.onSql(() => [contentRow({ id: 11, same_path_total: "3" })]);
+    fake.onSql(({ sql }) => {
+      if (sql.includes("SELECT id, user_uuid, file_path")) return [contentRow({ id: 11 })];
+      if (sql.includes("DELETE FROM")) return [contentRow({ id: 11 })];
+      return [{ same_path_total: "3" }];
+    });
 
     const result = await store.deleteByIdAndCountRemaining(11, "skin");
 
     expect(result?.item.id).toBe(11);
     expect(result?.remainingCount).toBe(2);
-    const [call] = lastCalls(1);
-    expect(call?.sql).toContain("WITH deleted AS (DELETE FROM user_skins WHERE id = $1");
-    expect(call?.values).toEqual([11]);
+    const [count] = lastCalls(2);
+    expect(count?.sql).toContain("SELECT COUNT(*) AS same_path_total");
+    expect(count?.values).toEqual(["http://localhost:3005/textures/skin.png"]);
+  });
+
+  it("deleteByIdAndCountRemaining при сбое удаления отвечает undefined", async () => {
+    fake.onSql(({ sql }) => {
+      if (sql.includes("SELECT id, user_uuid, file_path")) return [contentRow({ id: 11 })];
+      return [];
+    });
+
+    expect(await store.deleteByIdAndCountRemaining(11, "cape")).toBeUndefined();
   });
 
   it("deleteByIdAndCountRemaining несуществующей записи отвечает undefined", async () => {
     fake.onSql(() => []);
 
     expect(await store.deleteByIdAndCountRemaining(999, "cape")).toBeUndefined();
+    expect(lastCalls(1)[0]?.sql).toContain("SELECT id, user_uuid, file_path");
   });
 });

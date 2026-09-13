@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { insertQuery, selectQuery, execute, TABLES } from "../../utils/sql";
+import { insertQuery, selectQuery, updateQuery, execute, toBoolean, TABLES } from "../../utils/sql";
 import type {
   IYggdrasilStore,
   YggdrasilProfile,
@@ -108,12 +108,27 @@ export class YggdrasilPostgresStore implements IYggdrasilStore {
     if (textures.capeUrl !== undefined) sets.push(["cape_url", textures.capeUrl]);
     if (sets.length === 0) return;
 
+    const existing = await execute<{ uuid: string }>(
+      `SELECT uuid FROM ${TABLES.user_textures} WHERE uuid = $1`,
+      [uuid],
+    );
+
+    if (existing.rows.length > 0) {
+      const [firstSet, ...restSets] = sets;
+      if (!firstSet) return;
+      let update = updateQuery().from(TABLES.user_textures).set(firstSet[0], firstSet[1]);
+      for (const [column, value] of restSets) {
+        update = update.set(column, value);
+      }
+      const q = update.where("uuid = $1", uuid).build();
+      await execute(q.sql, q.values);
+      return;
+    }
+
     const columns = ["uuid", ...sets.map((s) => s[0])];
     const values = [uuid, ...sets.map((s) => s[1])];
     const placeholders = values.map((_, i) => `$${i + 1}`).join(", ");
-    const setClauses = sets.map((s, i) => `${s[0]} = $${i + 2}`).join(", ");
-
-    const sql = `INSERT INTO ${TABLES.user_textures} (${columns.join(", ")}) VALUES (${placeholders}) ON CONFLICT (uuid) DO UPDATE SET ${setClauses}`;
+    const sql = `INSERT INTO ${TABLES.user_textures} (${columns.join(", ")}) VALUES (${placeholders})`;
     await execute(sql, values);
   }
 
@@ -139,8 +154,8 @@ export class YggdrasilPostgresStore implements IYggdrasilStore {
     return {
       uuid: row.uuid,
       passwordHash: row.password_hash,
-      banned: row.banned,
-      approved: row.approved,
+      banned: toBoolean(row.banned),
+      approved: toBoolean(row.approved),
     };
   }
 }

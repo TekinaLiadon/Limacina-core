@@ -7,7 +7,7 @@ import {
   type StoredUser,
 } from "./auth_store.service";
 import { AppConfigToken } from "../../config/app-config.provider";
-import type { AppConfigType } from "../../config/global-config";
+import { isSqlDriver, type AppConfigType } from "../../config/global-config";
 import type { AuthResponseDto, UserTokens } from "../dto/dto";
 import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS } from "../token.constants";
 import { generateUuid } from "../../utils/uuid";
@@ -19,11 +19,10 @@ export const useFactory = (db: string, authProxyUrl?: string) => {
     return new AuthProxyStore(authProxyUrl);
   }
 
-  return (
-    {
-      postgres: new AuthPostgresStore(),
-    }[db] ?? new AuthMapStore()
-  );
+  if (isSqlDriver(db)) {
+    return new AuthPostgresStore();
+  }
+  return new AuthMapStore();
 };
 const INVALID_CREDENTIALS_MESSAGE = "Неверное имя пользователя или пароль";
 
