@@ -1575,14 +1575,18 @@ describe("V1 panel эндпоинты", (): void => {
 
   describe("PATCH /v1/panel/launcher", () => {
     beforeAll(() => {
-      renameSync(VERSION_FILE, VERSION_BACKUP);
+      if (existsSync(VERSION_FILE)) {
+        renameSync(VERSION_FILE, VERSION_BACKUP);
+      }
     });
 
     afterAll(() => {
       if (existsSync(VERSION_FILE)) {
         unlinkSync(VERSION_FILE);
       }
-      renameSync(VERSION_BACKUP, VERSION_FILE);
+      if (existsSync(VERSION_BACKUP)) {
+        renameSync(VERSION_BACKUP, VERSION_FILE);
+      }
     });
 
     it("возвращает 400 при невалидной версии", async () => {

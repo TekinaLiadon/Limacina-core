@@ -14,12 +14,14 @@ import { Jwt_authGuard } from "./common/jwt_auth.guard";
 import { RolesGuard } from "./common/roles.guard";
 import { LoggerModule } from "nestjs-pino";
 import GlobalConfig from "./config/global-config";
+import { AppConfigModule } from "./config/app-config.provider";
 import { buildPinoHttpOptions } from "./config/pino-options";
 import { SqlPoolLifecycle } from "./config/sql-pool-lifecycle";
 
 @Module({
   imports: [
     GlobalConfig.asModule,
+    AppConfigModule,
     LoggerModule.forRoot({
       pinoHttp: buildPinoHttpOptions(),
     }),
