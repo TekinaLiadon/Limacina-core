@@ -106,7 +106,7 @@ describe("V1 common/auth эндпоинты", (): void => {
       .send({ username: "v1user", password: "pass123" })
       .expect(201);
     registeredUuid = registerRes.body.uuid;
-    await authStore.approveUser(registeredUuid);
+    await authStore.setApproved(registeredUuid, true);
   });
 
   afterAll(async () => {
@@ -315,7 +315,7 @@ describe("V1 common/auth эндпоинты", (): void => {
         .expect(401);
       expect(res.body.message).toBe("Нет доступа");
 
-      await authStore.approveUser(registerRes.body.uuid);
+      await authStore.setApproved(registerRes.body.uuid, true);
 
       await supertest(app.getHttpServer())
         .post("/v1/common/auth/refresh")

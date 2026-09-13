@@ -8,10 +8,15 @@ import {
 } from "../../../utils/tests/postgres-suite";
 import { generateUuid } from "../../../utils/uuid";
 import { AuthPostgresStore } from "../auth_postgres.service";
+import { execute, TABLES } from "../../../utils/sql";
+import { MAX_REFRESH_TOKENS_PER_USER } from "../../token.constants";
 
 const store = new AuthPostgresStore();
 
 const uniqueUsername = (): string => `pgauth_${generateUuid().slice(0, 12)}`;
+const HOUR_MS = 60 * 60 * 1000;
+const futureExpiry = (): Date => new Date(Date.now() + HOUR_MS);
+const pastExpiry = (): Date => new Date(Date.now() - HOUR_MS);
 
 postgresDescribe("AuthPostgresStore (postgres)", () => {
   beforeAll(async () => {
@@ -84,12 +89,24 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
     expect(await store.findByUsername(variant.username)).toBeUndefined();
   });
 
-  it("approveUser одобряет пользователя", async () => {
+  it("setApproved переключает одобрение в обе стороны", async () => {
     const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
 
-    await store.approveUser(saved.uuid);
-
+    await store.setApproved(saved.uuid, true);
     expect((await store.findByUsername(saved.username))?.approved).toBe(true);
+
+    await store.setApproved(saved.uuid, false);
+    expect((await store.findByUsername(saved.username))?.approved).toBe(false);
+  });
+
+  it("setBanned переключает бан в обе стороны", async () => {
+    const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
+
+    await store.setBanned(saved.uuid, true);
+    expect((await store.findByUsername(saved.username))?.banned).toBe(true);
+
+    await store.setBanned(saved.uuid, false);
+    expect((await store.findByUsername(saved.username))?.banned).toBe(false);
   });
 
   it("updateRole меняет роль пользователя", async () => {
@@ -104,7 +121,7 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
     const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
     const changedAt = new Date();
     const jti = generateUuid();
-    await store.saveRefresh(jti, { userId: saved.uuid, username: saved.username });
+    await store.saveRefresh(jti, { userId: saved.uuid, username: saved.username }, futureExpiry());
 
     await store.replacePassword(saved.uuid, "changed-hash", changedAt);
 
@@ -118,7 +135,7 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
   it("claimRefresh атомарно забирает запись: повторный вызов пуст (TASK-9)", async () => {
     const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
     const jti = generateUuid();
-    await store.saveRefresh(jti, { userId: saved.uuid, username: saved.username });
+    await store.saveRefresh(jti, { userId: saved.uuid, username: saved.username }, futureExpiry());
 
     expect(await store.claimRefresh(jti)).toEqual({
       userId: saved.uuid,
@@ -133,7 +150,7 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
     const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
     const jti = generateUuid();
 
-    await store.saveRefresh(jti, { userId: saved.uuid, username: saved.username });
+    await store.saveRefresh(jti, { userId: saved.uuid, username: saved.username }, futureExpiry());
 
     expect(await store.findRefresh(jti)).toEqual({
       userId: saved.uuid,
@@ -142,12 +159,70 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
     expect(await store.findRefresh(generateUuid())).toBeUndefined();
   });
 
+  it("истёкший refresh-токен не возвращается и не забирается (TASK-17)", async () => {
+    const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
+    const jti = generateUuid();
+    await store.saveRefresh(jti, { userId: saved.uuid, username: saved.username }, pastExpiry());
+
+    expect(await store.findRefresh(jti)).toBeUndefined();
+    expect(await store.claimRefresh(jti)).toBeUndefined();
+  });
+
+  it("saveRefresh чистит просроченные записи всех пользователей (TASK-17)", async () => {
+    const expiredOwner = await createPostgresUser({ usernamePrefix: "pgauth" });
+    const saver = await createPostgresUser({ usernamePrefix: "pgauth" });
+    const expiredJti = generateUuid();
+    await store.saveRefresh(
+      expiredJti,
+      { userId: expiredOwner.uuid, username: expiredOwner.username },
+      pastExpiry(),
+    );
+
+    await store.saveRefresh(
+      generateUuid(),
+      { userId: saver.uuid, username: saver.username },
+      futureExpiry(),
+    );
+
+    const { rows } = await execute<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM ${TABLES.refresh_tokens} WHERE jti = $1`,
+      [expiredJti],
+    );
+    expect(Number(rows[0]?.count)).toBe(0);
+  });
+
+  it("saveRefresh вытесняет самые старые токены сверх лимита (TASK-17)", async () => {
+    const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
+    const jtis = Array.from({ length: MAX_REFRESH_TOKENS_PER_USER + 1 }, () => generateUuid());
+    for (const [index, jti] of jtis.entries()) {
+      await store.saveRefresh(
+        jti,
+        { userId: saved.uuid, username: saved.username },
+        futureExpiry(),
+      );
+      if (index < jtis.length - 1) await Bun.sleep(3);
+    }
+
+    expect(await store.findRefresh(jtis[0]!)).toBeUndefined();
+    for (const jti of jtis.slice(1)) {
+      expect(await store.findRefresh(jti)).toBeDefined();
+    }
+  });
+
   it("deleteRefresh удаляет только указанный jti", async () => {
     const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
     const first = generateUuid();
     const second = generateUuid();
-    await store.saveRefresh(first, { userId: saved.uuid, username: saved.username });
-    await store.saveRefresh(second, { userId: saved.uuid, username: saved.username });
+    await store.saveRefresh(
+      first,
+      { userId: saved.uuid, username: saved.username },
+      futureExpiry(),
+    );
+    await store.saveRefresh(
+      second,
+      { userId: saved.uuid, username: saved.username },
+      futureExpiry(),
+    );
 
     await store.deleteRefresh(first);
 
@@ -160,8 +235,16 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
     const second = await createPostgresUser({ usernamePrefix: "pgauth" });
     const firstJti = generateUuid();
     const secondJti = generateUuid();
-    await store.saveRefresh(firstJti, { userId: first.uuid, username: first.username });
-    await store.saveRefresh(secondJti, { userId: second.uuid, username: second.username });
+    await store.saveRefresh(
+      firstJti,
+      { userId: first.uuid, username: first.username },
+      futureExpiry(),
+    );
+    await store.saveRefresh(
+      secondJti,
+      { userId: second.uuid, username: second.username },
+      futureExpiry(),
+    );
 
     await store.deleteRefreshByUserId(first.uuid);
 

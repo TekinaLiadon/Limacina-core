@@ -226,7 +226,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 409 если владелец уже создан", async () => {
       const res = await supertest(app.getHttpServer())
         .post("/v1/panel/users/init-owner")
-        .send({ username: "bootowner2", password: "securepassword" })
+        .send({ username: "bootowner2", password: "securepassword", token: "any-token" })
         .expect(409);
 
       expect(res.body.message).toContain("Владелец уже создан");
@@ -235,7 +235,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 400 при коротком пароле", async () => {
       await supertest(app.getHttpServer())
         .post("/v1/panel/users/init-owner")
-        .send({ username: "test", password: "123" })
+        .send({ username: "test", password: "123", token: "any-token" })
         .expect(400);
     });
   });
@@ -538,10 +538,11 @@ describe("V1 panel эндпоинты", (): void => {
   describe("PATCH /v1/panel/users/password", () => {
     it("владелец задаёт новый пароль без знания старого", async () => {
       const authStore = app.get(AuthMapStoreToken, { strict: false });
-      await authStore.saveRefresh("password-test-jti", {
-        userId: "user-uuid",
-        username: "user",
-      });
+      await authStore.saveRefresh(
+        "password-test-jti",
+        { userId: "user-uuid", username: "user" },
+        new Date(Date.now() + 60 * 60 * 1000),
+      );
 
       const res = await supertest(app.getHttpServer())
         .patch("/v1/panel/users/password")
@@ -734,10 +735,11 @@ describe("V1 panel эндпоинты", (): void => {
         approved: true,
         banned: false,
       });
-      await authStore.saveRefresh("deletable-jti", {
-        userId: "deletable-uuid",
-        username: "deletable",
-      });
+      await authStore.saveRefresh(
+        "deletable-jti",
+        { userId: "deletable-uuid", username: "deletable" },
+        new Date(Date.now() + 60 * 60 * 1000),
+      );
 
       try {
         await supertest(app.getHttpServer())

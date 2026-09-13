@@ -2,8 +2,8 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 
 setupTestEnv();
 
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, unlinkSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { existsSync, mkdirSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
 import { createHmac } from "node:crypto";
 import { type INestApplication, ValidationPipe } from "@nestjs/common";
 import { JwtModule } from "@nestjs/jwt";
@@ -1351,6 +1351,76 @@ describe("Yggdrasil эндпоинты", () => {
 
       const profile = await store.findProfileByUuid(TEST_UUID);
       expect(profile!.skinUrl).toBeNull();
+    });
+  });
+
+  // ─── Порядок записи текстуры при сбоях (TASK-93) ───
+
+  describe("Порядок записи текстуры при сбоях", () => {
+    const resetProfile = async (): Promise<void> => {
+      await store.saveProfile({
+        uuid: TEST_UUID,
+        userId: TEST_USER_UUID,
+        username: TEST_USERNAME,
+        skinUrl: null,
+        skinModel: null,
+        capeUrl: null,
+      });
+    };
+
+    const listTextureFiles = (): string[] => readdirSync("public/textures").sort();
+
+    const texturePathFor = (base64: string): string => {
+      const hasher = new Bun.CryptoHasher("sha256");
+      hasher.update(new Uint8Array(Buffer.from(base64, "base64")));
+      return `public/textures/testplayer-${hasher.digest("hex")}.png`;
+    };
+
+    it("сбой записи в стор не оставляет файл текстуры на диске", async () => {
+      await resetProfile();
+      const token = await authenticateAndBindProfile();
+      const filesBefore = listTextureFiles();
+      const updateSpy = spyOn(store, "updateProfileTexture").mockImplementation(() =>
+        Promise.reject(new Error("store down")),
+      );
+
+      try {
+        await supertest(app.getHttpServer())
+          .put(`/api/user/profile/${TEST_UUID}/skin`)
+          .set("Authorization", `Bearer ${token}`)
+          .send({ file: buildPngBase64("order-store-fail") })
+          .expect(500);
+
+        expect(listTextureFiles()).toEqual(filesBefore);
+      } finally {
+        updateSpy.mockRestore();
+        await resetProfile();
+      }
+    });
+
+    it("сбой записи файла откатывает текстуру в сторе", async () => {
+      await resetProfile();
+      const token = await authenticateAndBindProfile();
+      const body = buildPngBase64("order-write-fail");
+      const blockedPath = texturePathFor(body);
+      mkdirSync(blockedPath, { recursive: true });
+      const updateSpy = spyOn(store, "updateProfileTexture");
+
+      try {
+        await supertest(app.getHttpServer())
+          .put(`/api/user/profile/${TEST_UUID}/skin`)
+          .set("Authorization", `Bearer ${token}`)
+          .send({ file: body })
+          .expect(500);
+
+        expect(updateSpy).toHaveBeenCalledTimes(2);
+        const profile = await store.findProfileByUuid(TEST_UUID);
+        expect(profile!.skinUrl).toBeNull();
+      } finally {
+        updateSpy.mockRestore();
+        if (existsSync(blockedPath)) rmdirSync(blockedPath);
+        await resetProfile();
+      }
     });
   });
 

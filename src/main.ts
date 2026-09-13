@@ -14,6 +14,7 @@ import fastifyStatic from "@fastify/static";
 import cors from "@fastify/cors";
 import fastifyMultipart from "@fastify/multipart";
 import { registerAuthRateLimit } from "./common/auth-rate-limit";
+import { registerProcessErrorHandlers } from "./config/process-error-handlers";
 
 const DEFAULT_BODY_LIMIT_BYTES = Math.round(1.3 * 1024 * 1024);
 
@@ -139,16 +140,6 @@ async function bootstrap() {
   });
 
   await app.listen(envConfig.PORT, "0.0.0.0");
-}
-
-function registerProcessErrorHandlers(logger: Logger): void {
-  process.on("unhandledRejection", (reason: unknown) => {
-    logger.error({ err: reason }, "Необработанный promise rejection");
-  });
-
-  process.on("uncaughtException", (error: Error) => {
-    logger.error({ err: error }, "Необработанное исключение");
-  });
 }
 
 async function servePanelFallback(

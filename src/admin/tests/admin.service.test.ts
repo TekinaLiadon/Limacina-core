@@ -50,6 +50,60 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     expect((await authStore.findByUsername("rollbacktarget"))?.role).toBe("admin");
   });
 
+  it("setApproved синхронизирует статус одобрения в обоих сторах (TASK-38)", async (): Promise<void> => {
+    const { adminStore, authStore, service } = await seed();
+
+    await service.setApproved("rollbacktarget", false, ACTOR);
+
+    expect((await adminStore.findByUsername("rollbacktarget"))?.approved).toBe(false);
+    expect((await authStore.findByUsername("rollbacktarget"))?.approved).toBe(false);
+
+    await service.setApproved("rollbacktarget", true, ACTOR);
+
+    expect((await adminStore.findByUsername("rollbacktarget"))?.approved).toBe(true);
+    expect((await authStore.findByUsername("rollbacktarget"))?.approved).toBe(true);
+  });
+
+  it("setBanned синхронизирует статус бана в обоих сторах (TASK-38)", async (): Promise<void> => {
+    const { adminStore, authStore, service } = await seed();
+
+    await service.setBanned("rollbacktarget", true, ACTOR);
+
+    expect((await adminStore.findByUsername("rollbacktarget"))?.banned).toBe(true);
+    expect((await authStore.findByUsername("rollbacktarget"))?.banned).toBe(true);
+
+    await service.setBanned("rollbacktarget", false, ACTOR);
+
+    expect((await adminStore.findByUsername("rollbacktarget"))?.banned).toBe(false);
+    expect((await authStore.findByUsername("rollbacktarget"))?.banned).toBe(false);
+  });
+
+  it("setApproved откатывает admin-стор при сбое auth-стора (TASK-38)", async (): Promise<void> => {
+    const { adminStore, authStore, service } = await seed();
+    const setApproved = spyOn(authStore, "setApproved").mockRejectedValue(
+      new Error("auth store down"),
+    );
+
+    await expect(service.setApproved("rollbacktarget", false, ACTOR)).rejects.toThrow(
+      "auth store down",
+    );
+
+    expect((await adminStore.findByUsername("rollbacktarget"))?.approved).toBe(true);
+    setApproved.mockRestore();
+  });
+
+  it("setBanned откатывает admin-стор при сбое auth-стора (TASK-38)", async (): Promise<void> => {
+    const { adminStore, authStore, service } = await seed();
+    const setBanned = spyOn(authStore, "setBanned").mockRejectedValue(new Error("auth store down"));
+
+    await expect(service.setBanned("rollbacktarget", true, ACTOR)).rejects.toThrow(
+      "auth store down",
+    );
+
+    expect((await adminStore.findByUsername("rollbacktarget"))?.banned).toBe(false);
+    setBanned.mockRestore();
+  });
+
   it("setRole откатывает роль в admin-сторе при сбое auth-стора", async (): Promise<void> => {
     const { adminStore, authStore, service } = await seed();
     const updateRole = spyOn(authStore, "updateRole").mockRejectedValue(
@@ -78,10 +132,11 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
 
   it("setUserPassword меняет пароль и отзывает refresh-токены", async (): Promise<void> => {
     const { authStore, service } = await seed();
-    await authStore.saveRefresh("rollback-jti", {
-      userId: "rollback-target-uuid",
-      username: "rollbacktarget",
-    });
+    await authStore.saveRefresh(
+      "rollback-jti",
+      { userId: "rollback-target-uuid", username: "rollbacktarget" },
+      new Date(Date.now() + 60 * 60 * 1000),
+    );
 
     await service.setUserPassword("rollbacktarget", "newownerpass", ACTOR);
 

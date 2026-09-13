@@ -9,6 +9,7 @@ import {
   TABLES,
 } from "../../utils/sql";
 import type { IAuthStore, StoredUser, RefreshEntry } from "./auth_store.service";
+import { MAX_REFRESH_TOKENS_PER_USER } from "../token.constants";
 
 interface UserRow extends Record<string, unknown> {
   uuid: string;
@@ -112,10 +113,20 @@ export class AuthPostgresStore implements IAuthStore {
     return rows[0]?.username;
   }
 
-  async approveUser(uuid: string): Promise<void> {
+  async setApproved(uuid: string, approved: boolean): Promise<void> {
     const query = updateQuery()
       .from(TABLES.users)
-      .set("approved", true)
+      .set("approved", approved)
+      .where("uuid = $1", uuid)
+      .build();
+
+    await execute(query.sql, query.values);
+  }
+
+  async setBanned(uuid: string, banned: boolean): Promise<void> {
+    const query = updateQuery()
+      .from(TABLES.users)
+      .set("banned", banned)
       .where("uuid = $1", uuid)
       .build();
 
@@ -177,18 +188,27 @@ export class AuthPostgresStore implements IAuthStore {
     await execute(query.sql, query.values);
   }
 
-  async saveRefresh(jti: string, entry: RefreshEntry): Promise<void> {
-    const query = insertQuery("jti", "user_id", "username")
-      .from(TABLES.refresh_tokens)
-      .values(jti, entry.userId, entry.username)
-      .build();
-
-    await execute(query.sql, query.values);
+  async saveRefresh(jti: string, entry: RefreshEntry, expiresAt: Date): Promise<void> {
+    await executeInTransaction([
+      insertQuery("jti", "user_id", "username", "expires_at")
+        .from(TABLES.refresh_tokens)
+        .values(jti, entry.userId, entry.username, expiresAt)
+        .build(),
+      deleteQuery().from(TABLES.refresh_tokens).where("expires_at <= now()").build(),
+      deleteQuery()
+        .from(TABLES.refresh_tokens)
+        .where(
+          "user_id = $1 AND jti NOT IN (SELECT jti FROM refresh_tokens WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2)",
+          entry.userId,
+          MAX_REFRESH_TOKENS_PER_USER,
+        )
+        .build(),
+    ]);
   }
 
   async claimRefresh(jti: string): Promise<RefreshEntry | undefined> {
     const { rows } = await execute<{ user_id: string; username: string }>(
-      `DELETE FROM ${TABLES.refresh_tokens} WHERE jti = $1 RETURNING user_id, username`,
+      `DELETE FROM ${TABLES.refresh_tokens} WHERE jti = $1 AND expires_at > now() RETURNING user_id, username`,
       [jti],
     );
     const [row] = rows;
@@ -201,6 +221,7 @@ export class AuthPostgresStore implements IAuthStore {
     const query = selectQuery("user_id", "username")
       .from(TABLES.refresh_tokens)
       .where("jti = $1", jti)
+      .where("expires_at > now()")
       .build();
 
     const { rows } = await execute<RefreshRow>(query.sql, query.values);

@@ -183,7 +183,11 @@ export class AuthService {
       },
     );
 
-    await this.authStore.saveRefresh(jti, { userId: uuid, username });
+    await this.authStore.saveRefresh(
+      jti,
+      { userId: uuid, username },
+      new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000),
+    );
 
     return { access_token, refresh_token };
   }

@@ -185,10 +185,15 @@ describe("Сообщения валидации DTO на русском", () => 
     const errors = validate(InitOwnerDto, { username: "", password: "123" });
     expect(errors).toContain("username: не должно быть пустым");
     expect(errors).toContain("password: минимум 6 символов");
+    expect(errors).toContain("token: ожидается строка");
   });
 
   it("InitOwnerDto: длинный пароль", () => {
-    const errors = validate(InitOwnerDto, { username: "owner", password: "p".repeat(129) });
+    const errors = validate(InitOwnerDto, {
+      username: "owner",
+      password: "p".repeat(129),
+      token: "t",
+    });
     expect(errors).toEqual(["password: максимум 128 символов"]);
   });
 

@@ -198,4 +198,28 @@ describe("V1 common/content — лимиты и валидация загруз�
       expect(res.status).toBe(413);
     });
   });
+
+  describe("лишние файлы в запросе", (): void => {
+    it("возвращает 400, если в запросе больше одного файла", async (): Promise<void> => {
+      const res = await supertest(app.getHttpServer())
+        .post("/v1/common/content/skins")
+        .set("Authorization", `Bearer ${userToken}`)
+        .attach("file", pngBuffer(1024), "skin.png")
+        .attach("extra", pngBuffer(1024), "extra.png");
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toBe("Ожидается ровно один файл");
+    });
+
+    it("возвращает 400, когда лишний файл идёт до основного", async (): Promise<void> => {
+      const res = await supertest(app.getHttpServer())
+        .post("/v1/common/content/skins")
+        .set("Authorization", `Bearer ${userToken}`)
+        .attach("extra", pngBuffer(1024), "extra.png")
+        .attach("file", pngBuffer(1024), "skin.png");
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toBe("Ожидается ровно один файл");
+    });
+  });
 });

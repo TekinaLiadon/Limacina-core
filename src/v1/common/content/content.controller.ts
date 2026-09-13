@@ -28,6 +28,7 @@ import {
   UserContentUploadResponseDto,
 } from "../../../user-content/dto/dto";
 import type { FastifyRequest } from "fastify";
+import type { MultipartFile } from "@fastify/multipart";
 
 const STREAM_LIMIT_MULTIPLIER = 2;
 const SKIN_STREAM_LIMIT_BYTES = MAX_SKIN_BYTES * STREAM_LIMIT_MULTIPLIER;
@@ -41,6 +42,12 @@ const concatChunks = (chunks: Uint8Array[], total: number): Uint8Array => {
     cursor += chunk.length;
   }
   return merged;
+};
+
+const drainFilePart = async (part: MultipartFile): Promise<void> => {
+  for await (const chunk of part.file) {
+    void chunk;
+  }
 };
 
 @ApiTags("common_content")
@@ -178,24 +185,35 @@ export class V1ContentController {
   }
 
   private async extractFile(request: FastifyRequest, maxBytes: number): Promise<Uint8Array> {
-    const parts = request.parts();
+    const parts = request.parts({ limits: { fileSize: maxBytes } });
+    let file: Uint8Array | undefined;
     for await (const part of parts) {
       if (part.type !== "file") continue;
-
-      const chunks: Uint8Array[] = [];
-      let received = 0;
-      for await (const chunk of part.file) {
-        received += chunk.length;
-        if (received > maxBytes) {
-          throw new PayloadTooLargeException(`Файл слишком большой: максимум ${maxBytes} байт`);
-        }
-        chunks.push(chunk);
+      if (file !== undefined) {
+        await drainFilePart(part);
+        throw new BadRequestException("Ожидается ровно один файл");
       }
-      if (part.file.truncated) {
+      file = await this.readFilePart(part, maxBytes);
+    }
+    if (file === undefined) {
+      throw new BadRequestException("Файл не загружен");
+    }
+    return file;
+  }
+
+  private async readFilePart(part: MultipartFile, maxBytes: number): Promise<Uint8Array> {
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    for await (const chunk of part.file) {
+      received += chunk.length;
+      if (received > maxBytes) {
         throw new PayloadTooLargeException(`Файл слишком большой: максимум ${maxBytes} байт`);
       }
-      return concatChunks(chunks, received);
+      chunks.push(chunk);
     }
-    throw new BadRequestException("Файл не загружен");
+    if (part.file.truncated) {
+      throw new PayloadTooLargeException(`Файл слишком большой: максимум ${maxBytes} байт`);
+    }
+    return concatChunks(chunks, received);
   }
 }

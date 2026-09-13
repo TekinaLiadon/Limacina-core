@@ -59,14 +59,32 @@ export class AdminService implements OnModuleInit {
   }
 
   async setApproved(username: string, approved: boolean, actor: RequestUser): Promise<void> {
-    await this.findMutableUser(username, actor, "approve");
-    await this.adminStore.setApproved(username, approved);
+    const user = await this.findMutableUser(username, actor, "approve");
+    await this.applyWithRollback([
+      {
+        run: () => this.adminStore.setApproved(username, approved),
+        undo: () => this.adminStore.setApproved(username, user.approved),
+      },
+      {
+        run: () => this.authStore.setApproved(user.uuid, approved),
+        undo: () => this.authStore.setApproved(user.uuid, user.approved),
+      },
+    ]);
     this.logger.log(this.audit(actor, username, "approve"), "Статус одобрения изменён");
   }
 
   async setBanned(username: string, banned: boolean, actor: RequestUser): Promise<void> {
-    await this.findMutableUser(username, actor, "ban");
-    await this.adminStore.setBanned(username, banned);
+    const user = await this.findMutableUser(username, actor, "ban");
+    await this.applyWithRollback([
+      {
+        run: () => this.adminStore.setBanned(username, banned),
+        undo: () => this.adminStore.setBanned(username, user.banned),
+      },
+      {
+        run: () => this.authStore.setBanned(user.uuid, banned),
+        undo: () => this.authStore.setBanned(user.uuid, user.banned),
+      },
+    ]);
     this.logger.log(this.audit(actor, username, "ban"), "Статус бана изменён");
   }
 

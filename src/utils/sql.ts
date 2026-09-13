@@ -1,3 +1,7 @@
+import { Logger } from "@nestjs/common";
+
+const sqlLogger = new Logger("Sql");
+
 interface SqlResult {
   rows: Record<string, unknown>[];
   count: number;
@@ -10,6 +14,7 @@ type BunSqlClient = {
 
 type BunSqlFn = BunSqlClient & {
   begin(callback: (tx: BunSqlClient) => Promise<unknown>): Promise<unknown>;
+  close(options?: { timeout?: number }): Promise<void>;
 };
 
 const bunSql: BunSqlFn = ((await import("bun")) as unknown as { sql: BunSqlFn }).sql;
@@ -51,6 +56,7 @@ interface InsertFrom {
 }
 
 interface InsertAfterValues {
+  values: (...vals: SqlValue[]) => InsertAfterValues;
   returning: (...ret: string[]) => WithBuild;
   build: () => BuiltQuery;
 }
@@ -68,11 +74,6 @@ export interface SelectBuilder {
   build: () => BuiltQuery;
 }
 
-interface WithLimit {
-  limit: (n: number) => WithBuild;
-  build: () => BuiltQuery;
-}
-
 interface UpdateSet {
   set: (column: string, value: SqlValue) => UpdateSet;
   where: (condition: string, ...args: SqlValue[]) => WithReturning;
@@ -80,9 +81,20 @@ interface UpdateSet {
 }
 
 interface DeleteBuilder {
-  where: (condition: string, ...args: SqlValue[]) => WithLimit;
-  limit: (n: number) => WithBuild;
+  where: (condition: string, ...args: SqlValue[]) => WithBuild;
   build: () => BuiltQuery;
+}
+
+const FORBIDDEN_FRAGMENT_SEQUENCES = [";", "--", "/*"] as const;
+
+function assertStaticFragment(fragment: string): void {
+  for (const sequence of FORBIDDEN_FRAGMENT_SEQUENCES) {
+    if (fragment.includes(sequence)) {
+      throw new Error(
+        `Фрагмент SQL содержит запрещённую последовательность "${sequence}" — значения передаются через плейсхолдеры`,
+      );
+    }
+  }
 }
 
 function createQueryBuilder(): { parts: string[]; values: SqlValue[] } {
@@ -94,6 +106,7 @@ function addWhere(
   condition: string,
   ...args: SqlValue[]
 ): void {
+  assertStaticFragment(condition);
   state.parts.push(condition);
   state.values.push(...args);
 }
@@ -103,6 +116,7 @@ function addAnd(
   condition: string,
   ...args: SqlValue[]
 ): void {
+  assertStaticFragment(condition);
   if (state.parts.length > 0) {
     state.parts.push("AND");
   }
@@ -114,25 +128,13 @@ function buildWhereClause(state: { parts: string[]; values: SqlValue[] }): strin
   return state.parts.length > 0 ? ` WHERE ${state.parts.join(" ")}` : "";
 }
 
-function createLimitMethod(
-  setLimit: (n: number) => void,
-  buildFn: () => BuiltQuery,
-): (n: number) => WithBuild {
-  return (n) => {
-    setLimit(n);
-    return { build: buildFn };
-  };
-}
-
 function buildWithWhere(
   baseSql: string,
   state: { parts: string[]; values: SqlValue[] },
-  limit?: number,
 ): BuiltQuery {
   const whereClause = buildWhereClause(state);
-  const limitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
   return {
-    sql: `${baseSql}${whereClause}${limitClause}`,
+    sql: `${baseSql}${whereClause}`,
     values: state.values,
   };
 }
@@ -143,9 +145,18 @@ function buildInsert(
   allValues: SqlValue[][],
   returning?: string[],
 ): BuiltQuery {
-  const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
-  const rows = allValues.map(() => `(${placeholders})`).join(", ");
-  const base = `INSERT INTO ${table} (${columns.join(", ")}) VALUES ${rows}`;
+  const rows: string[] = [];
+  let placeholderIndex = 0;
+  for (const rowValues of allValues) {
+    if (rowValues.length !== columns.length) {
+      throw new Error(
+        `INSERT ожидает ${columns.length} значений на строку, получено ${rowValues.length}`,
+      );
+    }
+    const placeholders = rowValues.map(() => `$${++placeholderIndex}`).join(", ");
+    rows.push(`(${placeholders})`);
+  }
+  const base = `INSERT INTO ${table} (${columns.join(", ")}) VALUES ${rows.join(", ")}`;
   const sqlStr = returning ? `${base} RETURNING ${returning.join(", ")}` : base;
   return { sql: sqlStr, values: allValues.flat() };
 }
@@ -179,6 +190,7 @@ export function selectQuery(...columns: string[]): {
 
       const builder: SelectBuilder = {
         join: (type: string, joinTable: TableName, joinAlias: string, on: string) => {
+          assertStaticFragment(on);
           fromClause += ` ${type} ${joinTable} ${joinAlias} ON ${on}`;
           return builder;
         },
@@ -195,6 +207,7 @@ export function selectQuery(...columns: string[]): {
           return builder;
         },
         orderBy: (column: string, direction: OrderDirection = "asc") => {
+          assertStaticFragment(column);
           orderParts.push(`${column} ${direction.toUpperCase()}`);
           return builder;
         },
@@ -225,16 +238,21 @@ export function insertQuery(...columns: string[]): {
     from: (table: TableName) => {
       const allValues: SqlValue[][] = [];
 
+      const withRows = (): InsertAfterValues => ({
+        values: (...vals: SqlValue[]) => {
+          allValues.push(vals);
+          return withRows();
+        },
+        returning: (...ret: string[]) => ({
+          build: () => buildInsert(table, columns, allValues, ret),
+        }),
+        build: () => buildInsert(table, columns, allValues),
+      });
+
       return {
         values: (...vals: SqlValue[]) => {
           allValues.push(vals);
-
-          return {
-            returning: (...ret: string[]) => ({
-              build: () => buildInsert(table, columns, allValues, ret),
-            }),
-            build: () => buildInsert(table, columns, allValues),
-          };
+          return withRows();
         },
       };
     },
@@ -257,6 +275,7 @@ export function updateQuery(): {
       };
 
       const addSet = (column: string, value: SqlValue): UpdateSet => {
+        assertStaticFragment(column);
         setClauses.push(`${column} = $${values.length + 1}`);
         values.push(value);
 
@@ -299,24 +318,17 @@ export function deleteQuery(): {
   return {
     from: (table: TableName) => {
       const state = createQueryBuilder();
-      let limitValue: number | undefined;
 
-      const buildDelete = (): BuiltQuery =>
-        buildWithWhere(`DELETE FROM ${table}`, state, limitValue);
-      const limitMethod = createLimitMethod((n) => {
-        limitValue = n;
-      }, buildDelete);
+      const buildDelete = (): BuiltQuery => buildWithWhere(`DELETE FROM ${table}`, state);
 
       return {
         where: (condition: string, ...args: SqlValue[]) => {
           addWhere(state, condition, ...args);
 
           return {
-            limit: limitMethod,
             build: buildDelete,
           };
         },
-        limit: limitMethod,
         build: buildDelete,
       };
     },
@@ -327,30 +339,57 @@ export async function execute<T extends Record<string, unknown>>(
   querySql: string,
   values: SqlValue[],
 ): Promise<QueryResult<T>> {
-  const result = await bunSql.unsafe(querySql, values as unknown[]);
-  const rows = (Array.isArray(result) ? result : (result?.rows ?? [])) as T[];
-  const count = Array.isArray(result) ? result.length : (result?.count ?? 0);
-  return { rows, count };
+  try {
+    const result = await bunSql.unsafe(querySql, values as unknown[]);
+    const rows = (Array.isArray(result) ? result : (result?.rows ?? [])) as T[];
+    const count = Array.isArray(result) ? result.length : (result?.count ?? 0);
+    return { rows, count };
+  } catch (error) {
+    sqlLogger.error({ err: error, sql: querySql }, "SQL-запрос не выполнен");
+    throw error;
+  }
 }
 
 export async function executeInTransaction(statements: BuiltQuery[]): Promise<void> {
-  await bunSql.begin(async (tx) => {
-    for (const statement of statements) {
-      await tx.unsafe(statement.sql, statement.values as unknown[]);
-    }
-  });
+  await runTransaction(statements);
 }
 
 export async function executeInTransactionReturning<T extends Record<string, unknown>>(
   statements: BuiltQuery[],
 ): Promise<QueryResult<T>[]> {
   const results: QueryResult<T>[] = [];
-  await bunSql.begin(async (tx) => {
-    for (const statement of statements) {
-      const result = await tx.unsafe(statement.sql, statement.values as unknown[]);
-      const rows = (Array.isArray(result) ? result : (result?.rows ?? [])) as T[];
-      results.push({ rows, count: rows.length });
-    }
-  });
+  try {
+    await bunSql.begin(async (tx) => {
+      for (const statement of statements) {
+        const result = await tx.unsafe(statement.sql, statement.values as unknown[]);
+        const rows = (Array.isArray(result) ? result : (result?.rows ?? [])) as T[];
+        results.push({ rows, count: rows.length });
+      }
+    });
+  } catch (error) {
+    sqlLogger.error({ err: error, statements: statements.length }, "SQL-транзакция не выполнена");
+    throw error;
+  }
   return results;
+}
+
+async function runTransaction(statements: BuiltQuery[]): Promise<void> {
+  try {
+    await bunSql.begin(async (tx) => {
+      for (const statement of statements) {
+        await tx.unsafe(statement.sql, statement.values as unknown[]);
+      }
+    });
+  } catch (error) {
+    sqlLogger.error({ err: error, statements: statements.length }, "SQL-транзакция не выполнена");
+    throw error;
+  }
+}
+
+export async function closeSqlPool(): Promise<void> {
+  try {
+    await bunSql.close();
+  } catch (error) {
+    sqlLogger.error({ err: error }, "Не удалось закрыть пул SQL-соединений");
+  }
 }

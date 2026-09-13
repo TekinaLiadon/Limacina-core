@@ -1,11 +1,15 @@
 import {
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   InternalServerErrorException,
   Logger,
+  Optional,
 } from "@nestjs/common";
-import { copyFile } from "node:fs/promises";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { copyFile, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { AdminMapStoreToken, type IAdminStore } from "../admin/admin.store";
 import { AuthMapStoreToken, type IAuthStore } from "../auth/service/auth_store.service";
 import { AppConfigToken } from "../config/app-config.provider";
@@ -24,6 +28,8 @@ const KILL_GRACE_MS = 5_000;
 const BINARY_PATH = "dist/Limacina";
 const BINARY_BACKUP_PATH = "dist/Limacina.previous";
 const LOCKFILE_PATHS = ["bun.lockb", "bun.lock"];
+const BOOTSTRAP_TOKEN_FILE = "bootstrap.token";
+const BOOTSTRAP_TOKEN_BYTES = 32;
 
 export function buildStepEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const { SECRETS: _secrets, ...stepEnv } = env;
@@ -176,12 +182,52 @@ export class TechnicalService {
     before: null,
     after: null,
   };
+  private bootstrapToken: string | null = null;
 
   constructor(
     @Inject(AdminMapStoreToken) private readonly adminStore: IAdminStore,
     @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
     @Inject(AppConfigToken) private readonly appConfig: AppConfigType,
+    @Optional() private readonly bootstrapTokenPath: string = join(
+      process.cwd(),
+      BOOTSTRAP_TOKEN_FILE,
+    ),
   ) {}
+
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      if (await this.adminStore.hasOwner()) {
+        await this.removeBootstrapTokenFile();
+        return;
+      }
+
+      const existing = await readFile(this.bootstrapTokenPath, "utf8").catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+          return null;
+        },
+      );
+      const stored = existing?.trim();
+      if (stored) {
+        this.bootstrapToken = stored;
+        this.logger.log({ path: this.bootstrapTokenPath }, "Bootstrap-токен загружен из файла");
+        return;
+      }
+
+      const token = randomBytes(BOOTSTRAP_TOKEN_BYTES).toString("hex");
+      await this.writeBootstrapTokenFile(token);
+      this.bootstrapToken = token;
+      process.stdout.write(
+        `Bootstrap-токен для создания владельца (${this.bootstrapTokenPath}):\n${token}\n`,
+      );
+      this.logger.log({ path: this.bootstrapTokenPath }, "Bootstrap-токен создан");
+    } catch (error) {
+      this.logger.error(
+        { err: error, path: this.bootstrapTokenPath },
+        "Bootstrap-токен владельца не создан, init-owner недоступен",
+      );
+    }
+  }
 
   async restartServer(actor: RequestUser): Promise<void> {
     if (!this.scheduleShutdown()) {
@@ -365,11 +411,67 @@ export class TechnicalService {
     }
   }
 
-  async initOwner(username: string, password: string): Promise<InitOwnerResponseDto> {
+  async initOwner(
+    username: string,
+    password: string,
+    token: string,
+  ): Promise<InitOwnerResponseDto> {
     if (await this.adminStore.hasOwner()) {
       throw new ConflictException("Владелец уже создан");
     }
 
+    const expected = this.bootstrapToken;
+    if (expected === null) {
+      throw new ForbiddenException("Токен инициализации владельца недоступен");
+    }
+    if (!this.matchesBootstrapToken(token, expected)) {
+      throw new ForbiddenException("Неверный токен инициализации владельца");
+    }
+    this.bootstrapToken = null;
+
+    try {
+      const response = await this.saveOwner(username, password);
+      await this.removeBootstrapTokenFile();
+      this.logger.log({ username }, "Владелец создан");
+      return response;
+    } catch (error) {
+      this.bootstrapToken = expected;
+      throw error;
+    }
+  }
+
+  private matchesBootstrapToken(provided: string, expected: string): boolean {
+    const providedBytes = Buffer.from(provided, "utf8");
+    const expectedBytes = Buffer.from(expected, "utf8");
+    return (
+      providedBytes.length === expectedBytes.length && timingSafeEqual(providedBytes, expectedBytes)
+    );
+  }
+
+  private async writeBootstrapTokenFile(token: string): Promise<void> {
+    const tmpPath = `${this.bootstrapTokenPath}.tmp`;
+    try {
+      await writeFile(tmpPath, token, { mode: 0o600 });
+      await rename(tmpPath, this.bootstrapTokenPath);
+    } finally {
+      await unlink(tmpPath).catch(() => undefined);
+    }
+  }
+
+  private async removeBootstrapTokenFile(): Promise<void> {
+    try {
+      await unlink(this.bootstrapTokenPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        this.logger.error(
+          { err: error, path: this.bootstrapTokenPath },
+          "Не удалось удалить файл bootstrap-токена",
+        );
+      }
+    }
+  }
+
+  private async saveOwner(username: string, password: string): Promise<InitOwnerResponseDto> {
     if (await this.authStore.userExists(username)) {
       throw new ConflictException("Юзернейм уже занят");
     }
@@ -389,15 +491,18 @@ export class TechnicalService {
       throw new ConflictException("Юзернейм уже занят");
     }
 
-    await this.adminStore.saveUser({
-      uuid,
-      username,
-      role: "owner",
-      approved: true,
-      banned: false,
-    });
-
-    this.logger.log({ username }, "Владелец создан");
+    try {
+      await this.adminStore.saveUser({
+        uuid,
+        username,
+        role: "owner",
+        approved: true,
+        banned: false,
+      });
+    } catch (error) {
+      await this.authStore.deleteUser(uuid).catch(() => undefined);
+      throw error;
+    }
 
     return { uuid, username };
   }

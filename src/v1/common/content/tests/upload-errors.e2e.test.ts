@@ -13,7 +13,7 @@ import { ExtractJwt, Strategy } from "passport-jwt";
 import fastifyMultipart from "@fastify/multipart";
 import supertest from "supertest";
 import { V1ContentController } from "../content.controller";
-import { UserContentService } from "../../../../user-content/user-content.service";
+import { MAX_SKIN_BYTES, UserContentService } from "../../../../user-content/user-content.service";
 import {
   UserContentMapStore,
   UserContentMapStoreToken,
@@ -98,11 +98,11 @@ describe("V1 common/content — ошибки загрузки файлов", ():
     expect(res.status).toBe(406);
   });
 
-  it("возвращает 413, а не 500, при превышении лимита размера файла", async () => {
+  it("возвращает 413, а не 500, при превышении стрим-лимита маршрута", async () => {
     const res = await supertest(app.getHttpServer())
       .post("/v1/common/content/skins")
       .set("Authorization", `Bearer ${userToken}`)
-      .attach("file", Buffer.alloc(FILE_SIZE_LIMIT + 1, "a"), "skin.png");
+      .attach("file", Buffer.alloc(MAX_SKIN_BYTES * 2 + 1, "a"), "skin.png");
 
     expect(res.status).toBe(413);
   });

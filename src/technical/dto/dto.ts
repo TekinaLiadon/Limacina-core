@@ -2,6 +2,16 @@ import { ApiProperty } from "@nestjs/swagger";
 import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { validationMessages } from "../../common/validation-messages";
 export class InitOwnerDto {
+  @ApiProperty({
+    example: "9f2c4a1e8d7b3f6c0a5e9d2b7c1f4a8e3d6b9c2f5a8e1d4b7c0f3a6e9d2b5c18",
+    description: "Bootstrap-токен из файла bootstrap.token в корне сервера",
+    maxLength: 128,
+  })
+  @IsString({ message: validationMessages.string("token") })
+  @IsNotEmpty({ message: validationMessages.notEmpty("token") })
+  @MaxLength(128, { message: validationMessages.maxLength("token", 128) })
+  token!: string;
+
   @ApiProperty({ example: "owner", description: "Юзернейм владельца", maxLength: 64 })
   @IsString({ message: validationMessages.string("username") })
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })

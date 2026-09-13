@@ -311,10 +311,20 @@ export class YggdrasilService {
     const skinModel = this.normalizeSkinModel(model);
 
     const previousUrl = textureType === "skin" ? profile.skinUrl : profile.capeUrl;
-    const url = await this.writeTexture(file, profile.username, normalizedUuid);
+    const target = this.computeTextureTarget(file, profile.username, normalizedUuid);
 
-    const textures: YggdrasilTextures = this.createTextures(textureType, skinModel, url);
+    const textures: YggdrasilTextures = this.createTextures(textureType, skinModel, target.url);
     await this.store.updateProfileTexture(normalizedUuid, textures);
+    try {
+      await Bun.write(target.path, new Uint8Array(file));
+    } catch (error) {
+      this.logger.error(
+        { err: error, path: target.path },
+        "Не удалось записать файл текстуры — откат текстуры в сторе",
+      );
+      await this.rollbackProfileTexture(profile, textureType);
+      throw error;
+    }
     await this.releaseTextureFile(previousUrl, textureType);
   }
 
@@ -351,15 +361,35 @@ export class YggdrasilService {
     }
   }
 
-  async writeTexture(file: Buffer, ownerUsername: string, fallbackPrefix: string): Promise<string> {
+  private computeTextureTarget(
+    file: Buffer,
+    ownerUsername: string,
+    fallbackPrefix: string,
+  ): { url: string; path: string } {
     const hasher = new Bun.CryptoHasher("sha256");
     hasher.update(new Uint8Array(file));
-    const hash = hasher.digest("hex");
     const prefix = sanitizeFilePrefix(ownerUsername, fallbackPrefix);
-    const filename = `${prefix}-${hash}.png`;
-    const url = `${this.config.BASE_URL}/textures/${filename}`;
-    await Bun.write(`public/textures/${filename}`, new Uint8Array(file));
-    return url;
+    const filename = `${prefix}-${hasher.digest("hex")}.png`;
+    return {
+      url: `${this.config.BASE_URL}/textures/${filename}`,
+      path: `public/textures/${filename}`,
+    };
+  }
+
+  private async rollbackProfileTexture(
+    profile: YggdrasilProfile,
+    textureType: "skin" | "cape",
+  ): Promise<void> {
+    const previousUrl = textureType === "skin" ? profile.skinUrl : profile.capeUrl;
+    const previous = this.createTextures(textureType, profile.skinModel, previousUrl);
+    try {
+      await this.store.updateProfileTexture(profile.uuid, previous);
+    } catch (error) {
+      this.logger.error(
+        { err: error, uuid: profile.uuid },
+        "Не удалось откатить текстуру профиля после сбоя записи файла",
+      );
+    }
   }
 
   async deleteTexture(

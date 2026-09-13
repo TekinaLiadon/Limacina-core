@@ -296,12 +296,24 @@ export class UserContentService {
     const removed = await this.store.deleteByIdAndCountRemaining(id, type);
     if (!removed) return;
 
+    const profileRefs = this.profileStore
+      ? await this.profileStore.countProfilesByTextureUrl(item.filePath)
+      : 0;
+
     await this.syncProfileAfterDelete(ownerUuid, type);
 
     if (removed.remainingCount > 0) {
       this.logger.debug(
         { id, type, remainingCount: removed.remainingCount },
         "Файл контента ещё используется другими записями",
+      );
+      return;
+    }
+
+    if (profileRefs > 0) {
+      this.logger.debug(
+        { id, type, profileRefs },
+        "Файл контента ещё используется профилями Yggdrasil",
       );
       return;
     }

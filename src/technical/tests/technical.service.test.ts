@@ -2,7 +2,12 @@ import { describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConflictException, InternalServerErrorException, Logger } from "@nestjs/common";
+import {
+  ConflictException,
+  ForbiddenException,
+  InternalServerErrorException,
+  Logger,
+} from "@nestjs/common";
 import {
   TechnicalService,
   buildInstallCommand,
@@ -78,37 +83,186 @@ async function waitFor(condition: () => boolean, timeoutMs = 5000): Promise<void
   }
 }
 
+function captureStdout(): { lines: () => string; restore: () => void } {
+  const chunks: string[] = [];
+  const originalWrite = process.stdout.write;
+  process.stdout.write = ((chunk: unknown) => {
+    chunks.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  return {
+    lines: () => chunks.join(""),
+    restore: () => {
+      process.stdout.write = originalWrite;
+    },
+  };
+}
+
 describe("TechnicalService", (): void => {
   describe("initOwner", () => {
-    it("создаёт владельца и возвращает uuid с юзернеймом", async () => {
+    it("первый старт без владельца создаёт токен-файл и выводит токен в stdout", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
       const adminStore = new AdminMapStore();
       const authStore = new AuthMapStore();
-      const service = new TechnicalService(adminStore, authStore, makeConfig());
+      const tokenPath = join(dir, "bootstrap.token");
+      const service = new TechnicalService(adminStore, authStore, makeConfig(), tokenPath);
+      const stdout = captureStdout();
+      try {
+        await service.onApplicationBootstrap();
 
-      const result = await service.initOwner("owner", "securepassword");
-
-      expect(result.username).toBe("owner");
-      expect(result.uuid).toHaveLength(32);
-      expect(await adminStore.hasOwner()).toBe(true);
-      expect((await adminStore.findByUsername("owner"))?.role).toBe("owner");
-      expect((await authStore.findByUsername("owner"))?.role).toBe("owner");
+        const token = (await Bun.file(tokenPath).text()).trim();
+        expect(token).toMatch(/^[0-9a-f]{64}$/);
+        expect(stdout.lines()).toContain(token);
+      } finally {
+        stdout.restore();
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
 
-    it("возвращает 409 если владелец уже создан", async () => {
+    it("принимает валидный токен, создаёт владельца и удаляет токен-файл", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
       const adminStore = new AdminMapStore();
       const authStore = new AuthMapStore();
-      const service = new TechnicalService(adminStore, authStore, makeConfig());
-      await service.initOwner("firstowner", "securepassword");
+      const tokenPath = join(dir, "bootstrap.token");
+      const service = new TechnicalService(adminStore, authStore, makeConfig(), tokenPath);
+      try {
+        await service.onApplicationBootstrap();
+        const token = (await Bun.file(tokenPath).text()).trim();
 
-      await expect(service.initOwner("secondowner", "securepassword")).rejects.toThrow(
-        ConflictException,
-      );
-      await expect(service.initOwner("secondowner", "securepassword")).rejects.toThrow(
-        "Владелец уже создан",
-      );
+        const result = await service.initOwner("owner", "securepassword", token);
+
+        expect(result.username).toBe("owner");
+        expect(result.uuid).toHaveLength(32);
+        expect(existsSync(tokenPath)).toBe(false);
+        expect(await adminStore.hasOwner()).toBe(true);
+        expect((await adminStore.findByUsername("owner"))?.role).toBe("owner");
+        expect((await authStore.findByUsername("owner"))?.role).toBe("owner");
+
+        await expect(service.initOwner("secondowner", "securepassword", token)).rejects.toThrow(
+          "Владелец уже создан",
+        );
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
 
-    it("возвращает 409 если юзернейм занят", async () => {
+    it("отклоняет неверный токен до создания владельца и сохраняет файл", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
+      const adminStore = new AdminMapStore();
+      const tokenPath = join(dir, "bootstrap.token");
+      const service = new TechnicalService(adminStore, new AuthMapStore(), makeConfig(), tokenPath);
+      try {
+        await service.onApplicationBootstrap();
+
+        await expect(service.initOwner("owner", "securepassword", "f".repeat(64))).rejects.toThrow(
+          ForbiddenException,
+        );
+        await expect(service.initOwner("owner", "securepassword", "f".repeat(64))).rejects.toThrow(
+          "Неверный токен инициализации владельца",
+        );
+
+        expect(existsSync(tokenPath)).toBe(true);
+        expect(await adminStore.hasOwner()).toBe(false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("отклоняет запрос, если бустстрап-токен не создан", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
+      const service = new TechnicalService(
+        new AdminMapStore(),
+        new AuthMapStore(),
+        makeConfig(),
+        join(dir, "bootstrap.token"),
+      );
+      try {
+        await expect(service.initOwner("owner", "securepassword", "a".repeat(64))).rejects.toThrow(
+          "Токен инициализации владельца недоступен",
+        );
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("при рестарте читает существующий файл, не перегенерируя токен", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
+      const adminStore = new AdminMapStore();
+      const authStore = new AuthMapStore();
+      const tokenPath = join(dir, "bootstrap.token");
+      const first = new TechnicalService(adminStore, authStore, makeConfig(), tokenPath);
+      try {
+        await first.onApplicationBootstrap();
+        const token = (await Bun.file(tokenPath).text()).trim();
+
+        const second = new TechnicalService(
+          new AdminMapStore(),
+          new AuthMapStore(),
+          makeConfig(),
+          tokenPath,
+        );
+        await second.onApplicationBootstrap();
+
+        expect((await Bun.file(tokenPath).text()).trim()).toBe(token);
+        const result = await second.initOwner("owner", "securepassword", token);
+        expect(result.username).toBe("owner");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("при существующем владельце не создаёт токен и подчищает stale-файл", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
+      const adminStore = new AdminMapStore();
+      const tokenPath = join(dir, "bootstrap.token");
+      const service = new TechnicalService(adminStore, new AuthMapStore(), makeConfig(), tokenPath);
+      try {
+        await adminStore.saveUser({
+          uuid: "owner-uuid",
+          username: "owner",
+          role: "owner",
+          approved: true,
+          banned: false,
+        });
+        await Bun.write(tokenPath, "stale-token");
+
+        await service.onApplicationBootstrap();
+
+        expect(existsSync(tokenPath)).toBe(false);
+        await expect(
+          service.initOwner("newcomer", "securepassword", "stale-token"),
+        ).rejects.toThrow("Владелец уже создан");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("параллельные вызовы с одним токеном создают ровно одного владельца", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
+      const adminStore = new AdminMapStore();
+      const tokenPath = join(dir, "bootstrap.token");
+      const service = new TechnicalService(adminStore, new AuthMapStore(), makeConfig(), tokenPath);
+      try {
+        await service.onApplicationBootstrap();
+        const token = (await Bun.file(tokenPath).text()).trim();
+
+        const results = await Promise.allSettled([
+          service.initOwner("winner", "securepassword", token),
+          service.initOwner("loser", "securepassword", token),
+        ]);
+
+        const fulfilled = results.filter((r) => r.status === "fulfilled");
+        expect(fulfilled).toHaveLength(1);
+        expect(await adminStore.hasOwner()).toBe(true);
+        expect((await adminStore.findByUsername("winner"))?.role).toBe("owner");
+        expect(await adminStore.findByUsername("loser")).toBeUndefined();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("восстанавливает токен при неудаче создания владельца", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
       const authStore = new AuthMapStore();
       await authStore.saveUser({
         uuid: "taken-username-uuid",
@@ -118,11 +272,23 @@ describe("TechnicalService", (): void => {
         approved: true,
         banned: false,
       });
-      const service = new TechnicalService(new AdminMapStore(), authStore, makeConfig());
+      const tokenPath = join(dir, "bootstrap.token");
+      const service = new TechnicalService(new AdminMapStore(), authStore, makeConfig(), tokenPath);
+      try {
+        await service.onApplicationBootstrap();
+        const token = (await Bun.file(tokenPath).text()).trim();
 
-      await expect(service.initOwner("occupied", "securepassword")).rejects.toThrow(
-        "Юзернейм уже занят",
-      );
+        await expect(service.initOwner("occupied", "securepassword", token)).rejects.toThrow(
+          "Юзернейм уже занят",
+        );
+        expect(existsSync(tokenPath)).toBe(true);
+
+        const result = await service.initOwner("owner", "securepassword", token);
+        expect(result.username).toBe("owner");
+        expect(existsSync(tokenPath)).toBe(false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 

@@ -8,6 +8,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { BadRequestException } from "@nestjs/common";
 import { UserContentService } from "../user-content.service";
 import { UserContentMapStore } from "../user-content.store";
+import { YggdrasilMapStore } from "../../yggdrasil/service/yggdrasil_store";
 import GlobalConfig, { type AppConfigType } from "../../config/global-config";
 
 const MAX_SKINS = 2;
@@ -172,5 +173,88 @@ describe("UserContentService — нейминг файлов и условный
     trackFile(localPathOf(upload.url));
 
     expect(upload.url).toContain("/textures/eviluser-");
+  });
+});
+
+describe("UserContentService — unlink с учётом профильных ссылок (TASK-99)", (): void => {
+  let service: UserContentService;
+  let store: UserContentMapStore;
+  let profileStore: YggdrasilMapStore;
+  let config: AppConfigType;
+  const writtenFiles: string[] = [];
+
+  beforeAll(() => {
+    config = GlobalConfig.parseEnvOrExit({
+      ...process.env,
+      MAX_SKINS_PER_USER: "2",
+      MAX_CAPES_PER_USER: "2",
+    });
+    store = new UserContentMapStore();
+    profileStore = new YggdrasilMapStore();
+    service = new UserContentService(store, config, profileStore);
+  });
+
+  afterAll(() => {
+    for (const filePath of writtenFiles) {
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+
+  const trackFile = (filePath: string): void => {
+    if (!writtenFiles.includes(filePath)) writtenFiles.push(filePath);
+  };
+
+  const localPathOf = (url: string): string => `public/${url.replace(`${config.BASE_URL}/`, "")}`;
+
+  it("файл скина не удаляется, пока профиль ссылается на него", async () => {
+    const bytes = pngBytes(31);
+    const userUuid = "prof-skin-0001";
+    const upload = await service.uploadSkin(userUuid, "profskin", bytes);
+    trackFile(localPathOf(upload.url));
+    await profileStore.saveProfile({
+      uuid: userUuid,
+      userId: userUuid,
+      username: "profskin",
+      skinUrl: upload.url,
+    });
+
+    await service.delete(userUuid, upload.id, "skin");
+
+    expect(existsSync(localPathOf(upload.url))).toBe(true);
+    expect(await store.countByFilePath(upload.url, "skin")).toBe(0);
+  });
+
+  it("файл плаща не удаляется, пока профиль ссылается на него", async () => {
+    const bytes = pngBytes(32);
+    const userUuid = "prof-cape-0001";
+    await profileStore.saveProfile({
+      uuid: userUuid,
+      userId: userUuid,
+      username: "profcape",
+    });
+    const upload = await service.uploadCape(userUuid, "profcape", bytes);
+    trackFile(localPathOf(upload.url));
+    expect((await profileStore.findProfileByUuid(userUuid))?.capeUrl).toBe(upload.url);
+
+    await service.delete(userUuid, upload.id, "cape");
+
+    expect(existsSync(localPathOf(upload.url))).toBe(true);
+    expect(await store.countByFilePath(upload.url, "cape")).toBe(0);
+  });
+
+  it("файл удаляется, когда профильных ссылок на него нет", async () => {
+    const bytes = pngBytes(33);
+    const userUuid = "prof-free-0001";
+    await profileStore.saveProfile({
+      uuid: userUuid,
+      userId: userUuid,
+      username: "proffree",
+    });
+    const upload = await service.uploadSkin(userUuid, "proffree", bytes);
+    trackFile(localPathOf(upload.url));
+
+    await service.delete(userUuid, upload.id, "skin");
+
+    expect(existsSync(localPathOf(upload.url))).toBe(false);
   });
 });

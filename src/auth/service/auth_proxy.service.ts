@@ -22,10 +22,17 @@ export class AuthProxyStore implements IAuthStore {
     return false;
   }
 
-  async approveUser(uuid: string): Promise<void> {
+  async setApproved(uuid: string, approved: boolean): Promise<void> {
     this.logger.warn(
-      { uuid, upstreamUrl: this.upstreamUrl },
-      "approveUser в прокси-режиме не реализован",
+      { uuid, approved, upstreamUrl: this.upstreamUrl },
+      "setApproved в прокси-режиме не реализован",
+    );
+  }
+
+  async setBanned(uuid: string, banned: boolean): Promise<void> {
+    this.logger.warn(
+      { uuid, banned, upstreamUrl: this.upstreamUrl },
+      "setBanned в прокси-режиме не реализован",
     );
   }
 
@@ -61,7 +68,7 @@ export class AuthProxyStore implements IAuthStore {
     );
   }
 
-  async saveRefresh(jti: string, _entry: RefreshEntry): Promise<void> {
+  async saveRefresh(jti: string, _entry: RefreshEntry, _expiresAt: Date): Promise<void> {
     this.logger.warn(
       { jti, upstreamUrl: this.upstreamUrl },
       "saveRefresh в прокси-режиме не реализован",

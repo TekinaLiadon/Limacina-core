@@ -45,7 +45,8 @@ export class V1PanelUsersController {
   @ApiOperation({
     summary: "Создать владельца",
     description:
-      "Регистрирует пользователя с правами owner. Доступно только если owner ещё не создан. Публичный бутстрап-эндпоинт.",
+      "Регистрирует пользователя с правами owner. Доступно только если owner ещё не создан. " +
+      "Требует bootstrap-токен из файла `bootstrap.token` в корне сервера (создаётся при первом старте без владельца, после создания владельца файл удаляется).",
   })
   @ApiBody({ type: InitOwnerDto })
   @ApiResponse({
@@ -54,8 +55,9 @@ export class V1PanelUsersController {
     type: InitOwnerResponseDto,
   })
   @ApiResponse({ status: 409, description: "Владелец уже создан или юзернейм занят" })
+  @ApiResponse({ status: 403, description: "Неверный или недоступный bootstrap-токен" })
   async initOwner(@Body() dto: InitOwnerDto): Promise<InitOwnerResponseDto> {
-    return this.technicalService.initOwner(dto.username, dto.password);
+    return this.technicalService.initOwner(dto.username, dto.password, dto.token);
   }
 
   @Get()
