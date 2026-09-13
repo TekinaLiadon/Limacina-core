@@ -11,7 +11,7 @@ describe("buildHandshakePacket", () => {
     const bytes = [...packet];
 
     expect(bytes.length).toBe(25);
-    expect(bytes[0]).toBe(0x17); // body length varint (23)
+    expect(bytes[0]).toBe(0x18); // packet length varint (24): id + protocol + host + port + state
     expect(bytes[1]).toBe(0); // packet id
 
     expect(bytes[2]).toBe(0xff); // protocol version varint (-1)
@@ -33,7 +33,7 @@ describe("buildHandshakePacket", () => {
     const packet = buildHandshakePacket("mc", 1234);
     const bytes = [...packet];
 
-    expect(bytes[0]).toBe(0x0b); // body length varint (11)
+    expect(bytes[0]).toBe(0x0c); // packet length varint (12): id + protocol + host + port + state
     expect(bytes[7]).toBe(2);
     expect(bytes[8]).toBe(0x6d); // "m"
     expect(bytes[9]).toBe(0x63); // "c"
@@ -45,11 +45,12 @@ describe("buildHandshakePacket", () => {
 });
 
 describe("buildStatusRequestPacket", () => {
-  it("это одиночный байт 0x00", () => {
+  it("это длина 1 и id 0", () => {
     const packet = buildStatusRequestPacket();
 
-    expect(packet.length).toBe(1);
-    expect(packet[0]).toBe(0);
+    expect(packet.length).toBe(2);
+    expect(packet[0]).toBe(1);
+    expect(packet[1]).toBe(0);
   });
 });
 

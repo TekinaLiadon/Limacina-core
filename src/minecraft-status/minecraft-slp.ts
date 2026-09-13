@@ -116,11 +116,12 @@ export function buildHandshakePacket(host: string, port: number): Uint8Array {
     Uint8Array.from([(port >> 8) & 0xff, port & 0xff]),
     writeVarInt(1),
   );
-  return concat(writeVarInt(body.length), Uint8Array.from([0]), body);
+  const packet = concat(Uint8Array.from([0]), body);
+  return concat(writeVarInt(packet.length), packet);
 }
 
 export function buildStatusRequestPacket(): Uint8Array {
-  return Uint8Array.from([0]);
+  return concat(writeVarInt(1), Uint8Array.from([0]));
 }
 
 function parsePlayerCount(value: unknown, label: string): number {

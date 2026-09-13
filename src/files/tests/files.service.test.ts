@@ -24,6 +24,7 @@ async function waitFor(condition: () => boolean, timeoutMs = 5000): Promise<void
 }
 
 beforeAll(async () => {
+  writeFileSync(FIXTURE_PATH, "bootstrap-content");
   await files.onApplicationBootstrap();
   await Promise.race([
     new Promise<void>((resolve) => {
@@ -65,7 +66,7 @@ function captureReply(): CapturedReply {
 describe("FilesService — watcher и стриминг", () => {
   it("bootstrap индексирует файлы и создаёт папку лаунчера", () => {
     expect(existsSync(LAUNCHER_DIR)).toBeTrue();
-    expect(files.launcherHash.size).toBeGreaterThan(0);
+    expect(files.launcherHash.has(FIXTURE_NAME)).toBeTrue();
   });
 
   it("getHash отсутствующего файла отвечает null", async () => {
