@@ -1,4 +1,5 @@
 import {
+  Logger,
   type CanActivate,
   type ExecutionContext,
   ForbiddenException,
@@ -7,10 +8,12 @@ import {
 import { Reflector } from "@nestjs/core";
 import { ROLES_KEY } from "./roles.decorator";
 import { IS_PUBLIC_KEY } from "./public.decorator";
-import { roleWeight } from "./roles";
+import { isKnownRole, roleWeight } from "./roles";
 
 @Injectable()
 export class RolesGuard implements CanActivate {
+  private readonly logger = new Logger(RolesGuard.name);
+
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
@@ -25,6 +28,15 @@ export class RolesGuard implements CanActivate {
       context.getClass(),
     ]);
     if (!requiredRoles || requiredRoles.length === 0) return true;
+
+    const unknownRole = requiredRoles.find((role) => !isKnownRole(role));
+    if (unknownRole) {
+      this.logger.error(
+        { unknownRole },
+        "В @Roles указана неизвестная роль — доступ закрыт для всех",
+      );
+      throw new ForbiddenException("Недостаточно прав");
+    }
 
     const request = context.switchToHttp().getRequest();
     const { user } = request;

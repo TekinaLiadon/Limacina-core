@@ -16,6 +16,11 @@ export const PLATFORM_FIELD_NAMES: string[] = Object.entries(SUPPORTED_PLATFORMS
   ([os, archs]) => archs.map((arch) => `${os}_${arch}`),
 );
 
+export function isSupportedPlatform(os: string, arch: string): boolean {
+  const archs = Object.hasOwn(SUPPORTED_PLATFORMS, os) ? SUPPORTED_PLATFORMS[os] : undefined;
+  return archs?.includes(arch) ?? false;
+}
+
 export function buildLauncherZipName(version: string, os: string, arch: string): string {
   return `Limacina-${version}-${os}-${arch}.zip`;
 }

@@ -68,6 +68,22 @@ describe("YggdrasilMapTokenStore", () => {
     expect(await store.findToken("token-1")).toBeUndefined();
   });
 
+  it("claimToken возвращает запись и удаляет токен", async () => {
+    const store = new YggdrasilMapTokenStore(new MemoryDb());
+
+    await store.saveToken("token-1", buildTokenEntry("alice", "uuid-1"));
+
+    const claimed = await store.claimToken("token-1");
+    expect(claimed).toEqual(buildTokenEntry("alice", "uuid-1"));
+    expect(await store.findToken("token-1")).toBeUndefined();
+  });
+
+  it("claimToken отсутствующего токена — undefined", async () => {
+    const store = new YggdrasilMapTokenStore(new MemoryDb());
+
+    expect(await store.claimToken("missing-token")).toBeUndefined();
+  });
+
   it("чистит просроченные токены при выдаче нового", async () => {
     const db = new MemoryDb();
     const store = new YggdrasilMapTokenStore(db);
@@ -87,7 +103,7 @@ describe("YggdrasilMapTokenStore", () => {
 describe("YggdrasilMapSessionStore", () => {
   it("выдаёт сессию после сохранения", async () => {
     const store = new YggdrasilMapSessionStore(new MemoryDb());
-    const entry = { profileId: "profile-1", username: "alice", ip: "" };
+    const entry = { profileId: "profile-1", username: "alice" };
 
     await store.saveSession("server-1", entry);
 
@@ -98,7 +114,7 @@ describe("YggdrasilMapSessionStore", () => {
     const db = new MemoryDb();
     const store = new YggdrasilMapSessionStore(db);
 
-    await store.saveSession("server-1", { profileId: "profile-1", username: "alice", ip: "" });
+    await store.saveSession("server-1", { profileId: "profile-1", username: "alice" });
     const record = db.yggdrasilSessions.get("server-1");
     if (!record) throw new Error("сессия не сохранена");
     record.expiresAt = Date.now() - 1;
@@ -110,13 +126,12 @@ describe("YggdrasilMapSessionStore", () => {
   it("перезаписывает сессию с тем же serverId", async () => {
     const store = new YggdrasilMapSessionStore(new MemoryDb());
 
-    await store.saveSession("server-1", { profileId: "profile-1", username: "alice", ip: "" });
-    await store.saveSession("server-1", { profileId: "profile-2", username: "bob", ip: "" });
+    await store.saveSession("server-1", { profileId: "profile-1", username: "alice" });
+    await store.saveSession("server-1", { profileId: "profile-2", username: "bob" });
 
     expect(await store.findSession("server-1")).toEqual({
       profileId: "profile-2",
       username: "bob",
-      ip: "",
     });
   });
 
@@ -124,12 +139,12 @@ describe("YggdrasilMapSessionStore", () => {
     const db = new MemoryDb();
     const store = new YggdrasilMapSessionStore(db);
 
-    await store.saveSession("stale-server", { profileId: "profile-1", username: "alice", ip: "" });
+    await store.saveSession("stale-server", { profileId: "profile-1", username: "alice" });
     const record = db.yggdrasilSessions.get("stale-server");
     if (!record) throw new Error("сессия не сохранена");
     record.expiresAt = Date.now() - 1;
 
-    await store.saveSession("fresh-server", { profileId: "profile-2", username: "bob", ip: "" });
+    await store.saveSession("fresh-server", { profileId: "profile-2", username: "bob" });
 
     expect(db.yggdrasilSessions.has("stale-server")).toBe(false);
     expect(await store.findSession("fresh-server")).toBeDefined();

@@ -1,8 +1,6 @@
-process.env["JWT_ACCESS"] = "test-access-secret-0123456789abcdef0123";
-process.env["JWT_REFRESH"] = "test-refresh-secret-0123456789abcdef0123";
-process.env["NODE_ENV"] = "test";
-process.env["BASE_URL"] = "http://localhost:3005";
-process.env["DB_DRIVER"] = "map";
+import { setupTestEnv } from "../../../../utils/tests/test-env";
+
+setupTestEnv();
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { type INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
@@ -108,7 +106,7 @@ describe("V1 common/auth эндпоинты", (): void => {
       .send({ username: "v1user", password: "pass123" })
       .expect(201);
     registeredUuid = registerRes.body.uuid;
-    await authStore.approveUser(registeredUuid);
+    await authStore.setApproved(registeredUuid, true);
   });
 
   afterAll(async () => {
@@ -148,6 +146,20 @@ describe("V1 common/auth эндпоинты", (): void => {
       const after = await authStore.findByUsername("v1user");
       expect(after?.uuid).toBe(before?.uuid);
       expect(after?.passwordHash).toBe(before?.passwordHash);
+    });
+
+    it("регистрация ника, отличающегося только регистром, даёт 409", async () => {
+      const registered = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/registration")
+        .send({ username: "cireguser", password: "pass123" })
+        .expect(201);
+
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/registration")
+        .send({ username: "CIRegUser", password: "pass123" })
+        .expect(409);
+
+      await authStore.__test__deleteUser(registered.body.username);
     });
 
     it("параллельная регистрация одного юзернейма: один 201, второй 409", async () => {
@@ -216,6 +228,13 @@ describe("V1 common/auth эндпоинты", (): void => {
         .expect(400);
     });
 
+    it("возвращает 400 при username длиннее 64 символов (TASK-11)", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "a".repeat(65), password: "pass123" })
+        .expect(400);
+    });
+
     it("логин забаненного пользователя отклоняется", async () => {
       const user = await seedUser(authStore, "bannedlogin", "banned-login-uuid", "pass123");
       try {
@@ -229,11 +248,79 @@ describe("V1 common/auth эндпоинты", (): void => {
         await authStore.saveUser({ ...user, banned: false });
       }
     });
+
+    it("не раскрывает отсутствие пользователя: сообщение как при неверном пароле (TASK-10)", async () => {
+      const wrongPassword = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "v1user", password: "wrongpass" })
+        .expect(401);
+
+      const ghost = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "ghostuser", password: "wrongpass" })
+        .expect(401);
+
+      expect(ghost.body.message).toBe("Неверное имя пользователя или пароль");
+      expect(ghost.body.message).toBe(wrongPassword.body.message);
+    });
+
+    it("не раскрывает бан: сообщение как при неверном пароле (TASK-10)", async () => {
+      const user = await seedUser(authStore, "bannedlogin", "banned-login-uuid", "pass123");
+      try {
+        await authStore.saveUser({ ...user, banned: true });
+
+        const res = await supertest(app.getHttpServer())
+          .post("/v1/common/auth/login")
+          .send({ username: "bannedlogin", password: "pass123" })
+          .expect(401);
+
+        expect(res.body.message).toBe("Неверное имя пользователя или пароль");
+      } finally {
+        await authStore.saveUser({ ...user, banned: false });
+      }
+    });
+
+    it("не раскрывает неодобрение: сообщение как при неверном пароле (TASK-10)", async () => {
+      const user = await seedUser(authStore, "unapprovedlogin", "unapproved-login-uuid", "pass123");
+      try {
+        await authStore.saveUser({ ...user, approved: false });
+
+        const res = await supertest(app.getHttpServer())
+          .post("/v1/common/auth/login")
+          .send({ username: "unapprovedlogin", password: "pass123" })
+          .expect(401);
+
+        expect(res.body.message).toBe("Неверное имя пользователя или пароль");
+      } finally {
+        await authStore.saveUser({ ...user, approved: true });
+      }
+    });
   });
 
   describe("POST /v1/common/auth/refresh", () => {
     beforeAll(async () => {
       await seedUser(authStore, "refreshuser", "refresh-user-uuid", "pass123");
+      await seedUser(authStore, "refresheracer", "refresh-racer-uuid", "pass123");
+    });
+
+    it("токены из регистрации не работают до одобрения", async () => {
+      const registerRes = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/registration")
+        .send({ username: "unapprovedreg", password: "pass123" })
+        .expect(201);
+
+      const res = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/refresh")
+        .send({ refresh_token: registerRes.body.tokens.refresh_token })
+        .expect(401);
+      expect(res.body.message).toBe("Нет доступа");
+
+      await authStore.setApproved(registerRes.body.uuid, true);
+
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/refresh")
+        .send({ refresh_token: registerRes.body.tokens.refresh_token })
+        .expect(201);
     });
 
     it("успешный рефреш токена", async () => {
@@ -278,6 +365,28 @@ describe("V1 common/auth эндпоинты", (): void => {
         .send({ refresh_token: "invalid-token" })
         .expect(401);
     });
+
+    it("параллельный refresh одного токена: ровно один 201 (TASK-9)", async () => {
+      const loginRes = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "refresheracer", password: "pass123" })
+        .expect(201);
+
+      const { refresh_token } = loginRes.body.tokens;
+
+      const [first, second] = await Promise.all([
+        supertest(app.getHttpServer()).post("/v1/common/auth/refresh").send({ refresh_token }),
+        supertest(app.getHttpServer()).post("/v1/common/auth/refresh").send({ refresh_token }),
+      ]);
+
+      expect([first.status, second.status].sort()).toEqual([201, 401]);
+
+      const winner = first.status === 201 ? first : second;
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/refresh")
+        .send({ refresh_token: winner.body.tokens.refresh_token })
+        .expect(201);
+    });
   });
 
   describe("POST /v1/common/auth/refresh при изменении статуса пользователя", () => {
@@ -296,6 +405,25 @@ describe("V1 common/auth эндпоинты", (): void => {
         .post("/v1/common/auth/refresh")
         .send({ refresh_token })
         .expect(401);
+    });
+
+    it("ошибка 401 после снятия approve", async () => {
+      const user = await seedUser(authStore, "unapproveduser", "unapproved-user-uuid", "pass123");
+
+      const loginRes = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "unapproveduser", password: "pass123" })
+        .expect(201);
+
+      const { refresh_token } = loginRes.body.tokens;
+      await authStore.saveUser({ ...user, approved: false });
+
+      const res = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/refresh")
+        .send({ refresh_token })
+        .expect(401);
+
+      expect(res.body.message).toBe("Нет доступа");
     });
 
     it("ошибка 401 после удаления пользователя", async () => {
@@ -478,6 +606,75 @@ describe("V1 common/auth эндпоинты", (): void => {
         .set("Authorization", `Bearer ${token}`)
         .send({ old_password: "bannedpass1", new_password: "another789" })
         .expect(401);
+    });
+
+    it("401 для неодобренного пользователя", async () => {
+      await seedUser(authStore, "unapprovedpasschanger", "unapproved-passchanger-uuid", "pass123", {
+        approved: false,
+      });
+
+      const token = jwtService.sign({
+        sub: "unapproved-passchanger-uuid",
+        username: "unapprovedpasschanger",
+        role: "user",
+      });
+
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/common/auth/password")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ old_password: "pass123", new_password: "another789" })
+        .expect(401);
+
+      expect(res.body.message).toBe("Нет доступа");
+    });
+  });
+
+  describe("PATCH /v1/common/auth/password rate limit", () => {
+    beforeAll(async () => {
+      await seedUser(authStore, "bruteforcer", "bruteforcer-uuid", "realpass1");
+    });
+
+    const buildBruteforcerToken = (): string =>
+      jwtService.sign({ sub: "bruteforcer-uuid", username: "bruteforcer", role: "user" });
+
+    it("429 после превышения лимита попыток подбора старого пароля", async () => {
+      const token = buildBruteforcerToken();
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const res = await supertest(app.getHttpServer())
+          .patch("/v1/common/auth/password")
+          .set("Authorization", `Bearer ${token}`)
+          .send({ old_password: "x", new_password: "another789" });
+        expect(res.status).toBe(400);
+      }
+
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/common/auth/password")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ old_password: "wrongpass", new_password: "another789" })
+        .expect(429);
+
+      expect(res.body).toHaveProperty("statusCode", 429);
+    });
+
+    it("лимит не блокирует другие токены", async () => {
+      await seedUser(authStore, "bruteforcer2", "bruteforcer2-uuid", "realpass1");
+
+      const otherToken = jwtService.sign({
+        sub: "bruteforcer2-uuid",
+        username: "bruteforcer2",
+        role: "user",
+      });
+
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/auth/password")
+        .set("Authorization", `Bearer ${otherToken}`)
+        .send({ old_password: "wrongpass", new_password: "another789" })
+        .expect(401);
+
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "v1user", password: "pass123" })
+        .expect(201);
     });
   });
 });

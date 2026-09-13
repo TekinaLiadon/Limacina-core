@@ -2,9 +2,20 @@ import { ApiProperty } from "@nestjs/swagger";
 import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { validationMessages } from "../../common/validation-messages";
 export class InitOwnerDto {
-  @ApiProperty({ example: "owner", description: "Юзернейм владельца" })
+  @ApiProperty({
+    example: "9f2c4a1e8d7b3f6c0a5e9d2b7c1f4a8e3d6b9c2f5a8e1d4b7c0f3a6e9d2b5c18",
+    description: "Bootstrap-токен из файла bootstrap.token в корне сервера",
+    maxLength: 128,
+  })
+  @IsString({ message: validationMessages.string("token") })
+  @IsNotEmpty({ message: validationMessages.notEmpty("token") })
+  @MaxLength(128, { message: validationMessages.maxLength("token", 128) })
+  token!: string;
+
+  @ApiProperty({ example: "owner", description: "Юзернейм владельца", maxLength: 64 })
   @IsString({ message: validationMessages.string("username") })
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })
+  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
   username!: string;
 
   @ApiProperty({
@@ -32,9 +43,37 @@ export class RestartServerDto {
     example: true,
     required: false,
     default: false,
-    description: "Пересобрать бинарник (bun run build) перед перезапуском",
+    description:
+      "Запустить конвейер пересборки (git pull → bun install → миграции → bun run build) в фоне перед перезапуском",
   })
   @IsOptional()
   @IsBoolean({ message: validationMessages.boolean("rebuild") })
   rebuild?: boolean;
+}
+
+export class RebuildStatusDto {
+  @ApiProperty({ example: true, description: "Выполняется ли конвейер пересборки" })
+  inProgress!: boolean;
+
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    example: "Пересборка не удалась на шаге bun install, перезапуск отменён",
+    description: "Ошибка последнего запуска (null — последний запуск успешен или запусков не было)",
+  })
+  lastError!: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    description: "Ревизия git до pull последнего запуска (null — pull не выполнялся)",
+  })
+  revisionBefore!: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    description: "Ревизия git после pull последнего запуска (null — pull не выполнялся)",
+  })
+  revisionAfter!: string | null;
 }

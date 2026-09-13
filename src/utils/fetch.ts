@@ -49,6 +49,7 @@ export async function limaFetch<T>(url: string, options?: FetchOptions): Promise
     const contentLength = Number(res.headers.get("content-length") ?? "");
     if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
       controller.abort();
+      clearTimeout(timer);
       const message = `Размер ответа слишком большой: ${contentLength} байт (максимум ${MAX_RESPONSE_BYTES})`;
       if (!silent) logger.error({ url, method, size: contentLength }, message);
       return { ok: false, status: 0, data: null, error: message };
@@ -75,7 +76,10 @@ export async function limaFetch<T>(url: string, options?: FetchOptions): Promise
           : `HTTP ${res.status}`;
 
       if (!silent)
-        logger.warn({ url, method, status: res.status, error }, "HTTP-запрос завершился с ошибкой");
+        logger.error(
+          { url, method, status: res.status, error },
+          "HTTP-запрос завершился с ошибкой",
+        );
 
       return { ok: false, status: res.status, data, error };
     }

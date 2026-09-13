@@ -73,4 +73,15 @@ describe("selectQuery", () => {
     );
     expect(query.values).toEqual(["john"]);
   });
+
+  it("добавляет FOR UPDATE после пагинации", () => {
+    const query = selectQuery("uuid")
+      .from(TABLES.users)
+      .where("uuid = $1", "abc")
+      .forUpdate()
+      .build();
+
+    expect(query.sql).toBe("SELECT uuid FROM users WHERE uuid = $1 FOR UPDATE");
+    expect(query.values).toEqual(["abc"]);
+  });
 });

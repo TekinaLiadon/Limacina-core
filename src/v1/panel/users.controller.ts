@@ -10,6 +10,7 @@ import {
 } from "@nestjs/swagger";
 import { Public } from "../../common/public.decorator";
 import { Roles } from "../../common/roles.decorator";
+import { UsernamePipe } from "../../common/username.pipe";
 import { CurrentUser, type RequestUser } from "../../common/current-user.decorator";
 import { SuccessResponseDto, UserSuccessResponseDto } from "../../common/dto/dto";
 import { AdminService } from "../../admin/admin.service";
@@ -44,7 +45,8 @@ export class V1PanelUsersController {
   @ApiOperation({
     summary: "Создать владельца",
     description:
-      "Регистрирует пользователя с правами owner. Доступно только если owner ещё не создан. Публичный бутстрап-эндпоинт.",
+      "Регистрирует пользователя с правами owner. Доступно только если owner ещё не создан. " +
+      "Требует bootstrap-токен из файла `bootstrap.token` в корне сервера (создаётся при первом старте без владельца, после создания владельца файл удаляется).",
   })
   @ApiBody({ type: InitOwnerDto })
   @ApiResponse({
@@ -53,8 +55,9 @@ export class V1PanelUsersController {
     type: InitOwnerResponseDto,
   })
   @ApiResponse({ status: 409, description: "Владелец уже создан или юзернейм занят" })
+  @ApiResponse({ status: 403, description: "Неверный или недоступный bootstrap-токен" })
   async initOwner(@Body() dto: InitOwnerDto): Promise<InitOwnerResponseDto> {
-    return this.technicalService.initOwner(dto.username, dto.password);
+    return this.technicalService.initOwner(dto.username, dto.password, dto.token);
   }
 
   @Get()
@@ -239,7 +242,9 @@ export class V1PanelUsersController {
   @ApiOperation({
     summary: "Удалить пользователя",
     description:
-      "Переносит пользователя в таблицу удалённых. Через 30 дней удаляется автоматически.",
+      "Помечает пользователя удалённым. Живые списки и авторизация его больше не видят; " +
+      "ник освобождается для повторной регистрации. Через 30 дней пользователь удаляется " +
+      "окончательно ежедневной задачей очистки (cron в 04:00).",
   })
   @ApiParam({ name: "username", example: "john" })
   @ApiResponse({ status: 200, description: "Пользователь удалён", type: UserSuccessResponseDto })
@@ -247,7 +252,7 @@ export class V1PanelUsersController {
   @ApiResponse({ status: 404, description: "Пользователь не найден" })
   async deleteUser(
     @CurrentUser() user: RequestUser,
-    @Param("username") username: string,
+    @Param("username", UsernamePipe) username: string,
   ): Promise<UserSuccessResponseDto> {
     const deleted = await this.adminService.deleteUser(username, user);
     return { success: true, username: deleted.username };
@@ -257,8 +262,9 @@ export class V1PanelUsersController {
   @ApiOperation({
     summary: "Восстановить удалённого пользователя",
     description:
-      "Переносит пользователя из таблицы удалённых обратно в таблицу пользователей. " +
-      "Восстанавливать можно только пользователей с ролью ниже вызывающего.",
+      "Снимает пометку удаления: пользователь снова появляется в живых списках и может авторизоваться. " +
+      "Восстанавливать можно только пользователей с ролью ниже вызывающего; получит 409, если ник " +
+      "уже занят новым живым пользователем.",
   })
   @ApiParam({ name: "username", example: "john" })
   @ApiResponse({
@@ -270,7 +276,7 @@ export class V1PanelUsersController {
   @ApiResponse({ status: 404, description: "Удалённый пользователь не найден" })
   async restoreUser(
     @CurrentUser() user: RequestUser,
-    @Param("username") username: string,
+    @Param("username", UsernamePipe) username: string,
   ): Promise<UserSuccessResponseDto> {
     await this.adminService.restoreUser(username, user);
     return { success: true, username };

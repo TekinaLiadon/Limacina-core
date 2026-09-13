@@ -1,13 +1,12 @@
-process.env["JWT_ACCESS"] = "test-access-secret-0123456789abcdef0123";
-process.env["JWT_REFRESH"] = "test-refresh-secret-0123456789abcdef0123";
-process.env["NODE_ENV"] = "test";
-process.env["BASE_URL"] = "http://localhost:3005";
-process.env["DB_DRIVER"] = "map";
+import { setupTestEnv } from "../../../utils/tests/test-env";
+
+setupTestEnv();
 
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -35,12 +34,14 @@ import { V1PanelLogsController } from "../logs.controller";
 import { V1PanelLauncherController } from "../launcher.controller";
 import { V1PanelServerController } from "../server.controller";
 import { AdminService } from "../../../admin/admin.service";
+import { CronService } from "../../../cron/cron.service";
 import { LogsService } from "../../../admin/logs.service";
 import { LauncherUpdateService } from "../../../admin/launcher-update.service";
 import { ConfigUpdateService } from "../../../admin/config-update.service";
 import { TechnicalService } from "../../../technical/technical.service";
 import { AdminMapStore, AdminMapStoreToken } from "../../../admin/admin.store";
 import { AuthMapStore, AuthMapStoreToken } from "../../../auth/service/auth_store.service";
+import { buildLauncherZipName } from "../../../launcher/launcher-files";
 import GlobalConfig from "../../../config/global-config";
 import { AppConfigToken } from "../../../config/app-config.provider";
 import { Jwt_authGuard } from "../../../common/jwt_auth.guard";
@@ -61,6 +62,16 @@ function requestLine(id: string, url: string, remoteAddress: string, statusCode:
     msg: "request completed",
     responseTime: 1,
   });
+}
+
+async function waitForCondition(condition: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      throw new Error("waitFor: условие не выполнено за отведённое время");
+    }
+    await Bun.sleep(20);
+  }
 }
 
 @Injectable()
@@ -102,6 +113,7 @@ describe("V1 panel эндпоинты", (): void => {
       ],
       providers: [
         AdminService,
+        CronService,
         LogsService,
         LauncherUpdateService,
         ConfigUpdateService,
@@ -214,7 +226,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 409 если владелец уже создан", async () => {
       const res = await supertest(app.getHttpServer())
         .post("/v1/panel/users/init-owner")
-        .send({ username: "bootowner2", password: "securepassword" })
+        .send({ username: "bootowner2", password: "securepassword", token: "any-token" })
         .expect(409);
 
       expect(res.body.message).toContain("Владелец уже создан");
@@ -223,7 +235,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 400 при коротком пароле", async () => {
       await supertest(app.getHttpServer())
         .post("/v1/panel/users/init-owner")
-        .send({ username: "test", password: "123" })
+        .send({ username: "test", password: "123", token: "any-token" })
         .expect(400);
     });
   });
@@ -412,6 +424,16 @@ describe("V1 panel эндпоинты", (): void => {
         banned: false,
       });
     });
+
+    it("отклоняет юзернейм длиннее 64 символов (400, а не ошибка БД)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/approve")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "x".repeat(65), approved: true })
+        .expect(400);
+
+      expect(JSON.stringify(res.body)).toContain("username: максимум 64 символов");
+    });
   });
 
   describe("PATCH /v1/panel/users/ban", () => {
@@ -516,10 +538,11 @@ describe("V1 panel эндпоинты", (): void => {
   describe("PATCH /v1/panel/users/password", () => {
     it("владелец задаёт новый пароль без знания старого", async () => {
       const authStore = app.get(AuthMapStoreToken, { strict: false });
-      await authStore.saveRefresh("password-test-jti", {
-        userId: "user-uuid",
-        username: "user",
-      });
+      await authStore.saveRefresh(
+        "password-test-jti",
+        { userId: "user-uuid", username: "user" },
+        new Date(Date.now() + 60 * 60 * 1000),
+      );
 
       const res = await supertest(app.getHttpServer())
         .patch("/v1/panel/users/password")
@@ -532,6 +555,7 @@ describe("V1 panel эндпоинты", (): void => {
       const stored = await authStore.findByUsername("user");
       expect(await Bun.password.verify("ownernewpass", stored!.passwordHash)).toBe(true);
       expect(await Bun.password.verify("useroldpass", stored!.passwordHash)).toBe(false);
+      expect(stored?.passwordChangedAt).toBeInstanceOf(Date);
       expect(await authStore.findRefresh("password-test-jti")).toBeUndefined();
     });
 
@@ -642,8 +666,24 @@ describe("V1 panel эндпоинты", (): void => {
       expect(res.body.success).toBe(true);
       expect(res.body.username).toBe("modtarget");
 
+      const live = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?username=modtarget")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+      expect(live.body.items.map((u: { username: string }) => u.username)).not.toContain(
+        "modtarget",
+      );
+
       const store = app.get(AdminMapStoreToken, { strict: false });
       await store.restoreUser("modtarget");
+
+      const restored = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?username=modtarget")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+      expect(restored.body.items.map((u: { username: string }) => u.username)).toContain(
+        "modtarget",
+      );
     });
 
     it("возвращает 404 для несуществующего пользователя", async () => {
@@ -675,6 +715,59 @@ describe("V1 panel эндпоинты", (): void => {
 
       const store = app.get(AdminMapStoreToken, { strict: false });
       await store.restoreUser("modtarget");
+    });
+
+    it("удаление отзывает доступ в auth-сторе и чистит refresh-токены (TASK-15)", async () => {
+      const adminStore = app.get(AdminMapStoreToken, { strict: false });
+      const authStore = app.get(AuthMapStoreToken, { strict: false });
+      await adminStore.saveUser({
+        uuid: "deletable-uuid",
+        username: "deletable",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      await authStore.saveUser({
+        uuid: "deletable-uuid",
+        username: "deletable",
+        passwordHash: await Bun.password.hash("deletemepass"),
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      await authStore.saveRefresh(
+        "deletable-jti",
+        { userId: "deletable-uuid", username: "deletable" },
+        new Date(Date.now() + 60 * 60 * 1000),
+      );
+
+      try {
+        await supertest(app.getHttpServer())
+          .delete("/v1/panel/users/deletable")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+
+        expect(await authStore.findByUsername("deletable")).toBeUndefined();
+        expect(await authStore.userExists("deletable")).toBe(false);
+        expect(await authStore.findRefresh("deletable-jti")).toBeUndefined();
+      } finally {
+        await adminStore.__test__deleteUser("deletable");
+        await authStore.__test__deleteUser("deletable");
+      }
+    });
+
+    it("возвращает 400 для юзернейма длиннее 64 символов", async () => {
+      await supertest(app.getHttpServer())
+        .delete(`/v1/panel/users/${"a".repeat(65)}`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(400);
+    });
+
+    it("пропускает юзернейм длиной 64 символа к поиску пользователя", async () => {
+      await supertest(app.getHttpServer())
+        .delete(`/v1/panel/users/${"a".repeat(64)}`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(404);
     });
   });
 
@@ -837,11 +930,60 @@ describe("V1 panel эндпоинты", (): void => {
       await store.deleteUser("deletedadmin");
     });
 
+    it("восстановление возвращает доступ в auth-сторе (TASK-15)", async () => {
+      const adminStore = app.get(AdminMapStoreToken, { strict: false });
+      const authStore = app.get(AuthMapStoreToken, { strict: false });
+      const passwordHash = await Bun.password.hash("restorablepass");
+      await adminStore.saveUser({
+        uuid: "restorable-uuid",
+        username: "restorable",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      await authStore.saveUser({
+        uuid: "restorable-uuid",
+        username: "restorable",
+        passwordHash,
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+
+      try {
+        await supertest(app.getHttpServer())
+          .delete("/v1/panel/users/restorable")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+
+        expect(await authStore.findByUsername("restorable")).toBeUndefined();
+
+        await supertest(app.getHttpServer())
+          .patch("/v1/panel/users/restorable/restore")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+
+        const restored = await authStore.findByUsername("restorable");
+        expect(restored?.uuid).toBe("restorable-uuid");
+        expect(restored?.passwordHash).toBe(passwordHash);
+      } finally {
+        await adminStore.__test__deleteUser("restorable");
+        await authStore.__test__deleteUser("restorable");
+      }
+    });
+
     it("возвращает 404 для несуществующего удалённого пользователя", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/panel/users/nonexistent/restore")
         .set("Authorization", `Bearer ${ownerToken}`)
         .expect(404);
+    });
+
+    it("возвращает 400 для юзернейма длиннее 64 символов", async () => {
+      await supertest(app.getHttpServer())
+        .patch(`/v1/panel/users/${"a".repeat(65)}/restore`)
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(400);
     });
 
     it("возвращает 409 если юзернейм занят живым пользователем", async () => {
@@ -1010,40 +1152,41 @@ describe("V1 panel эндпоинты", (): void => {
     });
   });
 
-  describe("POST /v1/panel/server/restart", () => {
-    function stubRestartPipeline(service: TechnicalService): {
-      signalled: () => boolean;
-      steps: () => string[];
-    } {
-      let shutdownSignalled = false;
-      const stepCalls: string[] = [];
-      service.sendShutdownSignal = () => {
-        shutdownSignalled = true;
-      };
-      service.gitPull = async () => {
-        stepCalls.push("gitPull");
-      };
-      service.installDependencies = async () => {
-        stepCalls.push("installDependencies");
-      };
-      service.runMigrations = async () => {
-        stepCalls.push("runMigrations");
-      };
-      service.buildBinary = async () => {
-        stepCalls.push("buildBinary");
-      };
-      return {
-        signalled: () => shutdownSignalled,
-        steps: () => stepCalls,
-      };
-    }
+  function stubRestartPipeline(service: TechnicalService): {
+    signalled: () => boolean;
+    steps: () => string[];
+  } {
+    let shutdownSignalled = false;
+    const stepCalls: string[] = [];
+    service.sendShutdownSignal = () => {
+      shutdownSignalled = true;
+    };
+    service.gitPull = async () => {
+      stepCalls.push("gitPull");
+      return { before: "rev-before", after: "rev-after" };
+    };
+    service.installDependencies = async () => {
+      stepCalls.push("installDependencies");
+    };
+    service.runMigrations = async () => {
+      stepCalls.push("runMigrations");
+    };
+    service.buildBinary = async () => {
+      stepCalls.push("buildBinary");
+    };
+    return {
+      signalled: () => shutdownSignalled,
+      steps: () => stepCalls,
+    };
+  }
 
+  describe("POST /v1/panel/server/restart", () => {
     it("без body перезапускает сервер без пересборки", async () => {
       const stub = stubRestartPipeline(app.get(TechnicalService));
 
       const res = await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .expect(201);
 
       expect(res.body.success).toBe(true);
@@ -1052,26 +1195,21 @@ describe("V1 panel эндпоинты", (): void => {
       expect(stub.steps()).toEqual([]);
     });
 
-    it("rebuild: true выполняет конвейер и перезапускает", async () => {
+    it("rebuild: true отвечает 202 и выполняет конвейер в фоне", async () => {
       const stub = stubRestartPipeline(app.get(TechnicalService));
 
-      await supertest(app.getHttpServer())
+      const res = await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .send({ rebuild: true })
-        .expect(201);
+        .expect(202);
 
-      expect(stub.steps()).toEqual([
-        "gitPull",
-        "installDependencies",
-        "runMigrations",
-        "buildBinary",
-      ]);
-      await Bun.sleep(500);
-      expect(stub.signalled()).toBe(true);
+      expect(res.body.success).toBe(true);
+      await waitForCondition(() => stub.steps().length === 4);
+      await waitForCondition(() => stub.signalled());
     });
 
-    it("rebuild: true при упавшем шаге возвращает 500 без перезапуска", async () => {
+    it("rebuild: true при упавшем шаге: 202, ошибка в статусе, без перезапуска", async () => {
       const technicalService = app.get(TechnicalService);
       const stub = stubRestartPipeline(technicalService);
       technicalService.gitPull = async () => {
@@ -1080,24 +1218,65 @@ describe("V1 panel эндпоинты", (): void => {
 
       await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .send({ rebuild: true })
-        .expect(500);
+        .expect(202);
 
+      await waitForCondition(() => technicalService.getRebuildStatus().lastError !== null);
       await Bun.sleep(500);
       expect(stub.signalled()).toBe(false);
       expect(stub.steps()).toEqual([]);
     });
 
+    it("возвращает 409 пока пересборка выполняется", async () => {
+      const technicalService = app.get(TechnicalService);
+      stubRestartPipeline(technicalService);
+      let release = (): void => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      technicalService.gitPull = async () => {
+        await gate;
+        return { before: "rev-before", after: "rev-after" };
+      };
+
+      try {
+        await supertest(app.getHttpServer())
+          .post("/v1/panel/server/restart")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .send({ rebuild: true })
+          .expect(202);
+        await waitForCondition(() => technicalService.getRebuildStatus().inProgress);
+
+        await supertest(app.getHttpServer())
+          .post("/v1/panel/server/restart")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .send({ rebuild: true })
+          .expect(409);
+      } finally {
+        release();
+      }
+
+      await waitForCondition(() => !technicalService.getRebuildStatus().inProgress);
+    });
+
     it("возвращает 400 при не-булевом rebuild", async () => {
       await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .send({ rebuild: "yes" })
         .expect(400);
     });
 
-    it("возвращает 403 для не-админа", async () => {
+    it("возвращает 403 для админа", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/panel/server/restart")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ rebuild: true })
+        .expect(403);
+    });
+
+    it("возвращает 403 для обычного пользователя", async () => {
       await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
         .set("Authorization", `Bearer ${userToken}`)
@@ -1106,6 +1285,66 @@ describe("V1 panel эндпоинты", (): void => {
 
     it("возвращает 401 без токена", async () => {
       await supertest(app.getHttpServer()).post("/v1/panel/server/restart").expect(401);
+    });
+  });
+
+  describe("GET /v1/panel/server/rebuild", () => {
+    it("отдаёт статус выполняющейся и завершённой пересборки", async () => {
+      const technicalService = app.get(TechnicalService);
+      const stub = stubRestartPipeline(technicalService);
+      let release = (): void => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      technicalService.gitPull = async () => {
+        await gate;
+        return { before: "rev-before", after: "rev-after" };
+      };
+
+      try {
+        await supertest(app.getHttpServer())
+          .post("/v1/panel/server/restart")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .send({ rebuild: true })
+          .expect(202);
+
+        await waitForCondition(() => technicalService.getRebuildStatus().inProgress);
+
+        const running = await supertest(app.getHttpServer())
+          .get("/v1/panel/server/rebuild")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+        expect(running.body.inProgress).toBe(true);
+      } finally {
+        release();
+      }
+
+      await waitForCondition(() => !technicalService.getRebuildStatus().inProgress);
+
+      const done = await supertest(app.getHttpServer())
+        .get("/v1/panel/server/rebuild")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+      expect(done.body.inProgress).toBe(false);
+      expect(done.body.lastError).toBeNull();
+      expect(done.body.revisionBefore).toBe("rev-before");
+      expect(done.body.revisionAfter).toBe("rev-after");
+      expect(stub.signalled()).toBe(true);
+    });
+
+    it("возвращает 403 для админа и обычного пользователя", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/server/rebuild")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(403);
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/server/rebuild")
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(403);
+    });
+
+    it("возвращает 401 без токена", async () => {
+      await supertest(app.getHttpServer()).get("/v1/panel/server/rebuild").expect(401);
     });
   });
 
@@ -1287,6 +1526,19 @@ describe("V1 panel эндпоинты", (): void => {
 
       const content = readFileSync(CONFIG_FILE, "utf-8");
       expect(content).toContain("V1TestProject");
+      expect(existsSync(`${CONFIG_FILE}.tmp`)).toBe(false);
+    });
+
+    it("повторная запись конфига заменяет файл целиком и подчищает temp (TASK-21)", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher/config")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ ...validConfig, projectName: "V1SecondWrite" })
+        .expect(200);
+
+      const content = readFileSync(CONFIG_FILE, "utf-8");
+      expect(content).toContain("V1SecondWrite");
+      expect(existsSync(`${CONFIG_FILE}.tmp`)).toBe(false);
     });
 
     it("возвращает 403 для не-админа", async () => {
@@ -1362,6 +1614,81 @@ describe("V1 panel эндпоинты", (): void => {
 
       const data = JSON.parse(readFileSync(VERSION_FILE, "utf-8")) as { version: string };
       expect(data.version).toBe("9.9.9");
+    });
+
+    it("загрузка zip через multipart стримится в temp и не оставляет временных файлов (TASK-20)", async () => {
+      const zipDir = join("public", "linux", "x86_64");
+      try {
+        const res = await supertest(app.getHttpServer())
+          .patch("/v1/panel/launcher")
+          .set("Authorization", `Bearer ${adminToken}`)
+          .field("version", "7.7.7")
+          .attach("linux_x86_64", Buffer.from("streamed-zip-content"), "launcher.zip")
+          .expect(200);
+
+        expect(res.body.updated).toContain("linux/x86_64");
+
+        const tmpDir = join("public", ".upload-tmp");
+        const leftovers = existsSync(tmpDir) ? readdirSync(tmpDir) : [];
+        expect(leftovers).toEqual([]);
+        expect(readFileSync(join(zipDir, "Limacina-7.7.7-linux-x86_64.zip"), "utf-8")).toBe(
+          "streamed-zip-content",
+        );
+      } finally {
+        for (const dir of [zipDir, join(zipDir, "old")]) {
+          const zipPath = join(dir, "Limacina-7.7.7-linux-x86_64.zip");
+          if (existsSync(zipPath)) unlinkSync(zipPath);
+        }
+        rmSync(join("public", ".upload-tmp"), { recursive: true, force: true });
+      }
+    });
+
+    it("конкурентные PATCH оставляют консистентное состояние", async () => {
+      const versions = ["8.8.1", "8.8.2", "8.8.3"];
+      const platformDir = join("public", "linux", "x86_64");
+      const oldDir = join(platformDir, "old");
+      const existingZips = existsSync(platformDir)
+        ? readdirSync(platformDir).filter((file) => file.endsWith(".zip"))
+        : [];
+      try {
+        const responses = await Promise.all(
+          versions.map((version) =>
+            supertest(app.getHttpServer())
+              .patch("/v1/panel/launcher")
+              .set("Authorization", `Bearer ${adminToken}`)
+              .field("version", version)
+              .attach("linux_x86_64", Buffer.from(`zip-${version}`), "launcher.zip"),
+          ),
+        );
+
+        for (const res of responses) {
+          expect(res.status).toBe(200);
+          expect(versions).toContain(res.body.version);
+          expect(res.body.updated).toContain("linux/x86_64");
+        }
+
+        const data = JSON.parse(readFileSync(VERSION_FILE, "utf-8")) as { version: string };
+        expect(versions).toContain(data.version);
+        expect(
+          existsSync(join(platformDir, buildLauncherZipName(data.version, "linux", "x86_64"))),
+        ).toBe(true);
+        expect(existsSync(`${VERSION_FILE}.tmp`)).toBe(false);
+      } finally {
+        for (const dir of [platformDir, oldDir]) {
+          for (const version of versions) {
+            const zipPath = join(dir, buildLauncherZipName(version, "linux", "x86_64"));
+            if (existsSync(zipPath)) unlinkSync(zipPath);
+          }
+        }
+        for (const file of existingZips) {
+          if (existsSync(join(oldDir, file))) {
+            renameSync(join(oldDir, file), join(platformDir, file));
+          }
+        }
+        if (existsSync(oldDir) && readdirSync(oldDir).length === 0) {
+          rmSync(oldDir, { recursive: true });
+        }
+      }
     });
 
     it("возвращает 401 без токена", async () => {

@@ -1,21 +1,22 @@
 import { join, relative, resolve, isAbsolute } from "path";
 import { readFile } from "fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { apiReference } from "@scalar/nestjs-api-reference";
 import { ValidationPipe, Logger as NestLogger } from "@nestjs/common";
-import { Logger, LoggerErrorInterceptor } from "nestjs-pino";
+import { Logger } from "nestjs-pino";
 import GlobalConfig from "./config/global-config";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import fastifyStatic from "@fastify/static";
 import cors from "@fastify/cors";
 import fastifyMultipart from "@fastify/multipart";
 import { registerAuthRateLimit } from "./common/auth-rate-limit";
+import { registerProcessErrorHandlers } from "./config/process-error-handlers";
 
-const DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
+const DEFAULT_BODY_LIMIT_BYTES = Math.round(1.3 * 1024 * 1024);
 
 async function bootstrap() {
   const envConfig = GlobalConfig.parseEnvOrExit();
@@ -31,14 +32,10 @@ async function bootstrap() {
 
   const logger = app.get(Logger);
   app.useLogger(logger);
-  app.useGlobalInterceptors(new LoggerErrorInterceptor());
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
   app.enableShutdownHooks();
 
   registerProcessErrorHandlers(logger);
-  if (process.env.NODE_ENV === "production") {
-    logger.warn = () => undefined;
-  }
 
   const instance = app.getHttpAdapter().getInstance();
   await instance.register(fastifyStatic, {
@@ -47,34 +44,33 @@ async function bootstrap() {
   });
 
   const panelDir = join(process.cwd(), "public", "panel");
-  if (existsSync(panelDir)) {
-    await instance.register(
-      async (panelInstance: FastifyInstance) => {
-        await panelInstance.register(fastifyStatic, {
-          root: panelDir,
-          wildcard: true,
-          decorateReply: false,
-        });
+  mkdirSync(panelDir, { recursive: true });
+  await instance.register(
+    async (panelInstance: FastifyInstance) => {
+      await panelInstance.register(fastifyStatic, {
+        root: panelDir,
+        wildcard: true,
+        decorateReply: false,
+      });
 
-        const panelIndexPath = join(panelDir, "index.html");
-        panelInstance.setNotFoundHandler(async (request: FastifyRequest, reply: FastifyReply) => {
-          try {
-            await servePanelFallback(request, reply, panelDir, panelIndexPath);
-          } catch (error) {
-            logger.error({ err: error, url: request.url }, "Ошибка отдачи panel SPA");
-            if (!reply.sent) {
-              reply.code(404).send("Not found");
-            }
+      const panelIndexPath = join(panelDir, "index.html");
+      panelInstance.setNotFoundHandler(async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          await servePanelFallback(request, reply, panelDir, panelIndexPath);
+        } catch (error) {
+          logger.error({ err: error, url: request.url }, "Ошибка отдачи panel SPA");
+          if (!reply.raw.headersSent) {
+            reply.code(404).send("Not found");
           }
-        });
-      },
-      { prefix: "/panel" },
-    );
-  }
+        }
+      });
+    },
+    { prefix: "/panel" },
+  );
 
-  const corsOrigins = process.env["CORS_ORIGINS"];
+  const corsOrigins = envConfig.CORS_ORIGINS;
   await instance.register(cors, {
-    origin: corsOrigins ? corsOrigins.split(",").map((o) => o.trim()) : true,
+    origin: corsOrigins ?? false,
     credentials: true,
     methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE"],
   });
@@ -144,16 +140,6 @@ async function bootstrap() {
   });
 
   await app.listen(envConfig.PORT, "0.0.0.0");
-}
-
-function registerProcessErrorHandlers(logger: Logger): void {
-  process.on("unhandledRejection", (reason: unknown) => {
-    logger.error({ err: reason }, "Необработанный promise rejection");
-  });
-
-  process.on("uncaughtException", (error: Error) => {
-    logger.error({ err: error }, "Необработанное исключение");
-  });
 }
 
 async function servePanelFallback(

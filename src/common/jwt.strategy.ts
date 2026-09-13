@@ -6,6 +6,22 @@ import type { AppConfigType } from "../config/global-config";
 import { AuthMapStoreToken, type IAuthStore } from "../auth/service/auth_store.service";
 import type { RequestUser } from "./current-user.decorator";
 
+export interface JwtAccessPayload {
+  sub: string;
+  username: string;
+  role: string;
+  typ?: "access" | "refresh";
+  iat?: number;
+}
+
+function issuedBeforePasswordChange(
+  payload: JwtAccessPayload,
+  passwordChangedAt: Date | undefined,
+): boolean {
+  if (!passwordChangedAt) return false;
+  return (payload.iat ?? 0) < Math.floor(passwordChangedAt.getTime() / 1000);
+}
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
@@ -19,11 +35,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: { sub: string; username: string; role: string }): Promise<RequestUser> {
+  async validate(payload: JwtAccessPayload): Promise<RequestUser> {
     const user = await this.authStore.findByUsername(payload.username);
-    if (!user || user.banned || user.uuid !== payload.sub) {
+    if (!user || user.uuid !== payload.sub) {
       throw new UnauthorizedException();
     }
+
+    if (user.banned || !user.approved) {
+      throw new UnauthorizedException("Нет доступа");
+    }
+
+    if (issuedBeforePasswordChange(payload, user.passwordChangedAt)) {
+      throw new UnauthorizedException();
+    }
+
     return { uuid: payload.sub, username: payload.username, role: user.role };
   }
 }

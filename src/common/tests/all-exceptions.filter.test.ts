@@ -4,7 +4,7 @@ import type { FastifyReply } from "fastify";
 import { AllExceptionsFilter } from "../all-exceptions.filter";
 
 interface ReplyState {
-  sent: boolean;
+  headersSent: boolean;
   statusCode: number | undefined;
   body: unknown;
 }
@@ -14,16 +14,14 @@ function createReplyMock(initial: Partial<ReplyState> = {}): {
   state: ReplyState;
 } {
   const state: ReplyState = {
-    sent: false,
+    headersSent: false,
     statusCode: undefined,
     body: undefined,
     ...initial,
   };
 
   const reply = {
-    get sent() {
-      return state.sent;
-    },
+    raw: { headersSent: state.headersSent },
     status(code: number) {
       state.statusCode = code;
       return reply;
@@ -81,6 +79,26 @@ describe("AllExceptionsFilter", () => {
     expect(state.statusCode).toBe(406);
   });
 
+  it("не отдаёт error.message наружу для 5xx-ошибки с statusCode", () => {
+    const { reply, state } = createReplyMock();
+    const exception = Object.assign(new Error("pg: secret internal details"), { statusCode: 503 });
+
+    filter.catch(exception, createHostMock(reply));
+
+    expect(state.statusCode).toBe(503);
+    expect(state.body).toEqual({ statusCode: 503, message: "Internal Server Error" });
+  });
+
+  it("не отдаёт message, если носитель statusCode — не Error", () => {
+    const { reply, state } = createReplyMock();
+    const exception = { statusCode: 418, message: "teapot internals" };
+
+    filter.catch(exception, createHostMock(reply));
+
+    expect(state.statusCode).toBe(418);
+    expect(state.body).toEqual({ statusCode: 418, message: "Internal Server Error" });
+  });
+
   it("возвращает 500 с генерическим телом для неизвестной ошибки", () => {
     const { reply, state } = createReplyMock();
 
@@ -108,8 +126,8 @@ describe("AllExceptionsFilter", () => {
     expect(state.statusCode).toBe(500);
   });
 
-  it("не отправляет ответ, если он уже отправлен", () => {
-    const { reply, state } = createReplyMock({ sent: true });
+  it("не отправляет ответ, если заголовки уже отправлены", () => {
+    const { reply, state } = createReplyMock({ headersSent: true });
 
     filter.catch(new Error("late failure"), createHostMock(reply));
 

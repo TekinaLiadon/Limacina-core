@@ -41,4 +41,18 @@ describe("resolveListDir()", () => {
     expect(listDir).toContain("migration");
     expect(listDir).toContain("list");
   });
+
+  it("учитывает MIGRATION_LIST_DIR", () => {
+    const previous = process.env["MIGRATION_LIST_DIR"];
+    process.env["MIGRATION_LIST_DIR"] = path.join(testDir, "custom-list");
+    try {
+      expect(resolveListDir()).toBe(path.join(testDir, "custom-list"));
+    } finally {
+      if (previous === undefined) {
+        delete process.env["MIGRATION_LIST_DIR"];
+      } else {
+        process.env["MIGRATION_LIST_DIR"] = previous;
+      }
+    }
+  });
 });

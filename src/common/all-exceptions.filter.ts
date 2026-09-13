@@ -14,7 +14,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<FastifyReply>();
 
-    if (response.sent) {
+    if (response.raw.headersSent) {
       this.logger.error({ err: exception }, "Ошибка после отправки ответа клиенту");
       return;
     }
@@ -26,10 +26,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     const statusCode = extractErrorStatusCode(exception);
     if (statusCode !== undefined) {
-      response.status(statusCode).send({
-        statusCode,
-        message: exception instanceof Error ? exception.message : "Request failed",
-      });
+      const message =
+        statusCode < 500 && exception instanceof Error
+          ? exception.message
+          : "Internal Server Error";
+      response.status(statusCode).send({ statusCode, message });
       return;
     }
 

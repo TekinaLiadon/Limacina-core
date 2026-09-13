@@ -15,6 +15,7 @@ import { RolesGuard } from "./common/roles.guard";
 import { LoggerModule } from "nestjs-pino";
 import GlobalConfig from "./config/global-config";
 import { buildPinoHttpOptions } from "./config/pino-options";
+import { SqlPoolLifecycle } from "./config/sql-pool-lifecycle";
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { buildPinoHttpOptions } from "./config/pino-options";
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_GUARD, useClass: Jwt_authGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    SqlPoolLifecycle,
   ],
 })
 export class AppModule {}

@@ -160,6 +160,14 @@ describe("V1 launcher/update эндпоинты — версии и скачив
       expect(res.text).toBe(CURRENT_ZIP_CONTENT);
     });
 
+    it("Content-Length совпадает с фактическим размером тела", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/launcher/update/linux/x86_64/download")
+        .expect(200);
+
+      expect(Number(res.headers["content-length"])).toBe(res.text.length);
+    });
+
     it("без параметра version отдаёт zip версии из version.json, а не первый зип из каталога", async () => {
       const FORGOTTEN_VERSION = "9.9.9";
       const FORGOTTEN_ZIP = `Limacina-${FORGOTTEN_VERSION}-linux-x86_64.zip`;

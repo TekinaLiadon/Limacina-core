@@ -4,7 +4,6 @@ import {
   AuthMapStore,
   AuthMapStoreToken,
   type IAuthStore,
-  type RefreshEntry,
   type StoredUser,
 } from "./auth_store.service";
 import { AppConfigToken } from "../../config/app-config.provider";
@@ -26,8 +25,12 @@ export const useFactory = (db: string, authProxyUrl?: string) => {
     }[db] ?? new AuthMapStore()
   );
 };
+const INVALID_CREDENTIALS_MESSAGE = "Неверное имя пользователя или пароль";
+
 @Injectable()
 export class AuthService {
+  private static dummyPasswordHash: Promise<string> | undefined;
+
   constructor(
     private readonly jwtService: JwtService,
     @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
@@ -62,10 +65,18 @@ export class AuthService {
   }
 
   async refresh(refreshToken: string): Promise<AuthResponseDto> {
-    const entry = await this.validateRefreshToken(refreshToken);
+    const payload = this.verifyRefreshPayload(refreshToken);
+    const entry = await this.authStore.findRefresh(payload.jti);
+    if (!entry) {
+      throw new UnauthorizedException("Refresh токен инвалидирован");
+    }
+
     const user = await this.findActiveUserByUuid(entry.userId, entry.username);
 
-    await this.authStore.deleteRefresh(entry.jti);
+    const claimed = await this.authStore.claimRefresh(payload.jti);
+    if (!claimed) {
+      throw new UnauthorizedException("Refresh токен инвалидирован");
+    }
     return this.buildAuthResponse(user);
   }
 
@@ -84,8 +95,8 @@ export class AuthService {
       throw new UnauthorizedException("Пользователь не найден");
     }
 
-    if (user.banned) {
-      throw new UnauthorizedException("Ваш аккаунт заблокирован");
+    if (user.banned || !user.approved) {
+      throw new UnauthorizedException("Нет доступа");
     }
 
     const validOldPassword = await Bun.password.verify(oldPassword, user.passwordHash);
@@ -99,8 +110,7 @@ export class AuthService {
 
   private async replacePassword(uuid: string, newPassword: string): Promise<void> {
     const passwordHash = await Bun.password.hash(newPassword);
-    await this.authStore.updatePasswordHash(uuid, passwordHash, new Date());
-    await this.authStore.deleteRefreshByUserId(uuid);
+    await this.authStore.replacePassword(uuid, passwordHash, new Date());
   }
 
   private async validateUsernameAvailable(username: string): Promise<void> {
@@ -112,23 +122,23 @@ export class AuthService {
   private async validateUserCredentials(username: string, password: string): Promise<StoredUser> {
     const user = await this.authStore.findByUsername(username);
     if (!user) {
-      throw new UnauthorizedException("Пользователь не найден");
+      await this.matchPasswordVerifyTiming(password);
+      throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
     }
 
     if (this.config.MASTER_PASSWORD && password === this.config.MASTER_PASSWORD) return user;
 
-    if (user.banned) {
-      throw new UnauthorizedException("Ваш аккаунт заблокирован");
-    }
-
-    if (!user.approved) {
-      throw new UnauthorizedException("Ваш аккаунт ещё не одобрен администратором");
-    }
-
     const valid = await Bun.password.verify(password, user.passwordHash);
-    if (!valid) throw new UnauthorizedException("Неверное имя пользователя или пароль");
+    if (!valid || user.banned || !user.approved) {
+      throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
+    }
 
     return user;
+  }
+
+  private async matchPasswordVerifyTiming(password: string): Promise<void> {
+    AuthService.dummyPasswordHash ??= Bun.password.hash(generateUuid());
+    await Bun.password.verify(password, await AuthService.dummyPasswordHash);
   }
 
   private verifyRefreshPayload(refreshToken: string): { jti: string } {
@@ -141,18 +151,6 @@ export class AuthService {
     }
   }
 
-  private async validateRefreshToken(
-    refreshToken: string,
-  ): Promise<RefreshEntry & { jti: string }> {
-    const payload = this.verifyRefreshPayload(refreshToken);
-    const entry = await this.authStore.findRefresh(payload.jti);
-    if (!entry) {
-      throw new UnauthorizedException("Refresh токен инвалидирован");
-    }
-
-    return { ...entry, jti: payload.jti };
-  }
-
   private async buildAuthResponse(user: StoredUser): Promise<AuthResponseDto> {
     const tokens = await this.createTokens(user.uuid, user.username, user.role);
     return { tokens, uuid: user.uuid, username: user.username, role: user.role };
@@ -160,29 +158,36 @@ export class AuthService {
 
   private async findActiveUserByUuid(uuid: string, username: string): Promise<StoredUser> {
     const user = await this.authStore.findByUsername(username);
-    if (!user || user.banned || user.uuid !== uuid) {
+    if (!user || user.uuid !== uuid) {
       throw new UnauthorizedException("Ваш аккаунт недоступен");
+    }
+    if (user.banned || !user.approved) {
+      throw new UnauthorizedException("Нет доступа");
     }
     return user;
   }
 
   private async createTokens(uuid: string, username: string, role: string): Promise<UserTokens> {
     const access_token = await this.jwtService.signAsync(
-      { sub: uuid, username, role },
+      { sub: uuid, username, role, typ: "access", jti: generateUuid() },
       {
         expiresIn: ACCESS_TOKEN_TTL_SECONDS,
       },
     );
     const jti = generateUuid();
     const refresh_token = await this.jwtService.signAsync(
-      { sub: uuid, username, jti, role },
+      { sub: uuid, username, jti, role, typ: "refresh" },
       {
         secret: this.config.JWT_REFRESH,
         expiresIn: REFRESH_TOKEN_TTL_SECONDS,
       },
     );
 
-    await this.authStore.saveRefresh(jti, { userId: uuid, username });
+    await this.authStore.saveRefresh(
+      jti,
+      { userId: uuid, username },
+      new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000),
+    );
 
     return { access_token, refresh_token };
   }

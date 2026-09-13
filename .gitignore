@@ -10,6 +10,7 @@ lerna-debug.log*
 public/launcher/
 public/panel
 keys/
+bootstrap.token
 .idea
 config.toml
 

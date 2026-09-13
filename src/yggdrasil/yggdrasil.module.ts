@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { JwtModule } from "@nestjs/jwt";
 import { YggdrasilController } from "./yggdrasil.controller";
 import { YggdrasilService } from "./service/yggdrasil.service";
 import { YggdrasilSessionStoreToken, YggdrasilTokenStoreToken } from "./service/yggdrasil_store";
@@ -10,7 +11,13 @@ import { UserContentModule } from "../user-content/user-content.module";
 import { AppConfigModule } from "../config/app-config.provider";
 
 @Module({
-  imports: [AppConfigModule, UserContentModule, MemoryModule, YggdrasilProfileStoreModule],
+  imports: [
+    AppConfigModule,
+    UserContentModule,
+    MemoryModule,
+    YggdrasilProfileStoreModule,
+    JwtModule.register({}),
+  ],
   controllers: [YggdrasilController],
   providers: [
     YggdrasilService,

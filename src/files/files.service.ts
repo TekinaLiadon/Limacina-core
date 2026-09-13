@@ -1,5 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { Readable } from "node:stream";
+import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import {
   BadRequestException,
   Injectable,
@@ -14,6 +16,11 @@ import { FileDto } from "./dto/dto";
 const LAUNCHER_DIR = "public/launcher";
 
 export const FILES_LIST_EXCLUDED_FOLDERS: string[] = ["mods"];
+
+export interface FilesPage {
+  files: Record<string, string>;
+  total: number;
+}
 
 const isExcludedFolder = (key: string): boolean =>
   FILES_LIST_EXCLUDED_FOLDERS.some((folder) => key.startsWith(`${folder}/`));
@@ -87,9 +94,13 @@ export class FilesService implements OnModuleDestroy {
     });
 
     watcher.on("unlink", (filePath: string) => {
-      const namePath = filePath.replace(`${dir}/`, "");
-      map.delete(namePath);
-      this.logger.debug({ file: namePath }, "Файл удалён");
+      try {
+        const namePath = filePath.replace(`${dir}/`, "");
+        map.delete(namePath);
+        this.logger.debug({ file: namePath }, "Файл удалён");
+      } catch (error) {
+        this.logger.error({ err: error, file: filePath }, "Ошибка обработки удаления файла");
+      }
     });
 
     watcher.on("error", (error: unknown) => {
@@ -105,16 +116,16 @@ export class FilesService implements OnModuleDestroy {
     filePath: string,
     event: string,
   ): Promise<void> {
-    const namePath = filePath.replace(`${dir}/`, "");
-    if (namePath.endsWith(".filepart")) return;
-
     try {
+      const namePath = filePath.replace(`${dir}/`, "");
+      if (namePath.endsWith(".filepart")) return;
+
       const hash = await this.getHash(filePath);
       if (!hash) return;
       map.set(namePath, hash);
       this.logger.debug({ file: namePath, event }, "Файл лаунчера обновлён");
     } catch (error) {
-      this.logger.error({ err: error, file: namePath, event }, "Ошибка обработки события watcher");
+      this.logger.error({ err: error, file: filePath, event }, "Ошибка обработки события watcher");
     }
   }
 
@@ -134,15 +145,33 @@ export class FilesService implements OnModuleDestroy {
     return hasher.digest("hex");
   }
 
-  getList(): Record<string, string> {
-    const entries = [...this.launcherHash.entries()].filter(([key]) => !isExcludedFolder(key));
-    return Object.fromEntries(entries);
+  getList(offset?: number, limit?: number): FilesPage {
+    return this.pageFiles(
+      [...this.launcherHash.entries()].filter(([key]) => !isExcludedFolder(key)),
+      offset,
+      limit,
+    );
   }
 
-  getExtraList(folder: string): Record<string, string> {
-    const prefix = `${folder}/`;
-    const entries = [...this.launcherHash.entries()].filter(([key]) => key.startsWith(prefix));
-    return Object.fromEntries(entries);
+  getExtraList(folder: string, offset?: number, limit?: number): FilesPage {
+    return this.pageFiles(
+      [...this.launcherHash.entries()].filter(([key]) => key.startsWith(`${folder}/`)),
+      offset,
+      limit,
+    );
+  }
+
+  private pageFiles(
+    entries: [string, string][],
+    offset: number | undefined,
+    limit: number | undefined,
+  ): FilesPage {
+    const sorted = entries.toSorted(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    );
+    const start = offset ?? 0;
+    const page = limit === undefined ? sorted.slice(start) : sorted.slice(start, start + limit);
+    return { files: Object.fromEntries(page), total: sorted.length };
   }
 
   async sendFile(fileInfo: FileDto, reply: FastifyReply): Promise<void> {
@@ -161,7 +190,11 @@ export class FilesService implements OnModuleDestroy {
     reply.header("Content-Type", "application/octet-stream");
     reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodedFilename}`);
     reply.header("Content-Length", (await file.size).toString());
-    reply.send(file.stream());
+    const fileStream = Readable.fromWeb(file.stream() as unknown as NodeWebReadableStream);
+    fileStream.on("error", (error: Error) => {
+      this.logger.error({ err: error, file: fileInfo.url }, "Ошибка отдачи файла лаунчера");
+    });
+    reply.send(fileStream);
   }
 
   private resolveLauncherPath(requestedUrl: string): string {

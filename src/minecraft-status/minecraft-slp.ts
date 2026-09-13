@@ -21,6 +21,7 @@ const DEFAULT_MINECRAFT_PORT = 25565;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const MAX_VARINT_BYTES = 5;
 const MAX_ACCUMULATED_BYTES = MAX_RESPONSE_BYTES + MAX_VARINT_BYTES;
+const MAX_REPORTED_PLAYERS = 2_147_483_647;
 
 export interface MinecraftTarget {
   host: string;
@@ -122,19 +123,27 @@ export function buildStatusRequestPacket(): Uint8Array {
   return Uint8Array.from([0]);
 }
 
+function parsePlayerCount(value: unknown, label: string): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 0 ||
+    value > MAX_REPORTED_PLAYERS
+  ) {
+    throw new Error(`Invalid players.${label} value`);
+  }
+  return value;
+}
+
 export function extractStatusJson(jsonBytes: Uint8Array): MinecraftStatus {
   const parsed = JSON.parse(new TextDecoder().decode(jsonBytes)) as MinecraftStatusRaw;
 
-  const online = parsed.players?.online;
-  if (typeof online !== "number") {
-    throw new Error("Status response missing players.online");
-  }
-  const max = parsed.players?.max;
-  if (typeof max !== "number") {
-    throw new Error("Status response missing players.max");
-  }
+  const online = parsePlayerCount(parsed.players?.online, "online");
+  const max = parsePlayerCount(parsed.players?.max, "max");
+  const versionName = parsed.version?.name;
+  const version = typeof versionName === "string" ? versionName : "unknown";
 
-  return { online, max, version: parsed.version?.name ?? "unknown" };
+  return { online, max, version };
 }
 
 function parseStatusResponse(response: Uint8Array): MinecraftStatus {

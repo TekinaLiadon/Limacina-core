@@ -142,6 +142,33 @@ describe("insertQuery", () => {
     expect(q.sql).toBe("INSERT INTO users (uuid, username) VALUES ($1, $2) RETURNING uuid");
     expect(q.values).toEqual(["u1", "john"]);
   });
+
+  it("multi-row insert нумерует плейсхолдеры каждой строки сквозно", () => {
+    const q = insertQuery("uuid", "username")
+      .from(TABLES.users)
+      .values("u1", "john")
+      .values("u2", "jane")
+      .build();
+    expect(q.sql).toBe("INSERT INTO users (uuid, username) VALUES ($1, $2), ($3, $4)");
+    expect(q.values).toEqual(["u1", "john", "u2", "jane"]);
+  });
+
+  it("multi-row insert с returning", () => {
+    const q = insertQuery("uuid")
+      .from(TABLES.users)
+      .values("u1")
+      .values("u2")
+      .returning("uuid")
+      .build();
+    expect(q.sql).toBe("INSERT INTO users (uuid) VALUES ($1), ($2) RETURNING uuid");
+    expect(q.values).toEqual(["u1", "u2"]);
+  });
+
+  it("insert отклоняет строку с числом значений, не равным числу колонок", () => {
+    expect(() => insertQuery("uuid", "username").from(TABLES.users).values("u1").build()).toThrow(
+      "2 значений",
+    );
+  });
 });
 
 describe("updateQuery", () => {
@@ -176,6 +203,28 @@ describe("updateQuery", () => {
     expect(q.sql).toBe("UPDATE users SET username = $1 WHERE uuid = $2 RETURNING uuid, username");
     expect(q.values).toEqual(["jane", "u1"]);
   });
+
+  it("перенумеровывает плейсхолдеры условия с учётом set-параметров", () => {
+    const q = updateQuery()
+      .from(TABLES.users)
+      .set("username", "jane")
+      .where("role = $1 AND approved = $2", "admin", true)
+      .build();
+    expect(q.sql).toBe("UPDATE users SET username = $1 WHERE role = $2 AND approved = $3");
+    expect(q.values).toEqual(["jane", "admin", true]);
+  });
+
+  it("не трогает доллар-числа внутри строковых литералов условия", () => {
+    const q = updateQuery()
+      .from(TABLES.users)
+      .set("username", "jane")
+      .where("note = 'цена $1 и $2' AND approved = $1", true)
+      .build();
+    expect(q.sql).toBe(
+      "UPDATE users SET username = $1 WHERE note = 'цена $1 и $2' AND approved = $2",
+    );
+    expect(q.values).toEqual(["jane", true]);
+  });
 });
 
 describe("deleteQuery", () => {
@@ -185,18 +234,72 @@ describe("deleteQuery", () => {
     expect(q.values).toEqual(["u1"]);
   });
 
-  it("delete with limit", () => {
-    const q = deleteQuery().from(TABLES.users).limit(5).build();
-    expect(q.sql).toBe("DELETE FROM users LIMIT 5");
+  it("delete без where удаляет все строки таблицы", () => {
+    const q = deleteQuery().from(TABLES.refresh_tokens).build();
+    expect(q.sql).toBe("DELETE FROM refresh_tokens");
+    expect(q.values).toEqual([]);
+  });
+});
+
+describe("защита фрагментов SQL от инъекций (TASK-63)", () => {
+  it("where отклоняет фрагмент с точкой с запятой", () => {
+    expect(() =>
+      selectQuery("id").from(TABLES.users).where("username = ''; DROP TABLE users", "x").build(),
+    ).toThrow(";");
   });
 
-  it("delete with where and limit", () => {
-    const q = deleteQuery()
-      .from(TABLES.refresh_tokens)
-      .where("user_id = $1", "u1")
-      .limit(10)
-      .build();
-    expect(q.sql).toBe("DELETE FROM refresh_tokens WHERE user_id = $1 LIMIT 10");
-    expect(q.values).toEqual(["u1"]);
+  it("where отклоняет фрагмент с комментарием", () => {
+    expect(() =>
+      selectQuery("id").from(TABLES.users).where("username = 'x' -- comment", "x").build(),
+    ).toThrow("--");
+  });
+
+  it("where отклоняет фрагмент с блочным комментарием", () => {
+    expect(() =>
+      selectQuery("id").from(TABLES.users).where("username /* c */ = $1", "x").build(),
+    ).toThrow("/*");
+  });
+
+  it("and отклоняет фрагмент с точкой с запятой", () => {
+    expect(() =>
+      selectQuery("id")
+        .from(TABLES.users)
+        .where("id = $1", 1)
+        .and("1 = 1; DROP TABLE users")
+        .build(),
+    ).toThrow(";");
+  });
+
+  it("join отклоняет условие on с точкой с запятой", () => {
+    expect(() =>
+      selectQuery("id")
+        .from(TABLES.users, "u")
+        .join("LEFT JOIN", TABLES.user_textures, "t", "t.uuid = u.uuid; DROP TABLE users")
+        .build(),
+    ).toThrow(";");
+  });
+
+  it("orderBy отклоняет колонку с комментарием", () => {
+    expect(() => selectQuery("id").from(TABLES.users).orderBy("username -- c").build()).toThrow(
+      "--",
+    );
+  });
+
+  it("update set отклоняет имя колонки с точкой с запятой", () => {
+    expect(() =>
+      updateQuery().from(TABLES.users).set("username = 'x'; DROP TABLE users", "y").build(),
+    ).toThrow(";");
+  });
+
+  it("delete where отклоняет фрагмент с точкой с запятой", () => {
+    expect(() =>
+      deleteQuery().from(TABLES.users).where("uuid = $1; DROP TABLE users", "u1").build(),
+    ).toThrow(";");
+  });
+
+  it("допускает строковые литералы без запрещённых последовательностей", () => {
+    const q = selectQuery("id").from(TABLES.users).where("note = 'цена $1'", 5).build();
+    expect(q.sql).toBe("SELECT id FROM users WHERE note = 'цена $1'");
+    expect(q.values).toEqual([5]);
   });
 });

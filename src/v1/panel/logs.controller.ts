@@ -63,7 +63,7 @@ export class V1PanelLogsController {
       url: query.url,
       ip: query.ip,
     };
-    const { lines, total } = this.logsService.getLines(date, offset, limit, filter);
+    const { lines, total } = await this.logsService.getLines(date, offset, limit, filter);
     return { date, offset, limit, total, lines };
   }
 

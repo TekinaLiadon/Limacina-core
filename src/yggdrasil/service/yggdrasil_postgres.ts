@@ -1,6 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import { insertQuery, selectQuery, execute, TABLES } from "../../utils/sql";
-import type { IYggdrasilStore, YggdrasilProfile } from "./yggdrasil_store";
+import type {
+  IYggdrasilStore,
+  YggdrasilProfile,
+  YggdrasilUserCredentials,
+} from "./yggdrasil_store";
 
 interface ProfileRow extends Record<string, unknown> {
   uuid: string;
@@ -14,6 +18,8 @@ interface ProfileRow extends Record<string, unknown> {
 interface UserRow extends Record<string, unknown> {
   uuid: string;
   password_hash: string;
+  banned: boolean;
+  approved: boolean;
 }
 
 function rowToProfile(row: ProfileRow): YggdrasilProfile {
@@ -39,6 +45,7 @@ const PROFILE_COLUMNS = [
 function profileBase() {
   return selectQuery(...PROFILE_COLUMNS)
     .from(TABLES.users, "u")
+    .where("u.deleted = false")
     .join("LEFT JOIN", TABLES.user_textures, "t", "t.uuid = u.uuid");
 }
 
@@ -110,17 +117,30 @@ export class YggdrasilPostgresStore implements IYggdrasilStore {
     await execute(sql, values);
   }
 
-  async findUserByUsername(
-    username: string,
-  ): Promise<{ uuid: string; passwordHash: string } | undefined> {
-    const q = selectQuery("uuid", "password_hash")
+  async countProfilesByTextureUrl(url: string): Promise<number> {
+    const q = selectQuery("COUNT(*) AS count")
+      .from(TABLES.user_textures)
+      .where("skin_url = $1 OR cape_url = $1", url)
+      .build();
+    const { rows } = await execute<{ count: number }>(q.sql, q.values);
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  async findUserByUsername(username: string): Promise<YggdrasilUserCredentials | undefined> {
+    const q = selectQuery("uuid", "password_hash", "banned", "approved")
       .from(TABLES.users)
       .where("username = $1", username)
+      .where("deleted = false")
       .build();
     const { rows } = await execute<UserRow>(q.sql, q.values);
     const [row] = rows;
     if (!row) return undefined;
 
-    return { uuid: row.uuid, passwordHash: row.password_hash };
+    return {
+      uuid: row.uuid,
+      passwordHash: row.password_hash,
+      banned: row.banned,
+      approved: row.approved,
+    };
   }
 }

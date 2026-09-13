@@ -1,15 +1,10 @@
 import { Injectable, Logger, BadRequestException } from "@nestjs/common";
-import { readdirSync, readFileSync } from "node:fs";
+import { createReadStream, readdirSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { LOG_DATE_PATTERN } from "./dto/dto";
 
 const LOGS_DIR = join(process.cwd(), "logs");
-const CACHE_TTL_MS = 10_000;
-
-interface CacheEntry {
-  lines: string[];
-  expiresAt: number;
-}
 
 export interface LogsFilter {
   statusCode?: number | undefined;
@@ -25,7 +20,6 @@ interface RequestLogEntry {
 @Injectable()
 export class LogsService {
   private readonly logger = new Logger(LogsService.name);
-  private readonly cache = new Map<string, CacheEntry>();
 
   listAvailableDates(): string[] {
     const today = new Date().toISOString().slice(0, 10);
@@ -44,51 +38,70 @@ export class LogsService {
     }
   }
 
-  getLines(
+  async getLines(
     date: string,
     offset: number,
     limit: number,
     filter?: LogsFilter,
-  ): { lines: string[]; total: number } {
+  ): Promise<{ lines: string[]; total: number }> {
     this.validateDate(date);
 
-    const allLines = this.getCachedLines(date);
-    const matchedLines = this.filterRequestLines(allLines, filter);
+    const filePath = join(LOGS_DIR, `${date}.log`);
+    const total = await this.countMatchedLines(filePath, filter);
+    const lines = await this.collectMatchedLines(filePath, filter, offset, limit);
 
-    return {
-      lines: matchedLines.slice(offset, offset + limit),
-      total: matchedLines.length,
-    };
+    return { lines, total };
   }
 
-  private getCachedLines(date: string): string[] {
-    const cached = this.cache.get(date);
-    const now = Date.now();
-
-    if (cached && cached.expiresAt > now) {
-      return cached.lines;
+  private async countMatchedLines(filePath: string, filter?: LogsFilter): Promise<number> {
+    let total = 0;
+    try {
+      for await (const line of this.readLines(filePath)) {
+        if (this.isMatchedRequestLine(line, filter)) total++;
+      }
+    } catch {
+      this.logger.warn({ filePath }, "Лог-файл не прочитан");
     }
+    return total;
+  }
 
-    const lines = this.readLogFile(date);
-    this.cache.set(date, { lines, expiresAt: now + CACHE_TTL_MS });
+  private async collectMatchedLines(
+    filePath: string,
+    filter: LogsFilter | undefined,
+    offset: number,
+    limit: number,
+  ): Promise<string[]> {
+    const lines: string[] = [];
+    let matchedBeforePage = 0;
+    try {
+      for await (const line of this.readLines(filePath)) {
+        if (!this.isMatchedRequestLine(line, filter)) continue;
+        if (matchedBeforePage < offset) {
+          matchedBeforePage++;
+          continue;
+        }
+        lines.push(line);
+        if (lines.length >= limit) break;
+      }
+    } catch {
+      this.logger.warn({ filePath }, "Лог-файл не прочитан");
+    }
     return lines;
   }
 
-  private filterRequestLines(lines: string[], filter?: LogsFilter): string[] {
-    const matchedLines: string[] = [];
+  private readLines(filePath: string): ReturnType<typeof createInterface> {
+    return createInterface({
+      input: createReadStream(filePath, { encoding: "utf-8" }),
+      crlfDelay: Infinity,
+    });
+  }
 
-    for (const line of lines) {
-      const entry = this.parseLogLine(line);
-      if (!entry?.res?.statusCode) {
-        continue;
-      }
-      if (!this.matchesFilter(entry, filter)) {
-        continue;
-      }
-      matchedLines.push(line);
+  private isMatchedRequestLine(line: string, filter?: LogsFilter): boolean {
+    const entry = this.parseLogLine(line);
+    if (!entry?.res?.statusCode) {
+      return false;
     }
-
-    return matchedLines;
+    return this.matchesFilter(entry, filter);
   }
 
   private parseLogLine(line: string): RequestLogEntry | undefined {
@@ -120,17 +133,6 @@ export class LogsService {
     }
 
     return true;
-  }
-
-  private readLogFile(date: string): string[] {
-    const filePath = join(LOGS_DIR, `${date}.log`);
-    try {
-      const content = readFileSync(filePath, "utf-8");
-      return content.split("\n").filter((line) => line.length > 0);
-    } catch {
-      this.logger.warn({ date }, "Лог-файл не найден");
-      return [];
-    }
   }
 
   private validateDate(date: string): void {

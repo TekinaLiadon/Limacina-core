@@ -1,8 +1,7 @@
-process.env["JWT_ACCESS"] = "test-access-secret-0123456789abcdef0123";
-process.env["JWT_REFRESH"] = "test-refresh-secret-0123456789abcdef0123";
-process.env["NODE_ENV"] = "test";
-process.env["BASE_URL"] = "http://localhost:3005";
-process.env["DB_DRIVER"] = "map";
+import { setupTestEnv } from "../../../../utils/tests/test-env";
+
+setupTestEnv();
+
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 import { type INestApplication, Injectable, ValidationPipe } from "@nestjs/common";
@@ -28,15 +27,11 @@ import GlobalConfig from "../../../../config/global-config";
 import { AppConfigToken } from "../../../../config/app-config.provider";
 import { Jwt_authGuard } from "../../../../common/jwt_auth.guard";
 import { RolesGuard } from "../../../../common/roles.guard";
+import { buildTestPng } from "../../../../utils/tests/test-png";
 
 const TEST_UUID = "v1user-uuid-0001";
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-const pngBuffer = (extraBytes = 16): Buffer => {
-  const buffer = Buffer.alloc(PNG_SIGNATURE.length + extraBytes);
-  buffer.set(PNG_SIGNATURE);
-  return buffer;
-};
+const pngBuffer = (variant = 16): Buffer => buildTestPng({ variant });
 
 @Injectable()
 class TestJwtStrategy extends PassportStrategy(Strategy) {
@@ -85,7 +80,7 @@ describe("V1 common/content эндпоинты", (): void => {
         },
         {
           provide: YggdrasilStoreToken,
-          useClass: YggdrasilMapStore,
+          useFactory: () => new YggdrasilMapStore(),
         },
       ],
     }).compile();
@@ -169,8 +164,43 @@ describe("V1 common/content эндпоинты", (): void => {
       await supertest(app.getHttpServer())
         .post("/v1/common/content/skins")
         .set("Authorization", `Bearer ${userToken}`)
-        .attach("file", pngBuffer(512 * 1024), "skin.png")
+        .attach("file", buildTestPng({ totalBytes: 512 * 1024 + 1 }), "skin.png")
         .expect(400);
+    });
+
+    it("одинаковый скин разных пользователей пишет разные файлы", async () => {
+      const bytes = pngBuffer(210);
+      const firstRes = await supertest(app.getHttpServer())
+        .post("/v1/common/content/skins")
+        .set("Authorization", `Bearer ${userToken}`)
+        .attach("file", bytes, "skin.png")
+        .expect(201);
+      trackUploadedFile(firstRes.body.url);
+
+      const secondRes = await supertest(app.getHttpServer())
+        .post("/v1/common/content/skins")
+        .set("Authorization", `Bearer ${otherUserToken}`)
+        .attach("file", bytes, "skin.png")
+        .expect(201);
+      trackUploadedFile(secondRes.body.url);
+
+      const firstUrl: string = firstRes.body.url;
+      const secondUrl: string = secondRes.body.url;
+      expect(firstUrl).toContain("/textures/v1user-");
+      expect(secondUrl).toContain("/textures/other-");
+      expect(firstUrl).not.toBe(secondUrl);
+
+      await supertest(app.getHttpServer())
+        .delete(`/v1/common/content/skins/${firstRes.body.id}`)
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(200);
+      await supertest(app.getHttpServer())
+        .delete(`/v1/common/content/skins/${secondRes.body.id}`)
+        .set("Authorization", `Bearer ${otherUserToken}`)
+        .expect(200);
+
+      expect(existsSync(firstUrl.replace(/^https?:\/\/[^/]+\//, "public/"))).toBe(false);
+      expect(existsSync(secondUrl.replace(/^https?:\/\/[^/]+\//, "public/"))).toBe(false);
     });
   });
 
@@ -380,7 +410,7 @@ describe("V1 common/content эндпоинты", (): void => {
         expect(existsSync("public/textures/default.png")).toBe(true);
       } finally {
         for (const id of seededIds) {
-          await store.deleteById(id, "skin");
+          await store.deleteByIdAndCountRemaining(id, "skin");
         }
       }
     });
@@ -495,7 +525,7 @@ describe("V1 common/content эндпоинты", (): void => {
         .send({ id: seeded.id })
         .expect(400);
 
-      await store.deleteById(seeded.id, "skin");
+      await store.deleteByIdAndCountRemaining(seeded.id, "skin");
     });
   });
 

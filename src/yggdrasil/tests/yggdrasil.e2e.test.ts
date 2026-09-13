@@ -1,6 +1,13 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, unlinkSync } from "node:fs";
+import { setupTestEnv } from "../../utils/tests/test-env";
+
+setupTestEnv();
+
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { existsSync, mkdirSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
+import { createHmac } from "node:crypto";
 import { type INestApplication, ValidationPipe } from "@nestjs/common";
+import { JwtModule } from "@nestjs/jwt";
+import type { FastifyInstance } from "fastify";
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
@@ -11,6 +18,8 @@ import {
   YggdrasilStoreToken,
   YggdrasilTokenStoreToken,
   YggdrasilSessionStoreToken,
+  type YggdrasilProfile,
+  type YggdrasilSeedUser,
 } from "../service/yggdrasil_store";
 import { YggdrasilMapTokenStore, YggdrasilMapSessionStore } from "../../memory/yggdrasil-map.store";
 import { MemoryModule } from "../../memory/memory.module";
@@ -21,6 +30,8 @@ import {
 } from "../../user-content/user-content.store";
 import GlobalConfig from "../../config/global-config";
 import { AppConfigToken } from "../../config/app-config.provider";
+import { registerAuthRateLimit } from "../../common/auth-rate-limit";
+import { buildTestPng } from "../../utils/tests/test-png";
 
 const TEST_USERNAME = "testplayer";
 const TEST_UUID = "a1b2c3d4e5f67890abcdef1234567890";
@@ -29,28 +40,69 @@ const TEST_PASSWORD = "pass123";
 const ATTACKER_USERNAME = "attacker";
 const ATTACKER_UUID = "c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6";
 const ATTACKER_USER_UUID = "22222222222222222222222222222222";
+const BANNED_USERNAME = "bannedplayer";
+const BANNED_USER_UUID = "33333333333333333333333333333333";
+const BANNED_PROFILE_UUID = "e5f6a7b8c9d4e5f6a7b8c9d4e5f6a7b8";
+const PENDING_USERNAME = "pendingplayer";
+const PENDING_USER_UUID = "44444444444444444444444444444444";
+const BIND_USERNAME = "profilebinder";
+const BIND_USER_UUID = "55555555555555555555555555555555";
+const BIND_PROFILE_UUID = "d4e5f6a7b8c9d4e5f6a7b8c9d4e5f6a7";
+const BIND_SECOND_PROFILE_UUID = "f6a7b8c9d4e5f6a7b8c9d4e5f6a7b8c9";
+const BIND_SECOND_PROFILE_NAME = "profilebinder2";
+const SIGNOUT_LIMIT_USERNAME = "signoutlimiter";
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const buildPngBase64 = (body: string): string => {
-  const bytes = new Uint8Array([...PNG_SIGNATURE, ...new Uint8Array(Buffer.from(body))]);
+  let hash = 5381;
+  for (const byte of Buffer.from(body)) hash = ((hash * 33) ^ byte) & 0xffffffff;
+  return Buffer.from(buildTestPng({ variant: hash & 0xff })).toString("base64");
+};
+
+const buildInvalidPngBase64 = (): string => {
+  const bytes = new Uint8Array([...PNG_SIGNATURE, ...new Uint8Array(Buffer.from("garbage"))]);
   return Buffer.from(bytes.buffer).toString("base64");
 };
 
 describe("Yggdrasil эндпоинты", () => {
   let app: INestApplication;
   let store: YggdrasilMapStore;
+  let tokenStore: YggdrasilMapTokenStore;
   let contentStore: UserContentMapStore;
+  let jwtAccessSecret: string;
   const uploadedTextures: string[] = [];
 
   beforeAll(async () => {
+    const appConfig = GlobalConfig.parseEnvOrExit();
+    jwtAccessSecret = appConfig.JWT_ACCESS;
+    const passwordHash = await Bun.password.hash(TEST_PASSWORD);
+    const seedUsers: YggdrasilSeedUser[] = [
+      { username: TEST_USERNAME, uuid: TEST_USER_UUID, passwordHash },
+      { username: ATTACKER_USERNAME, uuid: ATTACKER_USER_UUID, passwordHash },
+      { username: BANNED_USERNAME, uuid: BANNED_USER_UUID, passwordHash, banned: true },
+      { username: PENDING_USERNAME, uuid: PENDING_USER_UUID, passwordHash, approved: false },
+      { username: BIND_USERNAME, uuid: BIND_USER_UUID, passwordHash },
+    ];
+    const seedProfiles: YggdrasilProfile[] = [
+      { uuid: TEST_UUID, userId: TEST_USER_UUID, username: TEST_USERNAME },
+      { uuid: ATTACKER_UUID, userId: ATTACKER_USER_UUID, username: ATTACKER_USERNAME },
+      { uuid: BANNED_PROFILE_UUID, userId: BANNED_USER_UUID, username: BANNED_USERNAME },
+      { uuid: BIND_PROFILE_UUID, userId: BIND_USER_UUID, username: BIND_USERNAME },
+      {
+        uuid: BIND_SECOND_PROFILE_UUID,
+        userId: BIND_USER_UUID,
+        username: BIND_SECOND_PROFILE_NAME,
+      },
+    ];
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [MemoryModule],
+      imports: [MemoryModule, JwtModule.register({})],
       controllers: [YggdrasilController],
       providers: [
         YggdrasilService,
-        { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
+        { provide: AppConfigToken, useFactory: () => appConfig },
         {
           provide: YggdrasilStoreToken,
-          useClass: YggdrasilMapStore,
+          useFactory: () => new YggdrasilMapStore({ users: seedUsers, profiles: seedProfiles }),
         },
         {
           provide: YggdrasilTokenStoreToken,
@@ -71,20 +123,14 @@ describe("Yggdrasil эндпоинты", () => {
 
     app = moduleFixture.createNestApplication(new FastifyAdapter({ bodyLimit: 1024 * 1024 }));
     app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+    const fastifyInstance = app.getHttpAdapter().getInstance() as FastifyInstance;
+    await registerAuthRateLimit(fastifyInstance, { max: 10, timeWindow: 60000 });
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
 
     store = moduleFixture.get(YggdrasilStoreToken) as YggdrasilMapStore;
+    tokenStore = moduleFixture.get(YggdrasilTokenStoreToken) as YggdrasilMapTokenStore;
     contentStore = moduleFixture.get(UserContentMapStoreToken) as UserContentMapStore;
-    const passwordHash = await Bun.password.hash(TEST_PASSWORD);
-    await store.__test__addUser(TEST_USERNAME, TEST_USER_UUID, passwordHash);
-    await store.saveProfile({ uuid: TEST_UUID, userId: TEST_USER_UUID, username: TEST_USERNAME });
-    await store.__test__addUser(ATTACKER_USERNAME, ATTACKER_USER_UUID, passwordHash);
-    await store.saveProfile({
-      uuid: ATTACKER_UUID,
-      userId: ATTACKER_USER_UUID,
-      username: ATTACKER_USERNAME,
-    });
   });
 
   afterAll(async () => {
@@ -111,6 +157,13 @@ describe("Yggdrasil эндпоинты", () => {
 
       expect(res.body.meta["feature.non_email_login"]).toBe(true);
     });
+
+    it("homepage берётся из BASE_URL, skinDomains вычисляются из хоста", async () => {
+      const res = await supertest(app.getHttpServer()).get("/").expect(200);
+
+      expect(res.body.meta.links.homepage).toBe("http://localhost:3005");
+      expect(res.body.skinDomains).toEqual(["localhost"]);
+    });
   });
 
   // ─── POST /authserver/authenticate ───
@@ -120,7 +173,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       expect(res.body).toHaveProperty("accessToken");
       expect(res.body).toHaveProperty("clientToken");
@@ -156,7 +209,7 @@ describe("Yggdrasil эндпоинты", () => {
           password: TEST_PASSWORD,
           clientToken: customToken,
         })
-        .expect(201);
+        .expect(200);
 
       expect(res.body.clientToken).toBe(customToken);
     });
@@ -165,7 +218,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       expect(typeof res.body.clientToken).toBe("string");
       expect(res.body.clientToken.length).toBeGreaterThan(0);
@@ -175,7 +228,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD, requestUser: true })
-        .expect(201);
+        .expect(200);
 
       expect(res.body.user).toBeDefined();
       expect(res.body.user.id).toBe(TEST_USER_UUID);
@@ -185,7 +238,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD, requestUser: false })
-        .expect(201);
+        .expect(200);
 
       expect(res.body.user).toBeUndefined();
     });
@@ -194,7 +247,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       expect(typeof res.body.accessToken).toBe("string");
       expect(res.body.accessToken.length).toBe(32);
@@ -209,14 +262,14 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       const oldToken = authRes.body.accessToken;
 
       const refreshRes = await supertest(app.getHttpServer())
         .post("/authserver/refresh")
         .send({ accessToken: oldToken })
-        .expect(201);
+        .expect(200);
 
       expect(refreshRes.body.accessToken).toBeTruthy();
       expect(refreshRes.body.accessToken).not.toBe(oldToken);
@@ -239,7 +292,7 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD, clientToken: "token-a" })
-        .expect(201);
+        .expect(200);
 
       await supertest(app.getHttpServer())
         .post("/authserver/refresh")
@@ -251,42 +304,129 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       const refreshRes = await supertest(app.getHttpServer())
         .post("/authserver/refresh")
         .send({ accessToken: authRes.body.accessToken, requestUser: true })
-        .expect(201);
+        .expect(200);
 
       expect(refreshRes.body.user).toBeDefined();
     });
 
     it("selectedProfile: привязка профиля к токену", async () => {
-      const secondProfileUuid = "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5";
-      await store.saveProfile({
-        uuid: secondProfileUuid,
-        userId: TEST_USER_UUID,
-        username: "testplayer2",
-      });
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: BIND_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
 
-      try {
-        const authRes = await supertest(app.getHttpServer())
-          .post("/authserver/authenticate")
-          .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-          .expect(201);
+      const refreshRes = await supertest(app.getHttpServer())
+        .post("/authserver/refresh")
+        .send({
+          accessToken: authRes.body.accessToken,
+          selectedProfile: {
+            id: BIND_SECOND_PROFILE_UUID,
+            name: BIND_SECOND_PROFILE_NAME,
+            properties: [],
+          },
+        })
+        .expect(200);
 
-        const refreshRes = await supertest(app.getHttpServer())
+      expect(refreshRes.body.selectedProfile.id).toBe(BIND_SECOND_PROFILE_UUID);
+    });
+
+    it("selectedProfile чужого профиля — 400 Invalid profile (TASK-22)", async () => {
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: BIND_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
+
+      const res = await supertest(app.getHttpServer())
+        .post("/authserver/refresh")
+        .send({
+          accessToken: authRes.body.accessToken,
+          selectedProfile: { id: ATTACKER_UUID, name: ATTACKER_USERNAME, properties: [] },
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe("IllegalArgumentException");
+      expect(res.body.errorMessage).toBe("Invalid profile.");
+    });
+
+    it("selectedProfile несуществующего профиля — 400 Invalid profile (TASK-22)", async () => {
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: BIND_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
+
+      const res = await supertest(app.getHttpServer())
+        .post("/authserver/refresh")
+        .send({
+          accessToken: authRes.body.accessToken,
+          selectedProfile: { id: "00000000000000000000000000000000", name: "ghost" },
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe("IllegalArgumentException");
+      expect(res.body.errorMessage).toBe("Invalid profile.");
+    });
+
+    it("чужой selectedProfile — 400 и токен остаётся валидным (TASK-26)", async () => {
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: BIND_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
+
+      await supertest(app.getHttpServer())
+        .post("/authserver/refresh")
+        .send({
+          accessToken: authRes.body.accessToken,
+          selectedProfile: { id: ATTACKER_UUID, name: ATTACKER_USERNAME, properties: [] },
+        })
+        .expect(400);
+
+      await supertest(app.getHttpServer())
+        .post("/authserver/validate")
+        .send({ accessToken: authRes.body.accessToken })
+        .expect(204);
+    });
+
+    it("уже привязанный профиль + selectedProfile — 400 и токен остаётся валидным (TASK-26)", async () => {
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
+
+      await supertest(app.getHttpServer())
+        .post("/authserver/refresh")
+        .send({
+          accessToken: authRes.body.accessToken,
+          selectedProfile: { id: TEST_UUID, name: TEST_USERNAME, properties: [] },
+        })
+        .expect(400);
+
+      await supertest(app.getHttpServer())
+        .post("/authserver/validate")
+        .send({ accessToken: authRes.body.accessToken })
+        .expect(204);
+    });
+
+    it("параллельный refresh одного токена даёт ровно один успех (TASK-26)", async () => {
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
+
+      const [first, second] = await Promise.all([
+        supertest(app.getHttpServer())
           .post("/authserver/refresh")
-          .send({
-            accessToken: authRes.body.accessToken,
-            selectedProfile: { id: secondProfileUuid, name: "testplayer2", properties: [] },
-          })
-          .expect(201);
+          .send({ accessToken: authRes.body.accessToken }),
+        supertest(app.getHttpServer())
+          .post("/authserver/refresh")
+          .send({ accessToken: authRes.body.accessToken }),
+      ]);
 
-        expect(refreshRes.body.selectedProfile.id).toBe(secondProfileUuid);
-      } finally {
-        await store.__test__deleteProfile(secondProfileUuid);
-      }
+      expect([first.status, second.status].sort((a, b) => a - b)).toEqual([200, 403]);
     });
   });
 
@@ -297,7 +437,7 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       await supertest(app.getHttpServer())
         .post("/authserver/validate")
@@ -316,7 +456,7 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD, clientToken: "ct-1" })
-        .expect(201);
+        .expect(200);
 
       await supertest(app.getHttpServer())
         .post("/authserver/validate")
@@ -328,7 +468,7 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD, clientToken: "ct-1" })
-        .expect(201);
+        .expect(200);
 
       await supertest(app.getHttpServer())
         .post("/authserver/validate")
@@ -344,7 +484,7 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       const token = authRes.body.accessToken;
 
@@ -365,6 +505,45 @@ describe("Yggdrasil эндпоинты", () => {
         .send({ accessToken: "nonexistent-token" })
         .expect(204);
     });
+
+    it("ошибка при неверном clientToken — токен не удаляется", async () => {
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: TEST_USERNAME, password: TEST_PASSWORD, clientToken: "ct-inv-correct" })
+        .expect(200);
+
+      const token = authRes.body.accessToken;
+
+      const res = await supertest(app.getHttpServer())
+        .post("/authserver/invalidate")
+        .send({ accessToken: token, clientToken: "ct-inv-wrong" })
+        .expect(403);
+
+      expect(res.body.error).toBe("ForbiddenOperationException");
+      expect(res.body.errorMessage).toBe("Invalid token.");
+
+      await supertest(app.getHttpServer())
+        .post("/authserver/validate")
+        .send({ accessToken: token })
+        .expect(204);
+    });
+
+    it("инвалидация с верным clientToken удаляет токен", async () => {
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: TEST_USERNAME, password: TEST_PASSWORD, clientToken: "ct-inv-ok" })
+        .expect(200);
+
+      await supertest(app.getHttpServer())
+        .post("/authserver/invalidate")
+        .send({ accessToken: authRes.body.accessToken, clientToken: "ct-inv-ok" })
+        .expect(204);
+
+      await supertest(app.getHttpServer())
+        .post("/authserver/validate")
+        .send({ accessToken: authRes.body.accessToken })
+        .expect(403);
+    });
   });
 
   // ─── POST /authserver/signout ───
@@ -374,7 +553,7 @@ describe("Yggdrasil эндпоинты", () => {
       const authRes = await supertest(app.getHttpServer())
         .post("/authserver/authenticate")
         .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(200);
 
       const token = authRes.body.accessToken;
 
@@ -410,7 +589,7 @@ describe("Yggdrasil эндпоинты", () => {
     const authRes = await supertest(app.getHttpServer())
       .post("/authserver/authenticate")
       .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
-      .expect(201);
+      .expect(200);
 
     const token = authRes.body.accessToken;
     if (authRes.body.selectedProfile) return token;
@@ -421,7 +600,7 @@ describe("Yggdrasil эндпоинты", () => {
         accessToken: token,
         selectedProfile: { id: TEST_UUID, name: TEST_USERNAME, properties: [] },
       })
-      .expect(201);
+      .expect(200);
 
     return refreshRes.body.accessToken;
   }
@@ -430,7 +609,7 @@ describe("Yggdrasil эндпоинты", () => {
     const authRes = await supertest(app.getHttpServer())
       .post("/authserver/authenticate")
       .send({ username, password: TEST_PASSWORD })
-      .expect(201);
+      .expect(200);
 
     return authRes.body.accessToken;
   }
@@ -497,15 +676,15 @@ describe("Yggdrasil эндпоинты", () => {
       expect(res.body.name).toBe(TEST_USERNAME);
     });
 
-    it("возвращает 404 при отсутствии сессии", async () => {
+    it("возвращает 204 при отсутствии сессии", async () => {
       await supertest(app.getHttpServer())
         .get(
           `/sessionserver/session/minecraft/hasJoined?username=${TEST_USERNAME}&serverId=nonexistent`,
         )
-        .expect(404);
+        .expect(204);
     });
 
-    it("возвращает 404 если username не совпадает", async () => {
+    it("возвращает 204 если username не совпадает", async () => {
       const token = await authenticateAndBindProfile();
 
       await supertest(app.getHttpServer())
@@ -521,7 +700,7 @@ describe("Yggdrasil эндпоинты", () => {
         .get(
           `/sessionserver/session/minecraft/hasJoined?username=wronguser&serverId=wrong-user-server`,
         )
-        .expect(404);
+        .expect(204);
     });
 
     it("возвращает свойства профиля (textures)", async () => {
@@ -556,6 +735,26 @@ describe("Yggdrasil эндпоинты", () => {
       const decoded = JSON.parse(Buffer.from(texProp.value, "base64").toString());
       expect(decoded.textures.SKIN.url).toBe("http://example.com/skin.png");
     });
+
+    it("без username — 400 (TASK-30)", async () => {
+      await supertest(app.getHttpServer())
+        .get("/sessionserver/session/minecraft/hasJoined?serverId=some-server")
+        .expect(400);
+    });
+
+    it("без serverId — 400 (TASK-30)", async () => {
+      await supertest(app.getHttpServer())
+        .get(`/sessionserver/session/minecraft/hasJoined?username=${TEST_USERNAME}`)
+        .expect(400);
+    });
+
+    it("serverId длиннее 64 — 400 (TASK-30)", async () => {
+      await supertest(app.getHttpServer())
+        .get(
+          `/sessionserver/session/minecraft/hasJoined?username=${TEST_USERNAME}&serverId=${"a".repeat(65)}`,
+        )
+        .expect(400);
+    });
   });
 
   describe("GET /sessionserver/session/minecraft/profile/:uuid", () => {
@@ -569,10 +768,45 @@ describe("Yggdrasil эндпоинты", () => {
       expect(Array.isArray(res.body.properties)).toBe(true);
     });
 
-    it("возвращает 404 для несуществующего UUID", async () => {
+    it("возвращает 204 для несуществующего UUID", async () => {
       await supertest(app.getHttpServer())
         .get("/sessionserver/session/minecraft/profile/00000000000000000000000000000000")
-        .expect(404);
+        .expect(204);
+    });
+
+    it("по умолчанию отдаёт текстуры без подписи (unsigned=true)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get(`/sessionserver/session/minecraft/profile/${TEST_UUID}`)
+        .expect(200);
+
+      const texProp = res.body.properties.find((p: { name: string }) => p.name === "textures");
+      expect(texProp).toBeDefined();
+      expect(texProp.signature).toBeUndefined();
+    });
+
+    it("unsigned=false добавляет подпись, если включено подписывание", async () => {
+      const meta = await supertest(app.getHttpServer()).get("/").expect(200);
+      const signingEnabled =
+        typeof meta.body.signaturePublickey === "string" && meta.body.signaturePublickey.length > 0;
+
+      const res = await supertest(app.getHttpServer())
+        .get(`/sessionserver/session/minecraft/profile/${TEST_UUID}?unsigned=false`)
+        .expect(200);
+
+      const texProp = res.body.properties.find((p: { name: string }) => p.name === "textures");
+      expect(texProp).toBeDefined();
+      if (signingEnabled) {
+        expect(typeof texProp.signature).toBe("string");
+        expect(texProp.signature.length).toBeGreaterThan(0);
+      } else {
+        expect(texProp.signature).toBeUndefined();
+      }
+    });
+
+    it("некорректное значение unsigned отклоняется с 400", async () => {
+      await supertest(app.getHttpServer())
+        .get(`/sessionserver/session/minecraft/profile/${TEST_UUID}?unsigned=maybe`)
+        .expect(400);
     });
 
     it("корректно кодирует текстуры в base64", async () => {
@@ -660,8 +894,8 @@ describe("Yggdrasil эндпоинты", () => {
       const secondDecoded = JSON.parse(Buffer.from(secondProp.value, "base64").toString());
       expect(secondDecoded.textures.SKIN.url).toBe("/textures/second.png");
 
-      await contentStore.deleteById(first.id, "skin");
-      await contentStore.deleteById(second.id, "skin");
+      await contentStore.deleteByIdAndCountRemaining(first.id, "skin");
+      await contentStore.deleteByIdAndCountRemaining(second.id, "skin");
     });
 
     it("без skinUrl и без активного скина отдаёт дефолтный", async () => {
@@ -683,7 +917,7 @@ describe("Yggdrasil эндпоинты", () => {
       const decoded = JSON.parse(Buffer.from(texProp.value, "base64").toString());
       expect(decoded.textures.SKIN.url).toContain("/textures/default.png");
 
-      await contentStore.deleteById(inactive.id, "skin");
+      await contentStore.deleteByIdAndCountRemaining(inactive.id, "skin");
     });
   });
 
@@ -694,7 +928,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/api/profiles/minecraft")
         .send([TEST_USERNAME, "nonexistent"])
-        .expect(201);
+        .expect(200);
 
       expect(Array.isArray(res.body)).toBe(true);
       expect(res.body.length).toBe(1);
@@ -706,7 +940,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/api/profiles/minecraft")
         .send(["nobody1", "nobody2"])
-        .expect(201);
+        .expect(200);
 
       expect(res.body).toEqual([]);
     });
@@ -715,7 +949,7 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/api/profiles/minecraft")
         .send([])
-        .expect(201);
+        .expect(200);
 
       expect(res.body).toEqual([]);
     });
@@ -724,9 +958,46 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .post("/api/profiles/minecraft")
         .send([TEST_USERNAME])
-        .expect(201);
+        .expect(200);
 
       expect(res.body[0].properties).toEqual([]);
+    });
+
+    it("тело не-массив — 400 (TASK-27)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .post("/api/profiles/minecraft")
+        .send({ name: TEST_USERNAME })
+        .expect(400);
+
+      expect(res.body.message).toContain("массив");
+    });
+
+    it("пустое имя в массиве — 400 (TASK-27)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .post("/api/profiles/minecraft")
+        .send([TEST_USERNAME, ""])
+        .expect(400);
+
+      expect(res.body.message).toContain("непустыми строками");
+    });
+
+    it("не-строковые элементы — 400 (TASK-27)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .post("/api/profiles/minecraft")
+        .send([TEST_USERNAME, 42])
+        .expect(400);
+
+      expect(res.body.message).toContain("непустыми строками");
+    });
+
+    it("больше 10 имён обрезается до лимита (TASK-27)", async () => {
+      const names = [...Array.from({ length: 10 }, (_, i) => `nobody-${i}`), TEST_USERNAME];
+      const res = await supertest(app.getHttpServer())
+        .post("/api/profiles/minecraft")
+        .send(names)
+        .expect(200);
+
+      expect(res.body).toEqual([]);
     });
   });
 
@@ -762,20 +1033,83 @@ describe("Yggdrasil эндпоинты", () => {
 
       const profile = await store.findProfileByUuid(TEST_UUID);
       expect(profile).toBeDefined();
-      expect(profile!.skinUrl).toContain("/textures/");
+      expect(profile!.skinUrl).toContain(`/textures/${TEST_USERNAME}-`);
       expect(profile!.skinModel).toBe("slim");
       if (profile!.skinUrl) {
         uploadedTextures.push(profile!.skinUrl.replace(/^https?:\/\/[^/]+\//, "public/"));
       }
     });
 
-    it("возвращает 403 для несуществующего профиля", async () => {
+    it("модель classic валидируется и сохраняется", async () => {
+      const token = await authenticateAndBindProfile();
+      await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ file: buildPngBase64("model-classic"), model: "classic" })
+        .expect(204);
+
+      expect((await store.findProfileByUuid(TEST_UUID))!.skinModel).toBe("classic");
+      const url = (await store.findProfileByUuid(TEST_UUID))!.skinUrl!;
+      uploadedTextures.push(url.replace(/^https?:\/\/[^/]+\//, "public/"));
+    });
+
+    it("неизвестная модель — 400 Invalid model (TASK-23)", async () => {
+      const token = await authenticateAndBindProfile();
+
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ file: buildPngBase64("model-wide"), model: "wide" })
+        .expect(400);
+
+      expect(res.body.error).toBe("IllegalArgumentException");
+      expect(res.body.errorMessage).toContain("Invalid model");
+    });
+
+    it("битая структура PNG — 403 (TASK-24)", async () => {
+      const token = await authenticateAndBindProfile();
+
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ file: buildInvalidPngBase64() })
+        .expect(403);
+
+      expect(res.body.errorMessage).toContain("Invalid texture file");
+    });
+
+    it("возвращает 401 для несуществующего профиля без токена (TASK-28)", async () => {
       const base64 = buildPngBase64("fake-png-data");
 
       await supertest(app.getHttpServer())
         .put("/api/user/profile/00000000000000000000000000000000/skin")
         .send({ file: base64 })
+        .expect(401);
+    });
+
+    it("мусорный bearer для несуществующего профиля — 401 до поиска профиля (TASK-28)", async () => {
+      const base64 = buildPngBase64("fake-png-data");
+
+      const res = await supertest(app.getHttpServer())
+        .put("/api/user/profile/00000000000000000000000000000000/skin")
+        .set("Authorization", "Bearer garbage-token")
+        .send({ file: base64 })
+        .expect(401);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
+    });
+
+    it("валидный токен для несуществующего профиля — 403 Invalid token (TASK-28)", async () => {
+      const token = await authenticateUser(ATTACKER_USERNAME);
+      const base64 = buildPngBase64("fake-png-data");
+
+      const res = await supertest(app.getHttpServer())
+        .put("/api/user/profile/00000000000000000000000000000000/skin")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ file: base64 })
         .expect(403);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
     });
 
     it("возвращает 400 для неизвестного textureType", async () => {
@@ -812,7 +1146,7 @@ describe("Yggdrasil эндпоинты", () => {
 
       const profile = await store.findProfileByUuid(TEST_UUID);
       expect(profile).toBeDefined();
-      expect(profile!.capeUrl).toContain("/textures/");
+      expect(profile!.capeUrl).toContain(`/textures/${TEST_USERNAME}-`);
       if (profile!.capeUrl) {
         uploadedTextures.push(profile!.capeUrl.replace(/^https?:\/\/[^/]+\//, "public/"));
       }
@@ -864,10 +1198,10 @@ describe("Yggdrasil эндпоинты", () => {
       expect(profile!.capeUrl).toBeNull();
     });
 
-    it("возвращает 403 для несуществующего профиля", async () => {
+    it("возвращает 401 для несуществующего профиля без токена (TASK-28)", async () => {
       await supertest(app.getHttpServer())
         .delete("/api/user/profile/00000000000000000000000000000000/skin")
-        .expect(403);
+        .expect(401);
     });
 
     it("возвращает 400 для неизвестного textureType", async () => {
@@ -876,6 +1210,217 @@ describe("Yggdrasil эндпоинты", () => {
         .expect(400);
 
       expect(res.body.statusCode).toBe(400);
+    });
+  });
+
+  // ─── Жизненный цикл файлов текстур ───
+
+  describe("Жизненный цикл файлов текстур", () => {
+    const resetProfile = async (): Promise<void> => {
+      await store.saveProfile({
+        uuid: TEST_UUID,
+        userId: TEST_USER_UUID,
+        username: TEST_USERNAME,
+        skinUrl: null,
+        skinModel: null,
+        capeUrl: null,
+      });
+    };
+
+    const localPathOf = (url: string): string => url.replace(/^https?:\/\/[^/]+\//, "public/");
+
+    const uploadSkinViaApi = async (token: string, body: string): Promise<string> => {
+      await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ file: buildPngBase64(body) })
+        .expect(204);
+      const profile = await store.findProfileByUuid(TEST_UUID);
+      const url = profile!.skinUrl!;
+      uploadedTextures.push(localPathOf(url));
+      return url;
+    };
+
+    it("замена скина удаляет старый файл", async () => {
+      await resetProfile();
+      const token = await authenticateAndBindProfile();
+      const firstUrl = await uploadSkinViaApi(token, "lifecycle-first");
+      expect(existsSync(localPathOf(firstUrl))).toBe(true);
+
+      const secondUrl = await uploadSkinViaApi(token, "lifecycle-second");
+
+      expect(secondUrl).not.toBe(firstUrl);
+      expect(existsSync(localPathOf(firstUrl))).toBe(false);
+      expect(existsSync(localPathOf(secondUrl))).toBe(true);
+    });
+
+    it("удаление скина через API удаляет файл без ссылок", async () => {
+      await resetProfile();
+      const token = await authenticateAndBindProfile();
+      const url = await uploadSkinViaApi(token, "lifecycle-delete");
+
+      await supertest(app.getHttpServer())
+        .delete(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(204);
+
+      expect(existsSync(localPathOf(url))).toBe(false);
+    });
+
+    it("повторная загрузка того же скина не удаляет файл", async () => {
+      await resetProfile();
+      const token = await authenticateAndBindProfile();
+      const firstUrl = await uploadSkinViaApi(token, "lifecycle-same");
+      const secondUrl = await uploadSkinViaApi(token, "lifecycle-same");
+
+      expect(secondUrl).toBe(firstUrl);
+      expect(existsSync(localPathOf(firstUrl))).toBe(true);
+    });
+
+    it("файл под ссылкой user_skins не удаляется", async () => {
+      await resetProfile();
+      const token = await authenticateAndBindProfile();
+      const url = await uploadSkinViaApi(token, "lifecycle-shared");
+      const skinRow = await contentStore.save(TEST_USER_UUID, url, "skin");
+
+      await supertest(app.getHttpServer())
+        .delete(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(204);
+
+      expect(existsSync(localPathOf(url))).toBe(true);
+
+      await contentStore.deleteByIdAndCountRemaining(skinRow.id, "skin");
+    });
+
+    it("замена кейпа удаляет старый файл", async () => {
+      await resetProfile();
+      const token = await authenticateAndBindProfile();
+
+      await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/cape`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ file: buildPngBase64("lifecycle-cape-first") })
+        .expect(204);
+      const firstUrl = (await store.findProfileByUuid(TEST_UUID))!.capeUrl!;
+      uploadedTextures.push(localPathOf(firstUrl));
+
+      await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/cape`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ file: buildPngBase64("lifecycle-cape-second") })
+        .expect(204);
+      const secondUrl = (await store.findProfileByUuid(TEST_UUID))!.capeUrl!;
+      uploadedTextures.push(localPathOf(secondUrl));
+
+      expect(existsSync(localPathOf(firstUrl))).toBe(false);
+      expect(existsSync(localPathOf(secondUrl))).toBe(true);
+    });
+
+    it("дефолтный скин не удаляется", async () => {
+      const defaultUrl = `${GlobalConfig.parseEnvOrExit().BASE_URL}/textures/default.png`;
+      await store.saveProfile({
+        uuid: TEST_UUID,
+        userId: TEST_USER_UUID,
+        username: TEST_USERNAME,
+        skinUrl: defaultUrl,
+      });
+      const token = await authenticateAndBindProfile();
+
+      await supertest(app.getHttpServer())
+        .delete(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(204);
+
+      expect(existsSync("public/textures/default.png")).toBe(true);
+    });
+
+    it("внешний URL текстуры не трогается при удалении", async () => {
+      await store.saveProfile({
+        uuid: TEST_UUID,
+        userId: TEST_USER_UUID,
+        username: TEST_USERNAME,
+        skinUrl: "http://example.com/external-skin.png",
+      });
+      const token = await authenticateAndBindProfile();
+
+      await supertest(app.getHttpServer())
+        .delete(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(204);
+
+      const profile = await store.findProfileByUuid(TEST_UUID);
+      expect(profile!.skinUrl).toBeNull();
+    });
+  });
+
+  // ─── Порядок записи текстуры при сбоях (TASK-93) ───
+
+  describe("Порядок записи текстуры при сбоях", () => {
+    const resetProfile = async (): Promise<void> => {
+      await store.saveProfile({
+        uuid: TEST_UUID,
+        userId: TEST_USER_UUID,
+        username: TEST_USERNAME,
+        skinUrl: null,
+        skinModel: null,
+        capeUrl: null,
+      });
+    };
+
+    const listTextureFiles = (): string[] => readdirSync("public/textures").sort();
+
+    const texturePathFor = (base64: string): string => {
+      const hasher = new Bun.CryptoHasher("sha256");
+      hasher.update(new Uint8Array(Buffer.from(base64, "base64")));
+      return `public/textures/testplayer-${hasher.digest("hex")}.png`;
+    };
+
+    it("сбой записи в стор не оставляет файл текстуры на диске", async () => {
+      await resetProfile();
+      const token = await authenticateAndBindProfile();
+      const filesBefore = listTextureFiles();
+      const updateSpy = spyOn(store, "updateProfileTexture").mockImplementation(() =>
+        Promise.reject(new Error("store down")),
+      );
+
+      try {
+        await supertest(app.getHttpServer())
+          .put(`/api/user/profile/${TEST_UUID}/skin`)
+          .set("Authorization", `Bearer ${token}`)
+          .send({ file: buildPngBase64("order-store-fail") })
+          .expect(500);
+
+        expect(listTextureFiles()).toEqual(filesBefore);
+      } finally {
+        updateSpy.mockRestore();
+        await resetProfile();
+      }
+    });
+
+    it("сбой записи файла откатывает текстуру в сторе", async () => {
+      await resetProfile();
+      const token = await authenticateAndBindProfile();
+      const body = buildPngBase64("order-write-fail");
+      const blockedPath = texturePathFor(body);
+      mkdirSync(blockedPath, { recursive: true });
+      const updateSpy = spyOn(store, "updateProfileTexture");
+
+      try {
+        await supertest(app.getHttpServer())
+          .put(`/api/user/profile/${TEST_UUID}/skin`)
+          .set("Authorization", `Bearer ${token}`)
+          .send({ file: body })
+          .expect(500);
+
+        expect(updateSpy).toHaveBeenCalledTimes(2);
+        const profile = await store.findProfileByUuid(TEST_UUID);
+        expect(profile!.skinUrl).toBeNull();
+      } finally {
+        updateSpy.mockRestore();
+        if (existsSync(blockedPath)) rmdirSync(blockedPath);
+        await resetProfile();
+      }
     });
   });
 
@@ -902,6 +1447,291 @@ describe("Yggdrasil эндпоинты", () => {
 
       expect(res.body.error).toBe("ForbiddenOperationException");
       expect(res.body.errorMessage).toBe("Invalid token.");
+    });
+  });
+
+  // ─── Бан и approve (TASK-35) ───
+
+  const seedUserToken = async (
+    username: string,
+    userId: string,
+    profileId: string | null,
+  ): Promise<string> => {
+    const accessToken = crypto.randomUUID().replace(/-/g, "");
+    await tokenStore.saveToken(accessToken, {
+      profileId,
+      username,
+      clientToken: "ct-seeded",
+      userId,
+    });
+    return accessToken;
+  };
+
+  const encodeAccessJwt = (payload: Record<string, unknown>): string => {
+    const encode = (value: Record<string, unknown>): string =>
+      Buffer.from(JSON.stringify(value)).toString("base64url");
+    const header = encode({ alg: "HS256", typ: "JWT" });
+    const body = encode(payload);
+    const signature = createHmac("sha256", jwtAccessSecret)
+      .update(`${header}.${body}`)
+      .digest("base64url");
+    return `${header}.${body}.${signature}`;
+  };
+
+  describe("Бан и approve", () => {
+    it("authenticate забаненного — 403 Invalid credentials", async () => {
+      const res = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: BANNED_USERNAME, password: TEST_PASSWORD })
+        .expect(403);
+
+      expect(res.body.errorMessage).toBe("Invalid credentials. Invalid username or password.");
+    });
+
+    it("authenticate неодобренного неотличим от неверного пароля", async () => {
+      const pendingRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: PENDING_USERNAME, password: TEST_PASSWORD })
+        .expect(403);
+
+      const wrongPassRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: TEST_USERNAME, password: "wrong" })
+        .expect(403);
+
+      expect(pendingRes.body.error).toBe(wrongPassRes.body.error);
+      expect(pendingRes.body.errorMessage).toBe(wrongPassRes.body.errorMessage);
+    });
+
+    it("refresh токеном забаненного — 403 Invalid token", async () => {
+      const token = await seedUserToken(BANNED_USERNAME, BANNED_USER_UUID, BANNED_PROFILE_UUID);
+
+      const res = await supertest(app.getHttpServer())
+        .post("/authserver/refresh")
+        .send({ accessToken: token })
+        .expect(403);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
+    });
+
+    it("validate токеном забаненного — 403 Invalid token", async () => {
+      const token = await seedUserToken(BANNED_USERNAME, BANNED_USER_UUID, BANNED_PROFILE_UUID);
+
+      const res = await supertest(app.getHttpServer())
+        .post("/authserver/validate")
+        .send({ accessToken: token })
+        .expect(403);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
+    });
+
+    it("join токеном забаненного — 403 Invalid token", async () => {
+      const token = await seedUserToken(BANNED_USERNAME, BANNED_USER_UUID, BANNED_PROFILE_UUID);
+
+      const res = await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({ accessToken: token, selectedProfile: BANNED_PROFILE_UUID, serverId: "banned-join" })
+        .expect(403);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
+    });
+
+    it("join JWT-веткой забаненного — 403 Invalid token", async () => {
+      const jwt = encodeAccessJwt({
+        sub: BANNED_USER_UUID,
+        username: BANNED_USERNAME,
+        typ: "access",
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      const res = await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({
+          accessToken: jwt,
+          selectedProfile: BANNED_PROFILE_UUID,
+          serverId: "banned-jwt-join",
+        })
+        .expect(403);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
+    });
+  });
+
+  // ─── JWT-ветка join и текстур (TASK-29) ───
+
+  describe("JWT-ветка join и текстур (TASK-29)", () => {
+    const accessJwt = (): string =>
+      encodeAccessJwt({
+        sub: TEST_USER_UUID,
+        username: TEST_USERNAME,
+        typ: "access",
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+    it("join с валидным access JWT записывает сессию", async () => {
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({ accessToken: accessJwt(), selectedProfile: TEST_UUID, serverId: "jwt-access-join" })
+        .expect(204);
+    });
+
+    it("join с JWT типа refresh — 403", async () => {
+      const jwt = encodeAccessJwt({
+        sub: TEST_USER_UUID,
+        username: TEST_USERNAME,
+        typ: "refresh",
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({ accessToken: jwt, selectedProfile: TEST_UUID, serverId: "jwt-refresh-join" })
+        .expect(403);
+    });
+
+    it("join с истёкшим JWT — 403", async () => {
+      const jwt = encodeAccessJwt({
+        sub: TEST_USER_UUID,
+        username: TEST_USERNAME,
+        typ: "access",
+        exp: Math.floor(Date.now() / 1000) - 10,
+      });
+
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({ accessToken: jwt, selectedProfile: TEST_UUID, serverId: "jwt-expired-join" })
+        .expect(403);
+    });
+
+    it("join с подделанной подписью — 403", async () => {
+      const jwt = accessJwt();
+      const tampered = `${jwt.slice(0, -2)}xx`;
+
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({ accessToken: tampered, selectedProfile: TEST_UUID, serverId: "jwt-tampered-join" })
+        .expect(403);
+    });
+
+    it("upload текстуры с access JWT — 204", async () => {
+      const base64 = buildPngBase64("jwt-texture-upload");
+
+      await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${accessJwt()}`)
+        .send({ file: base64 })
+        .expect(204);
+
+      const profile = await store.findProfileByUuid(TEST_UUID);
+      expect(profile!.skinUrl).toBeTruthy();
+      if (profile!.skinUrl) {
+        uploadedTextures.push(profile!.skinUrl.replace(/^https?:\/\/[^/]+\//, "public/"));
+      }
+    });
+  });
+
+  // ─── Rate limit /authserver/signout (TASK-37) ───
+
+  describe("Rate limit /authserver/signout", () => {
+    it("11-я попытка signout по одному username — 429", async () => {
+      for (let i = 0; i < 10; i++) {
+        await supertest(app.getHttpServer())
+          .post("/authserver/signout")
+          .send({ username: SIGNOUT_LIMIT_USERNAME, password: "wrong" })
+          .expect(403);
+      }
+
+      const res = await supertest(app.getHttpServer())
+        .post("/authserver/signout")
+        .send({ username: SIGNOUT_LIMIT_USERNAME, password: "wrong" })
+        .expect(429);
+
+      expect(res.body.message).toContain("Слишком много попыток");
+    });
+
+    it("authenticate лимитом не покрыт", async () => {
+      for (let i = 0; i < 12; i++) {
+        await supertest(app.getHttpServer())
+          .post("/authserver/authenticate")
+          .send({ username: SIGNOUT_LIMIT_USERNAME, password: "wrong" })
+          .expect(403);
+      }
+    });
+  });
+
+  // ─── Валидация DTO: MaxLength (TASK-34) ───
+
+  describe("Валидация DTO: MaxLength", () => {
+    const long = (length: number): string => "a".repeat(length);
+
+    it("authenticate: username длиннее 64 — 400", async () => {
+      await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: long(65), password: "pass" })
+        .expect(400);
+    });
+
+    it("authenticate: clientToken длиннее 512 — 400", async () => {
+      await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: TEST_USERNAME, password: "pass", clientToken: long(513) })
+        .expect(400);
+    });
+
+    it("refresh: accessToken длиннее 512 — 400", async () => {
+      await supertest(app.getHttpServer())
+        .post("/authserver/refresh")
+        .send({ accessToken: long(513) })
+        .expect(400);
+    });
+
+    it("validate: accessToken длиннее 512 — 400", async () => {
+      await supertest(app.getHttpServer())
+        .post("/authserver/validate")
+        .send({ accessToken: long(513) })
+        .expect(400);
+    });
+
+    it("invalidate: accessToken длиннее 512 — 400", async () => {
+      await supertest(app.getHttpServer())
+        .post("/authserver/invalidate")
+        .send({ accessToken: long(513) })
+        .expect(400);
+    });
+
+    it("signout: username длиннее 64 — 400", async () => {
+      await supertest(app.getHttpServer())
+        .post("/authserver/signout")
+        .send({ username: long(65), password: "pass" })
+        .expect(400);
+    });
+
+    it("join: serverId длиннее 64 — 400", async () => {
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({ accessToken: long(32), selectedProfile: TEST_UUID, serverId: long(65) })
+        .expect(400);
+    });
+
+    it("join: selectedProfile длиннее 64 — 400", async () => {
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({ accessToken: long(32), selectedProfile: long(65), serverId: "server" })
+        .expect(400);
+    });
+
+    it("upload: model длиннее 16 — 400", async () => {
+      await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .send({ file: buildPngBase64("x"), model: long(17) })
+        .expect(400);
+    });
+
+    it("upload: file длиннее 700000 — 400", async () => {
+      await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .send({ file: long(700001) })
+        .expect(400);
     });
   });
 });

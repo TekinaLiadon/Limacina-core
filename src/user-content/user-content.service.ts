@@ -9,6 +9,7 @@ import {
 } from "@nestjs/common";
 import {
   UserContentMapStoreToken,
+  isUserContentLimitExceededError,
   type ContentType,
   type IUserContentStore,
 } from "./user-content.store";
@@ -17,11 +18,16 @@ import { unlinkSync } from "node:fs";
 import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 import { YggdrasilStoreToken, type IYggdrasilStore } from "../yggdrasil/service/yggdrasil_store";
+import { sanitizeFilePrefix } from "../utils/file-prefix";
+import { PngStructureError, validatePngStructure } from "../utils/png";
 
-const MAX_SKIN_BYTES = 512 * 1024;
-const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+export const MAX_SKIN_BYTES = 512 * 1024;
+export const MAX_MODEL_BYTES = 256 * 1024;
 const SKIN_MODELS = ["classic", "slim"] as const;
 export type SkinModel = (typeof SKIN_MODELS)[number];
+
+const hasBinaryBytes = (file: Uint8Array): boolean =>
+  file.some((byte) => byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d);
 
 @Injectable()
 export class UserContentService {
@@ -38,11 +44,13 @@ export class UserContentService {
 
   async uploadSkin(
     userUuid: string,
-    file: Buffer,
+    username: string,
+    file: Uint8Array,
     skinModel?: SkinModel,
   ): Promise<UserContentUploadResponseDto> {
     return this.upload(
       userUuid,
+      username,
       file,
       "skin",
       this.config.MAX_SKINS_PER_USER,
@@ -52,44 +60,74 @@ export class UserContentService {
     );
   }
 
-  async uploadCape(userUuid: string, file: Buffer): Promise<UserContentUploadResponseDto> {
-    return this.upload(userUuid, file, "cape", this.config.MAX_CAPES_PER_USER, "png", "capes");
+  async uploadCape(
+    userUuid: string,
+    username: string,
+    file: Uint8Array,
+  ): Promise<UserContentUploadResponseDto> {
+    return this.upload(
+      userUuid,
+      username,
+      file,
+      "cape",
+      this.config.MAX_CAPES_PER_USER,
+      "png",
+      "capes",
+    );
   }
 
-  async uploadModel(userUuid: string, file: Buffer): Promise<UserContentUploadResponseDto> {
-    return this.upload(userUuid, file, "model", this.config.MAX_MODELS_PER_USER, "txt", "models");
+  async uploadModel(
+    userUuid: string,
+    username: string,
+    file: Uint8Array,
+  ): Promise<UserContentUploadResponseDto> {
+    return this.upload(
+      userUuid,
+      username,
+      file,
+      "model",
+      this.config.MAX_MODELS_PER_USER,
+      "txt",
+      "models",
+    );
   }
 
   private async upload(
     userUuid: string,
-    file: Buffer,
+    username: string,
+    file: Uint8Array,
     type: ContentType,
     maxPerUser: number,
     extension: string,
     directory: string,
     skinModel?: SkinModel,
   ): Promise<UserContentUploadResponseDto> {
-    if (type !== "model") {
+    if (type === "model") {
+      this.validateModelFile(file);
+    } else {
       this.validatePngFile(file, type);
-    }
-
-    const count = await this.store.countByUserUuid(userUuid, type);
-    if (count >= maxPerUser) {
-      this.logger.warn({ userUuid, type, count, maxPerUser }, "Upload limit reached");
-      throw new BadRequestException(
-        `Достигнут лимит загрузки ${this.contentTypeName(type)}: ${maxPerUser}`,
-      );
     }
 
     const hasher = new Bun.CryptoHasher("sha256");
     hasher.update(new Uint8Array(file));
     const hash = hasher.digest("hex");
-    const filename = `${hash}.${extension}`;
+    const prefix = sanitizeFilePrefix(username, userUuid);
+    const filename = `${prefix}-${hash}.${extension}`;
     const url = `${this.config.BASE_URL}/${directory}/${filename}`;
     const filePath = `public/${directory}/${filename}`;
 
+    let item: Awaited<ReturnType<IUserContentStore["saveWithinLimit"]>>;
+    try {
+      item = await this.store.saveWithinLimit(userUuid, url, type, maxPerUser, skinModel);
+    } catch (error) {
+      if (!isUserContentLimitExceededError(error)) throw error;
+      this.logger.warn({ userUuid, type, maxPerUser }, "Upload limit reached");
+      throw new BadRequestException(
+        `Достигнут лимит загрузки ${this.contentTypeName(type)}: ${maxPerUser}`,
+      );
+    }
+
     await Bun.write(filePath, new Uint8Array(file));
-    const item = await this.store.save(userUuid, url, type, skinModel);
 
     if (type === "cape") {
       await this.syncProfileTexture(userUuid, { capeUrl: url });
@@ -173,19 +211,43 @@ export class UserContentService {
     return filePath === this.defaultSkinUrl || filePath === "/textures/default.png";
   }
 
-  private validatePngFile(file: Buffer, type: ContentType): void {
+  private validatePngFile(file: Uint8Array, type: ContentType): void {
     const contentName = this.contentTypeName(type);
+    if (file.length === 0) {
+      throw new BadRequestException(`Файл ${contentName} пустой`);
+    }
     if (file.length > MAX_SKIN_BYTES) {
       throw new BadRequestException(
         `Файл ${contentName} слишком большой: ${file.length} байт (максимум ${MAX_SKIN_BYTES})`,
       );
     }
 
-    const hasPngSignature =
-      file.length >= PNG_SIGNATURE.length &&
-      PNG_SIGNATURE.every((byte, index) => file[index] === byte);
-    if (!hasPngSignature) {
-      throw new BadRequestException(`Невалидный файл ${contentName}: отсутствует PNG-сигнатура`);
+    try {
+      validatePngStructure(file);
+    } catch (error) {
+      if (!(error instanceof PngStructureError)) throw error;
+      throw new BadRequestException(`Невалидный файл ${contentName}: ${error.message}`);
+    }
+  }
+
+  private validateModelFile(file: Uint8Array): void {
+    if (file.length === 0) {
+      throw new BadRequestException("Файл модели пустой");
+    }
+    if (file.length > MAX_MODEL_BYTES) {
+      throw new BadRequestException(
+        `Файл модели слишком большой: ${file.length} байт (максимум ${MAX_MODEL_BYTES})`,
+      );
+    }
+
+    try {
+      new TextDecoder("utf-8", { fatal: true }).decode(file);
+    } catch {
+      throw new BadRequestException("Файл модели должен быть текстом в кодировке UTF-8");
+    }
+
+    if (hasBinaryBytes(file)) {
+      throw new BadRequestException("Файл модели содержит недопустимые символы");
     }
   }
 
@@ -231,9 +293,30 @@ export class UserContentService {
       throw new BadRequestException("Нельзя удалить дефолтный скин");
     }
 
-    await this.store.deleteById(id, type);
+    const removed = await this.store.deleteByIdAndCountRemaining(id, type);
+    if (!removed) return;
+
+    const profileRefs = this.profileStore
+      ? await this.profileStore.countProfilesByTextureUrl(item.filePath)
+      : 0;
 
     await this.syncProfileAfterDelete(ownerUuid, type);
+
+    if (removed.remainingCount > 0) {
+      this.logger.debug(
+        { id, type, remainingCount: removed.remainingCount },
+        "Файл контента ещё используется другими записями",
+      );
+      return;
+    }
+
+    if (profileRefs > 0) {
+      this.logger.debug(
+        { id, type, profileRefs },
+        "Файл контента ещё используется профилями Yggdrasil",
+      );
+      return;
+    }
 
     const localPath = `public/${item.filePath.replace(`${this.config.BASE_URL}/`, "")}`;
     try {

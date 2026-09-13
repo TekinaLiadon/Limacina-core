@@ -75,6 +75,11 @@ describe("Сообщения валидации DTO на русском", () => 
     expect(errors).toEqual(["password: максимум 128 символов"]);
   });
 
+  it("AuthDto: длинный username (TASK-11)", () => {
+    const errors = validate(AuthDto, { username: "a".repeat(65), password: "secret123" });
+    expect(errors).toEqual(["username: максимум 64 символов"]);
+  });
+
   it("ChangePasswordDto: границы длины пароля", () => {
     const errors = validate(ChangePasswordDto, { old_password: "1", new_password: "2" });
     expect(errors).toContain("old_password: минимум 6 символов");
@@ -180,10 +185,15 @@ describe("Сообщения валидации DTO на русском", () => 
     const errors = validate(InitOwnerDto, { username: "", password: "123" });
     expect(errors).toContain("username: не должно быть пустым");
     expect(errors).toContain("password: минимум 6 символов");
+    expect(errors).toContain("token: ожидается строка");
   });
 
   it("InitOwnerDto: длинный пароль", () => {
-    const errors = validate(InitOwnerDto, { username: "owner", password: "p".repeat(129) });
+    const errors = validate(InitOwnerDto, {
+      username: "owner",
+      password: "p".repeat(129),
+      token: "t",
+    });
     expect(errors).toEqual(["password: максимум 128 символов"]);
   });
 

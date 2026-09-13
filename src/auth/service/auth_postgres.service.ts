@@ -5,9 +5,11 @@ import {
   updateQuery,
   deleteQuery,
   execute,
+  executeInTransaction,
   TABLES,
 } from "../../utils/sql";
 import type { IAuthStore, StoredUser, RefreshEntry } from "./auth_store.service";
+import { MAX_REFRESH_TOKENS_PER_USER } from "../token.constants";
 
 interface UserRow extends Record<string, unknown> {
   uuid: string;
@@ -16,6 +18,7 @@ interface UserRow extends Record<string, unknown> {
   role: string;
   approved: boolean;
   banned: boolean;
+  password_changed_at: Date | null;
 }
 
 interface RefreshRow extends Record<string, unknown> {
@@ -24,12 +27,29 @@ interface RefreshRow extends Record<string, unknown> {
   username: string;
 }
 
+const PG_UNIQUE_VIOLATION_CODE = "23505";
+
+function isUniqueViolation(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const { code, errno } = error as { code?: unknown; errno?: unknown };
+  return code === PG_UNIQUE_VIOLATION_CODE || errno === PG_UNIQUE_VIOLATION_CODE;
+}
+
 @Injectable()
 export class AuthPostgresStore implements IAuthStore {
   async findByUsername(username: string): Promise<StoredUser | undefined> {
-    const query = selectQuery("uuid", "username", "password_hash", "role", "approved", "banned")
+    const query = selectQuery(
+      "uuid",
+      "username",
+      "password_hash",
+      "role",
+      "approved",
+      "banned",
+      "password_changed_at",
+    )
       .from(TABLES.users)
       .where("username = $1", username)
+      .where("deleted = false")
       .build();
 
     const { rows } = await execute<UserRow>(query.sql, query.values);
@@ -43,19 +63,31 @@ export class AuthPostgresStore implements IAuthStore {
       role: row.role,
       approved: row.approved,
       banned: row.banned,
+      passwordChangedAt: row.password_changed_at ?? undefined,
     };
   }
 
   async saveUser(user: StoredUser): Promise<boolean> {
-    const insertSql = `INSERT INTO ${TABLES.users} (uuid, username, password_hash)
-      VALUES ($1, $2, $3)
-      ON CONFLICT (username) DO NOTHING
+    const insertSql = `INSERT INTO ${TABLES.users} (uuid, username, password_hash, role, approved, banned, password_changed_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (username) WHERE NOT deleted DO NOTHING
       RETURNING uuid`;
-    const { rows } = await execute<{ uuid: string }>(insertSql, [
-      user.uuid,
-      user.username,
-      user.passwordHash,
-    ]);
+    let rows: { uuid: string }[];
+    try {
+      const { rows: inserted } = await execute<{ uuid: string }>(insertSql, [
+        user.uuid,
+        user.username,
+        user.passwordHash,
+        user.role,
+        user.approved,
+        user.banned,
+        user.passwordChangedAt ?? null,
+      ]);
+      rows = inserted;
+    } catch (error) {
+      if (isUniqueViolation(error)) return false;
+      throw error;
+    }
     if (rows.length > 0) return true;
 
     const username = await this.findUsernameByUuid(user.uuid);
@@ -71,16 +103,30 @@ export class AuthPostgresStore implements IAuthStore {
   }
 
   private async findUsernameByUuid(uuid: string): Promise<string | undefined> {
-    const query = selectQuery("username").from(TABLES.users).where("uuid = $1", uuid).build();
+    const query = selectQuery("username")
+      .from(TABLES.users)
+      .where("uuid = $1", uuid)
+      .where("deleted = false")
+      .build();
 
     const { rows } = await execute<{ username: string }>(query.sql, query.values);
     return rows[0]?.username;
   }
 
-  async approveUser(uuid: string): Promise<void> {
+  async setApproved(uuid: string, approved: boolean): Promise<void> {
     const query = updateQuery()
       .from(TABLES.users)
-      .set("approved", true)
+      .set("approved", approved)
+      .where("uuid = $1", uuid)
+      .build();
+
+    await execute(query.sql, query.values);
+  }
+
+  async setBanned(uuid: string, banned: boolean): Promise<void> {
+    const query = updateQuery()
+      .from(TABLES.users)
+      .set("banned", banned)
       .where("uuid = $1", uuid)
       .build();
 
@@ -88,21 +134,26 @@ export class AuthPostgresStore implements IAuthStore {
   }
 
   async userExists(username: string): Promise<boolean> {
-    const query = selectQuery("1").from(TABLES.users).where("username = $1", username).build();
+    const query = selectQuery("1")
+      .from(TABLES.users)
+      .where("lower(username) = lower($1)", username)
+      .where("deleted = false")
+      .build();
 
     const { rows } = await execute<UserRow>(query.sql, query.values);
     return rows.length > 0;
   }
 
-  async updatePasswordHash(uuid: string, passwordHash: string, changedAt: Date): Promise<void> {
-    const query = updateQuery()
-      .from(TABLES.users)
-      .set("password_hash", passwordHash)
-      .set("password_changed_at", changedAt)
-      .where("uuid = $1", uuid)
-      .build();
-
-    await execute(query.sql, query.values);
+  async replacePassword(uuid: string, passwordHash: string, changedAt: Date): Promise<void> {
+    await executeInTransaction([
+      updateQuery()
+        .from(TABLES.users)
+        .set("password_hash", passwordHash)
+        .set("password_changed_at", changedAt)
+        .where("uuid = $1", uuid)
+        .build(),
+      deleteQuery().from(TABLES.refresh_tokens).where("user_id = $1", uuid).build(),
+    ]);
   }
 
   async updateRole(uuid: string, role: string): Promise<void> {
@@ -115,19 +166,62 @@ export class AuthPostgresStore implements IAuthStore {
     await execute(query.sql, query.values);
   }
 
-  async saveRefresh(jti: string, entry: RefreshEntry): Promise<void> {
-    const query = insertQuery("jti", "user_id", "username")
-      .from(TABLES.refresh_tokens)
-      .values(jti, entry.userId, entry.username)
+  async deleteUser(uuid: string): Promise<void> {
+    const query = updateQuery()
+      .from(TABLES.users)
+      .set("deleted", true)
+      .set("deleted_at", new Date())
+      .where("uuid = $1 AND deleted = false", uuid)
       .build();
 
     await execute(query.sql, query.values);
+  }
+
+  async restoreUser(uuid: string): Promise<void> {
+    const query = updateQuery()
+      .from(TABLES.users)
+      .set("deleted", false)
+      .set("deleted_at", null)
+      .where("uuid = $1 AND deleted = true", uuid)
+      .build();
+
+    await execute(query.sql, query.values);
+  }
+
+  async saveRefresh(jti: string, entry: RefreshEntry, expiresAt: Date): Promise<void> {
+    await executeInTransaction([
+      insertQuery("jti", "user_id", "username", "expires_at")
+        .from(TABLES.refresh_tokens)
+        .values(jti, entry.userId, entry.username, expiresAt)
+        .build(),
+      deleteQuery().from(TABLES.refresh_tokens).where("expires_at <= now()").build(),
+      deleteQuery()
+        .from(TABLES.refresh_tokens)
+        .where(
+          "user_id = $1 AND jti NOT IN (SELECT jti FROM refresh_tokens WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2)",
+          entry.userId,
+          MAX_REFRESH_TOKENS_PER_USER,
+        )
+        .build(),
+    ]);
+  }
+
+  async claimRefresh(jti: string): Promise<RefreshEntry | undefined> {
+    const { rows } = await execute<{ user_id: string; username: string }>(
+      `DELETE FROM ${TABLES.refresh_tokens} WHERE jti = $1 AND expires_at > now() RETURNING user_id, username`,
+      [jti],
+    );
+    const [row] = rows;
+    if (!row) return undefined;
+
+    return { userId: row.user_id, username: row.username };
   }
 
   async findRefresh(jti: string): Promise<RefreshEntry | undefined> {
     const query = selectQuery("user_id", "username")
       .from(TABLES.refresh_tokens)
       .where("jti = $1", jti)
+      .where("expires_at > now()")
       .build();
 
     const { rows } = await execute<RefreshRow>(query.sql, query.values);

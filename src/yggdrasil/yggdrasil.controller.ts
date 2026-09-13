@@ -1,18 +1,20 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Delete,
   Get,
   Headers,
   HttpCode,
   HttpStatus,
-  NotFoundException,
   Param,
   ParseEnumPipe,
   Post,
   Put,
   Query,
+  Res,
 } from "@nestjs/common";
+import type { FastifyReply } from "fastify";
 import {
   ApiBody,
   ApiOperation,
@@ -23,6 +25,7 @@ import {
   ApiTags,
 } from "@nestjs/swagger";
 import { Public } from "../common/public.decorator";
+import { BatchProfilesPipe } from "./batch-profiles.pipe";
 import { YggdrasilService } from "./service/yggdrasil.service";
 import {
   AuthenticateDto,
@@ -33,6 +36,7 @@ import {
   InvalidateDto,
   SignoutDto,
   JoinDto,
+  HasJoinedQueryDto,
   YggdrasilErrorDto,
   SessionProfileDto,
   ApiMetadataResponseDto,
@@ -49,23 +53,25 @@ export class YggdrasilController {
   @Get()
   @ApiOperation({ summary: "API metadata for authlib-injector auto-configuration" })
   @ApiResponse({ status: 200, type: ApiMetadataResponseDto })
-  getMetadata() {
+  getMetadata(): ApiMetadataResponseDto {
     return this.yggdrasilService.getMetadata();
   }
 
   @Post("authserver/authenticate")
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Login with credentials" })
   @ApiBody({ type: AuthenticateDto })
-  @ApiResponse({ status: 201, type: AuthenticateResponseDto })
+  @ApiResponse({ status: 200, type: AuthenticateResponseDto })
   @ApiResponse({ status: 403, type: YggdrasilErrorDto })
   async postAuthenticate(@Body() dto: AuthenticateDto): Promise<AuthenticateResponseDto> {
     return this.yggdrasilService.authenticate(dto);
   }
 
   @Post("authserver/refresh")
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Refresh token" })
   @ApiBody({ type: RefreshDto })
-  @ApiResponse({ status: 201, type: RefreshResponseDto })
+  @ApiResponse({ status: 200, type: RefreshResponseDto })
   @ApiResponse({ status: 403, type: YggdrasilErrorDto })
   async postRefresh(@Body() dto: RefreshDto): Promise<RefreshResponseDto> {
     return this.yggdrasilService.refresh(dto);
@@ -113,19 +119,18 @@ export class YggdrasilController {
 
   @Get("sessionserver/session/minecraft/hasJoined")
   @ApiOperation({ summary: "Server verifies client session" })
-  @ApiQuery({ name: "username" })
-  @ApiQuery({ name: "serverId" })
-  @ApiQuery({ name: "ip", required: false })
+  @ApiQuery({ name: "username", required: true })
+  @ApiQuery({ name: "serverId", required: true })
   @ApiResponse({ status: 200, type: SessionProfileDto })
   @ApiResponse({ status: 204, description: "Session not found" })
   async getHasJoined(
-    @Query("username") username: string,
-    @Query("serverId") serverId: string,
-    @Query("ip") ip?: string,
-  ): Promise<SessionProfileDto> {
-    const profile = await this.yggdrasilService.hasJoined(username, serverId, ip);
+    @Query() query: HasJoinedQueryDto,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<SessionProfileDto | undefined> {
+    const profile = await this.yggdrasilService.hasJoined(query.username, query.serverId);
     if (!profile) {
-      throw new NotFoundException("Session not found");
+      reply.status(HttpStatus.NO_CONTENT).send();
+      return undefined;
     }
     return profile;
   }
@@ -133,22 +138,36 @@ export class YggdrasilController {
   @Get("sessionserver/session/minecraft/profile/:uuid")
   @ApiOperation({ summary: "Get player session profile" })
   @ApiParam({ name: "uuid", description: "Player UUID (with or without dashes)" })
-  @ApiQuery({ name: "unsigned", required: false })
+  @ApiQuery({
+    name: "unsigned",
+    required: false,
+    enum: ["true", "false"],
+    description: "false — вернуть текстуры с цифровой подписью; по умолчанию без подписи",
+  })
   @ApiResponse({ status: 200, type: SessionProfileDto })
   @ApiResponse({ status: 204, description: "Profile not found" })
-  async getProfile(@Param("uuid") uuid: string): Promise<SessionProfileDto> {
-    const profile = await this.yggdrasilService.getProfile(uuid);
+  async getProfile(
+    @Param("uuid") uuid: string,
+    @Query("unsigned", new DefaultValuePipe("true"), new ParseEnumPipe(["true", "false"]))
+    unsigned: "true" | "false",
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<SessionProfileDto | undefined> {
+    const profile = await this.yggdrasilService.getProfile(uuid, unsigned === "false");
     if (!profile) {
-      throw new NotFoundException("Profile not found");
+      reply.status(HttpStatus.NO_CONTENT).send();
+      return undefined;
     }
     return profile;
   }
 
   @Post("api/profiles/minecraft")
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Batch query profiles by name" })
   @ApiBody({ type: [String] })
   @ApiResponse({ status: 200, type: [GameProfileDto] })
-  async postBatchProfiles(@Body() names: string[]): Promise<GameProfileDto[]> {
+  async postBatchProfiles(
+    @Body(new BatchProfilesPipe()) names: string[],
+  ): Promise<GameProfileDto[]> {
     return this.yggdrasilService.batchProfiles(names);
   }
 

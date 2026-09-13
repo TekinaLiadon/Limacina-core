@@ -1,15 +1,22 @@
 import {
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   InternalServerErrorException,
   Logger,
+  Optional,
 } from "@nestjs/common";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { copyFile, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { AdminMapStoreToken, type IAdminStore } from "../admin/admin.store";
 import { AuthMapStoreToken, type IAuthStore } from "../auth/service/auth_store.service";
+import { AppConfigToken } from "../config/app-config.provider";
+import type { AppConfigType } from "../config/global-config";
 import { generateUuid } from "../utils/uuid";
 import type { RequestUser } from "../common/current-user.decorator";
-import type { InitOwnerResponseDto } from "./dto/dto";
+import type { InitOwnerResponseDto, RebuildStatusDto } from "./dto/dto";
 
 const SHUTDOWN_DELAY_MS = 300;
 const STEP_OUTPUT_LIMIT = 2000;
@@ -17,10 +24,57 @@ const GIT_PULL_TIMEOUT_MS = 120_000;
 const INSTALL_TIMEOUT_MS = 180_000;
 const MIGRATE_TIMEOUT_MS = 60_000;
 const BUILD_TIMEOUT_MS = 120_000;
+const KILL_GRACE_MS = 5_000;
+const BINARY_PATH = "dist/Limacina";
+const BINARY_BACKUP_PATH = "dist/Limacina.previous";
+const LOCKFILE_PATHS = ["bun.lockb", "bun.lock"];
+const BOOTSTRAP_TOKEN_FILE = "bootstrap.token";
+const BOOTSTRAP_TOKEN_BYTES = 32;
+
+export function buildStepEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const { SECRETS: _secrets, ...stepEnv } = env;
+  return { ...stepEnv, GIT_SSH_COMMAND: "ssh -o BatchMode=yes" };
+}
+
+const STEP_ENV = buildStepEnv();
 
 function truncateOutput(output: string): string {
   if (output.length <= STEP_OUTPUT_LIMIT) return output;
   return `${output.slice(0, STEP_OUTPUT_LIMIT)}…[обрезано]`;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function signalProcessGroup(proc: Bun.Subprocess, signal: "SIGTERM" | "SIGKILL"): void {
+  try {
+    process.kill(-proc.pid, signal);
+  } catch {
+    proc.kill(signal);
+  }
+}
+
+function processGroupAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function terminateProcessTree(proc: Bun.Subprocess, graceMs: number): Promise<void> {
+  signalProcessGroup(proc, "SIGTERM");
+  const deadline = Date.now() + graceMs;
+  while (Date.now() < deadline) {
+    if (!processGroupAlive(proc.pid)) {
+      return;
+    }
+    await Bun.sleep(100);
+  }
+  signalProcessGroup(proc, "SIGKILL");
 }
 
 export async function runStep(
@@ -28,18 +82,50 @@ export async function runStep(
   step: string,
   command: string[],
   timeoutMs: number,
+  killGraceMs = KILL_GRACE_MS,
 ): Promise<void> {
-  const proc = Bun.spawn(command, { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
-  const timeout = setTimeout(() => proc.kill(), timeoutMs);
+  let proc: Bun.Subprocess<Bun.SpawnOptions.Writable, "pipe", "pipe">;
+  try {
+    proc = Bun.spawn(command, {
+      cwd: process.cwd(),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: STEP_ENV,
+      detached: true,
+    });
+  } catch (error) {
+    logger.error(
+      { err: error, step, command: command.join(" ") },
+      `Шаг перезапуска не запущен: ${step}`,
+    );
+    throw new InternalServerErrorException(
+      `Пересборка не удалась на шаге ${step}: команда не запущена, перезапуск отменён`,
+    );
+  }
+
+  let escalation: Promise<void> | undefined;
+  const timeout = setTimeout(() => {
+    escalation = terminateProcessTree(proc, killGraceMs);
+  }, timeoutMs);
+
   try {
     const [exitCode, stdout, stderr] = await Promise.all([
       proc.exited,
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
     ]);
+    if (escalation) {
+      await escalation;
+    }
     if (exitCode !== 0) {
       logger.error(
-        { step, exitCode, stdout: truncateOutput(stdout), stderr: truncateOutput(stderr) },
+        {
+          step,
+          exitCode,
+          command: command.join(" "),
+          stdout: truncateOutput(stdout),
+          stderr: truncateOutput(stderr),
+        },
         `Шаг перезапуска не выполнен: ${step}`,
       );
       throw new InternalServerErrorException(
@@ -52,65 +138,174 @@ export async function runStep(
   }
 }
 
-export async function currentRevision(): Promise<string> {
-  const proc = Bun.spawn(["git", "rev-parse", "HEAD"], {
-    cwd: process.cwd(),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [exitCode, stdout] = await Promise.all([
-    proc.exited,
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  return exitCode === 0 ? stdout.trim() : "unknown";
+export async function currentRevision(
+  logger: Logger,
+  cwd: string = process.cwd(),
+): Promise<string> {
+  try {
+    const proc = Bun.spawn(["git", "rev-parse", "HEAD"], {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: STEP_ENV,
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    if (exitCode !== 0) {
+      logger.error(
+        { cwd, exitCode, stderr: truncateOutput(stderr) },
+        "Не удалось определить ревизию git",
+      );
+      return "unknown";
+    }
+    return stdout.trim();
+  } catch (error) {
+    logger.error({ err: error }, "Не удалось запустить git для определения ревизии");
+    return "unknown";
+  }
+}
+
+export function buildInstallCommand(frozenLockfile: boolean): string[] {
+  return frozenLockfile ? ["bun", "install", "--frozen-lockfile"] : ["bun", "install"];
 }
 
 @Injectable()
 export class TechnicalService {
   private readonly logger = new Logger(TechnicalService.name);
   private rebuildInProgress = false;
+  private shutdownScheduled = false;
+  private lastRebuildError: string | null = null;
+  private lastRebuildRevisions: { before: string | null; after: string | null } = {
+    before: null,
+    after: null,
+  };
+  private bootstrapToken: string | null = null;
 
   constructor(
     @Inject(AdminMapStoreToken) private readonly adminStore: IAdminStore,
     @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
+    @Inject(AppConfigToken) private readonly appConfig: AppConfigType,
+    @Optional() private readonly bootstrapTokenPath: string = join(
+      process.cwd(),
+      BOOTSTRAP_TOKEN_FILE,
+    ),
   ) {}
 
-  async restartServer(rebuild: boolean, actor: RequestUser): Promise<void> {
-    if (!rebuild) {
-      this.logger.log(
-        { actor: actor.username, actorRole: actor.role },
-        "Перезапуск сервера по запросу администратора",
-      );
-      this.scheduleShutdown();
-      return;
-    }
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      if (await this.adminStore.hasOwner()) {
+        await this.removeBootstrapTokenFile();
+        return;
+      }
 
+      const existing = await readFile(this.bootstrapTokenPath, "utf8").catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+          return null;
+        },
+      );
+      const stored = existing?.trim();
+      if (stored) {
+        this.bootstrapToken = stored;
+        this.logger.log({ path: this.bootstrapTokenPath }, "Bootstrap-токен загружен из файла");
+        return;
+      }
+
+      const token = randomBytes(BOOTSTRAP_TOKEN_BYTES).toString("hex");
+      await this.writeBootstrapTokenFile(token);
+      this.bootstrapToken = token;
+      process.stdout.write(
+        `Bootstrap-токен для создания владельца (${this.bootstrapTokenPath}):\n${token}\n`,
+      );
+      this.logger.log({ path: this.bootstrapTokenPath }, "Bootstrap-токен создан");
+    } catch (error) {
+      this.logger.error(
+        { err: error, path: this.bootstrapTokenPath },
+        "Bootstrap-токен владельца не создан, init-owner недоступен",
+      );
+    }
+  }
+
+  async restartServer(actor: RequestUser): Promise<void> {
+    if (!this.scheduleShutdown()) {
+      this.logger.warn(
+        { actor: actor.username },
+        "Повторный запрос перезапуска отклонён: остановка уже запланирована",
+      );
+      throw new ConflictException("Перезапуск уже запланирован");
+    }
+    this.logger.log(
+      { actor: actor.username, actorRole: actor.role },
+      "Перезапуск сервера по запросу администратора",
+    );
+  }
+
+  startRebuild(actor: RequestUser): void {
     if (this.rebuildInProgress) {
       this.logger.error({ actor: actor.username }, "Отказ: пересборка уже выполняется");
       throw new ConflictException("Пересборка уже выполняется");
     }
     this.rebuildInProgress = true;
+    this.lastRebuildError = null;
+    this.lastRebuildRevisions = { before: null, after: null };
 
     this.logger.log(
       { actor: actor.username, actorRole: actor.role },
       "Пересборка и перезапуск сервера по запросу администратора",
     );
+    void this.executeRebuildPipeline(actor);
+  }
 
+  getRebuildStatus(): RebuildStatusDto {
+    return {
+      inProgress: this.rebuildInProgress,
+      lastError: this.lastRebuildError,
+      revisionBefore: this.lastRebuildRevisions.before,
+      revisionAfter: this.lastRebuildRevisions.after,
+    };
+  }
+
+  private async executeRebuildPipeline(actor: RequestUser): Promise<void> {
     try {
-      await this.gitPull();
+      const revisions = await this.gitPull();
+      this.lastRebuildRevisions = revisions;
+      this.verifyPinnedRevision(revisions.after);
       await this.installDependencies();
       await this.runMigrations();
       await this.buildBinary();
     } catch (error) {
       this.rebuildInProgress = false;
-      throw error;
+      this.lastRebuildError = errorMessage(error);
+      this.logger.error(
+        { actor: actor.username, err: error },
+        "Конвейер пересборки прерван, перезапуск отменён",
+      );
+      return;
     }
-
+    this.lastRebuildError = null;
     this.scheduleShutdown();
   }
 
-  scheduleShutdown(): void {
+  private verifyPinnedRevision(revision: string): void {
+    const pinned = this.appConfig.DEPLOY_PINNED_REVISION;
+    if (pinned === undefined || revision === pinned) {
+      return;
+    }
+    this.logger.error(
+      { actual: revision, expected: pinned },
+      "Ревизия после git pull не совпадает с закреплённой",
+    );
+    throw new InternalServerErrorException(
+      "Пересборка не удалась: ревизия не совпадает с DEPLOY_PINNED_REVISION, перезапуск отменён",
+    );
+  }
+
+  scheduleShutdown(): boolean {
+    if (this.shutdownScheduled) return false;
+    this.shutdownScheduled = true;
     setTimeout(() => {
       try {
         this.sendShutdownSignal();
@@ -118,23 +313,41 @@ export class TechnicalService {
         this.logger.error({ err: error }, "Сигнал остановки не отправлен, принудительный выход");
         process.exit(1);
       }
+      this.shutdownScheduled = false;
       this.rebuildInProgress = false;
     }, SHUTDOWN_DELAY_MS);
+    return true;
   }
 
   sendShutdownSignal(): void {
     process.kill(process.pid, "SIGTERM");
   }
 
-  async gitPull(): Promise<void> {
-    const revisionBefore = await currentRevision();
+  async gitPull(): Promise<{ before: string; after: string }> {
+    const revisionBefore = await currentRevision(this.logger);
     await runStep(this.logger, "git pull", ["git", "pull", "--ff-only"], GIT_PULL_TIMEOUT_MS);
-    const revisionAfter = await currentRevision();
+    const revisionAfter = await currentRevision(this.logger);
     this.logger.log({ revisionBefore, revisionAfter }, "Исходники обновлены");
+    return { before: revisionBefore, after: revisionAfter };
   }
 
   async installDependencies(): Promise<void> {
-    await runStep(this.logger, "bun install", ["bun", "install"], INSTALL_TIMEOUT_MS);
+    const frozenLockfile = await this.hasLockfile();
+    await runStep(
+      this.logger,
+      "bun install",
+      buildInstallCommand(frozenLockfile),
+      INSTALL_TIMEOUT_MS,
+    );
+  }
+
+  private async hasLockfile(): Promise<boolean> {
+    for (const lockfilePath of LOCKFILE_PATHS) {
+      if (await Bun.file(lockfilePath).exists()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async runMigrations(): Promise<void> {
@@ -142,14 +355,123 @@ export class TechnicalService {
   }
 
   async buildBinary(): Promise<void> {
+    await this.backupBinary();
+    try {
+      await this.runBuildStep();
+    } catch (error) {
+      await this.restoreBinary();
+      throw error;
+    }
+  }
+
+  async runBuildStep(): Promise<void> {
     await runStep(this.logger, "build", ["bun", "run", "build"], BUILD_TIMEOUT_MS);
   }
 
-  async initOwner(username: string, password: string): Promise<InitOwnerResponseDto> {
+  async backupBinary(
+    binaryPath: string = BINARY_PATH,
+    backupPath: string = BINARY_BACKUP_PATH,
+  ): Promise<void> {
+    if (!(await Bun.file(binaryPath).exists())) {
+      this.logger.log({ binaryPath }, "Бинарник отсутствует, резервная копия не создана");
+      return;
+    }
+    try {
+      await copyFile(binaryPath, backupPath);
+    } catch (error) {
+      this.logger.error(
+        { err: error, binaryPath, backupPath },
+        "Резервная копия бинарника не создана",
+      );
+      throw new InternalServerErrorException(
+        "Пересборка не удалась: не создана резервная копия бинарника, перезапуск отменён",
+      );
+    }
+  }
+
+  async restoreBinary(
+    binaryPath: string = BINARY_PATH,
+    backupPath: string = BINARY_BACKUP_PATH,
+  ): Promise<void> {
+    try {
+      if (!(await Bun.file(backupPath).exists())) {
+        this.logger.error(
+          { binaryPath, backupPath },
+          "Резервная копия бинарника не найдена, откат не выполнен",
+        );
+        return;
+      }
+      await copyFile(backupPath, binaryPath);
+      this.logger.error(
+        { binaryPath, backupPath },
+        "Бинарник восстановлен из резервной копии после неудачной сборки",
+      );
+    } catch (error) {
+      this.logger.error({ err: error, binaryPath, backupPath }, "Откат бинарника не выполнен");
+    }
+  }
+
+  async initOwner(
+    username: string,
+    password: string,
+    token: string,
+  ): Promise<InitOwnerResponseDto> {
     if (await this.adminStore.hasOwner()) {
       throw new ConflictException("Владелец уже создан");
     }
 
+    const expected = this.bootstrapToken;
+    if (expected === null) {
+      throw new ForbiddenException("Токен инициализации владельца недоступен");
+    }
+    if (!this.matchesBootstrapToken(token, expected)) {
+      throw new ForbiddenException("Неверный токен инициализации владельца");
+    }
+    this.bootstrapToken = null;
+
+    try {
+      const response = await this.saveOwner(username, password);
+      await this.removeBootstrapTokenFile();
+      this.logger.log({ username }, "Владелец создан");
+      return response;
+    } catch (error) {
+      this.bootstrapToken = expected;
+      throw error;
+    }
+  }
+
+  private matchesBootstrapToken(provided: string, expected: string): boolean {
+    const providedBytes = Buffer.from(provided, "utf8");
+    const expectedBytes = Buffer.from(expected, "utf8");
+    return (
+      providedBytes.length === expectedBytes.length && timingSafeEqual(providedBytes, expectedBytes)
+    );
+  }
+
+  private async writeBootstrapTokenFile(token: string): Promise<void> {
+    const tmpPath = `${this.bootstrapTokenPath}.tmp`;
+    try {
+      await writeFile(tmpPath, token, { mode: 0o600 });
+      await rename(tmpPath, this.bootstrapTokenPath);
+    } finally {
+      await unlink(tmpPath).catch(() => undefined);
+    }
+  }
+
+  private async removeBootstrapTokenFile(): Promise<void> {
+    try {
+      await unlink(this.bootstrapTokenPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        this.logger.error(
+          { err: error, path: this.bootstrapTokenPath },
+          "Не удалось удалить файл bootstrap-токена",
+        );
+      }
+    }
+  }
+
+  private async saveOwner(username: string, password: string): Promise<InitOwnerResponseDto> {
     if (await this.authStore.userExists(username)) {
       throw new ConflictException("Юзернейм уже занят");
     }
@@ -169,15 +491,18 @@ export class TechnicalService {
       throw new ConflictException("Юзернейм уже занят");
     }
 
-    await this.adminStore.saveUser({
-      uuid,
-      username,
-      role: "owner",
-      approved: true,
-      banned: false,
-    });
-
-    this.logger.log({ username }, "Владелец создан");
+    try {
+      await this.adminStore.saveUser({
+        uuid,
+        username,
+        role: "owner",
+        approved: true,
+        banned: false,
+      });
+    } catch (error) {
+      await this.authStore.deleteUser(uuid).catch(() => undefined);
+      throw error;
+    }
 
     return { uuid, username };
   }

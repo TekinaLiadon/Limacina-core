@@ -1,5 +1,10 @@
-import { Injectable } from "@nestjs/common";
-import { DEFAULT_CACHE_TTL_MS, MAX_CACHE_ENTRIES, type ICacheStore } from "../cache/cache.store";
+import { Injectable, Logger } from "@nestjs/common";
+import {
+  DEFAULT_CACHE_TTL_MS,
+  MAX_CACHE_ENTRIES,
+  isValidCacheTtl,
+  type ICacheStore,
+} from "../cache/cache.store";
 import type { CacheEntryRecord, MemoryDb } from "./memory-db";
 
 function entryExpired(entry: CacheEntryRecord): boolean {
@@ -8,6 +13,8 @@ function entryExpired(entry: CacheEntryRecord): boolean {
 
 @Injectable()
 export class CacheMapStore implements ICacheStore {
+  private readonly logger = new Logger(CacheMapStore.name);
+
   constructor(
     private readonly db: MemoryDb,
     private readonly maxEntries: number = MAX_CACHE_ENTRIES,
@@ -23,16 +30,40 @@ export class CacheMapStore implements ICacheStore {
     }
 
     this.touchEntry(key, entry);
-    return JSON.parse(entry.value) as T;
+    try {
+      return JSON.parse(entry.value) as T;
+    } catch {
+      this.db.cacheEntries.delete(key);
+      this.logger.error({ key }, "Повреждённое значение в кеш-сторе, ключ удалён");
+      return undefined;
+    }
   }
 
   async set<T>(key: string, value: T, ttlMs?: number): Promise<void> {
+    let payload: string;
+    try {
+      payload = JSON.stringify(value);
+    } catch (error) {
+      this.logger.error({ err: error, key }, "Несериализуемое значение не сохранено в кеш");
+      return;
+    }
+
+    if (payload === undefined) {
+      this.logger.error({ key }, "Несериализуемое значение не сохранено в кеш");
+      return;
+    }
+
+    if (!isValidCacheTtl(ttlMs)) {
+      this.logger.error({ key, ttlMs }, "Невалидный ttl, значение не сохранено в кеш");
+      return;
+    }
+
     if (!this.db.cacheEntries.has(key)) {
       this.evictFilledSlots();
     }
 
     const entry: CacheEntryRecord = {
-      value: JSON.stringify(value),
+      value: payload,
       expiresAt: Date.now() + (ttlMs ?? DEFAULT_CACHE_TTL_MS),
     };
     this.touchEntry(key, entry);

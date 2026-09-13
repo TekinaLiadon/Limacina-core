@@ -42,4 +42,34 @@ describe("extractStatusJson", () => {
 
     expect(() => extractStatusJson(payload)).toThrow();
   });
+
+  it("подставляет unknown, если имя версии не строка", () => {
+    const payload = new TextEncoder().encode(
+      JSON.stringify({ version: { name: 12345 }, players: { max: 5, online: 1 } }),
+    );
+
+    const result = extractStatusJson(payload);
+
+    expect(result.version).toBe("unknown");
+  });
+
+  it("отклоняет отрицательный players.online", () => {
+    const payload = new TextEncoder().encode(JSON.stringify({ players: { max: 20, online: -3 } }));
+
+    expect(() => extractStatusJson(payload)).toThrow("Invalid players.online value");
+  });
+
+  it("отклоняет дробный players.max", () => {
+    const payload = new TextEncoder().encode(JSON.stringify({ players: { max: 20.5, online: 1 } }));
+
+    expect(() => extractStatusJson(payload)).toThrow("Invalid players.max value");
+  });
+
+  it("отклоняет players.online больше 2^31-1", () => {
+    const payload = new TextEncoder().encode(
+      JSON.stringify({ players: { max: 20, online: 2_147_483_648 } }),
+    );
+
+    expect(() => extractStatusJson(payload)).toThrow("Invalid players.online value");
+  });
 });
