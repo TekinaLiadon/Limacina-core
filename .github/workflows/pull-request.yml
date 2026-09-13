@@ -18,7 +18,6 @@ jobs:
       - name: Setup bun
         uses: oven-sh/setup-bun@v2
       - name: Install dependencies
-        # локфайла в репо нет (npm'овский package-lock удалён — bun резолвил по нему старые уязвимые версии) — каждый запуск резолвит версии заново
         run: bun install
 
       - name: Check types
@@ -45,7 +44,6 @@ jobs:
         run: bun audit --only-prod
 
       - name: Tests
-        # check-all обещает coverage:gate и test:randomize, но тут их нет; миграционные тесты (test:migrate) ci не гоняет вообще
         run: bun test
         env:
           JWT_ACCESS: ${{ secrets.JWT_ACCESS }}
