@@ -1,5 +1,11 @@
-import { describe, expect, it } from "bun:test";
-import { HttpException, HttpStatus, type ArgumentsHost } from "@nestjs/common";
+import { describe, expect, it, spyOn } from "bun:test";
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  InternalServerErrorException,
+  type ArgumentsHost,
+} from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { AllExceptionsFilter } from "../all-exceptions.filter";
 
@@ -134,7 +140,58 @@ describe("AllExceptionsFilter", () => {
     expect(state.statusCode).toBeUndefined();
     expect(state.body).toBeUndefined();
   });
+
+  it("логирует HttpException со статусом 5xx и отдаёт её клиенту", () => {
+    const { reply, state } = createReplyMock();
+    const errorSpy = spyOn(filterLogger(filter), "error");
+    filter.catch(new InternalServerErrorException("db exploded"), createHostMock(reply));
+
+    expect(state.statusCode).toBe(500);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
+  });
+
+  it("не логирует 4xx HttpException", () => {
+    const { reply, state } = createReplyMock();
+    const errorSpy = spyOn(filterLogger(filter), "error");
+    filter.catch(new BadRequestException("невалидный запрос"), createHostMock(reply));
+
+    expect(state.statusCode).toBe(400);
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("логирует не-Http ошибку со statusCode 5xx на error", () => {
+    const { reply, state } = createReplyMock();
+    const errorSpy = spyOn(filterLogger(filter), "error");
+    const exception = Object.assign(new Error("driver internal details"), { statusCode: 503 });
+
+    filter.catch(exception, createHostMock(reply));
+
+    expect(state.statusCode).toBe(503);
+    expect(state.body).toEqual({ statusCode: 503, message: "Internal Server Error" });
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
+  });
+
+  it("не логирует не-Http 4xx ошибку", () => {
+    const { reply, state } = createReplyMock();
+    const errorSpy = spyOn(filterLogger(filter), "error");
+    const exception = Object.assign(new Error("the request is not multipart"), {
+      statusCode: 406,
+    });
+
+    filter.catch(exception, createHostMock(reply));
+
+    expect(state.statusCode).toBe(406);
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });
+
+function filterLogger(filter: AllExceptionsFilter): { error: (...args: unknown[]) => void } {
+  return (filter as unknown as { logger: { error: (...args: unknown[]) => void } }).logger;
+}
 
 class BadRequestBodyException extends HttpException {
   constructor() {

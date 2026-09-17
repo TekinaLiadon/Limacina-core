@@ -1,4 +1,5 @@
 import { setupTestEnv } from "../../utils/tests/test-env";
+import { applyV1ApiPrefix } from "../../utils/tests/v1-prefix";
 
 setupTestEnv();
 
@@ -10,39 +11,12 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
 import { V1StatusController } from "../../v1/common/status/status.controller";
 import { MinecraftStatusService, STATUS_CACHE_KEY } from "../minecraft-status.service";
-import { writeVarInt } from "../minecraft-slp";
-import { CacheStoreToken, type ICacheStore } from "../../cache/cache.store";
-import { CacheMapStore } from "../../memory/cache-map.store";
+import { buildStatusResponse } from "./status-packet";
+import { CacheStoreToken, type ICacheStore } from "../../cache/cache_store";
+import { CacheMapStore } from "../../memory/cache_map_store";
 import { MemoryDb } from "../../memory/memory-db";
 import GlobalConfig from "../../config/global-config";
 import { AppConfigToken } from "../../config/app-config.provider";
-
-function concatBytes(...parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((sum, part) => sum + part.length, 0);
-  const merged = new Uint8Array(total);
-  let cursor = 0;
-  for (const part of parts) {
-    merged.set(part, cursor);
-    cursor += part.length;
-  }
-  return merged;
-}
-
-const TEST_STATUS = {
-  version: { name: "1.21.4", protocol: 769 },
-  players: { max: 20, online: 7 },
-  description: { text: "Limacina test" },
-};
-
-function buildStatusResponse(status: object): Uint8Array {
-  const json = JSON.stringify(status);
-  const body = concatBytes(
-    Uint8Array.from([0]),
-    writeVarInt(json.length),
-    new TextEncoder().encode(json),
-  );
-  return concatBytes(writeVarInt(body.length), body);
-}
 
 interface FakeMinecraftServer {
   server: Server;
@@ -95,10 +69,17 @@ async function createStatusApp(): Promise<INestApplication> {
   }).compile();
 
   const statusApp = moduleFixture.createNestApplication(new FastifyAdapter());
+  applyV1ApiPrefix(statusApp);
   await statusApp.init();
   await statusApp.getHttpAdapter().getInstance().ready();
   return statusApp;
 }
+
+const TEST_STATUS = {
+  version: { name: "1.21.4", protocol: 769 },
+  players: { max: 20, online: 7 },
+  description: { text: "Limacina test" },
+};
 
 describe("V1 common/status эндпоинт — SLP-пинг игрового сервера", (): void => {
   let app: INestApplication;
@@ -183,7 +164,7 @@ describe("V1 common/status эндпоинт — SLP-пинг игрового с
           .get("/v1/common/status")
           .expect(503);
 
-        expect(res.body.message).toContain("MINECRAFT_HOST");
+        expect(res.body.message).toContain("MINECRAFT_HOST не задан");
       } finally {
         await unconfiguredApp.close();
       }
@@ -197,7 +178,7 @@ describe("V1 common/status эндпоинт — SLP-пинг игрового с
           .get("/v1/common/status")
           .expect(503);
 
-        expect(res.body.message).toContain("MINECRAFT_HOST");
+        expect(res.body.message).toContain("Некорректный MINECRAFT_HOST");
       } finally {
         await invalidPortApp.close();
       }

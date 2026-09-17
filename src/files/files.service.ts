@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { open, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
@@ -12,6 +13,7 @@ import {
 import type { FastifyReply } from "fastify";
 import { watch, type FSWatcher } from "chokidar";
 import { FileDto } from "./dto/dto";
+import { isMissingFileError } from "../utils/fs";
 
 const LAUNCHER_DIR = "public/launcher";
 
@@ -180,21 +182,53 @@ export class FilesService implements OnModuleDestroy {
       throw new NotFoundException(`Файл не найден: ${fileInfo.url}`);
     }
 
-    const file = Bun.file(filePath);
+    let handle: FileHandle;
+    try {
+      handle = await open(filePath, "r");
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        throw new NotFoundException(`Файл не найден: ${fileInfo.url}`);
+      }
+      throw error;
+    }
+
+    let closed = false;
+    const closeHandle = (): void => {
+      if (closed) return;
+      closed = true;
+      void handle
+        .close()
+        .catch((closeError: unknown) =>
+          this.logger.error(
+            { err: closeError, file: fileInfo.url },
+            "Не удалось закрыть файл лаунчера",
+          ),
+        );
+    };
+
     const encodedFilename = encodeURIComponent(fileInfo.url)
       .replace(/'/g, "%27")
       .replace(/\(/g, "%28")
       .replace(/\)/g, "%29")
       .replace(/\*/g, "%2A");
 
-    reply.header("Content-Type", "application/octet-stream");
-    reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodedFilename}`);
-    reply.header("Content-Length", (await file.size).toString());
-    const fileStream = Readable.fromWeb(file.stream() as unknown as NodeWebReadableStream);
-    fileStream.on("error", (error: Error) => {
-      this.logger.error({ err: error, file: fileInfo.url }, "Ошибка отдачи файла лаунчера");
-    });
-    reply.send(fileStream);
+    try {
+      const { size } = await handle.stat();
+      reply.header("Content-Type", "application/octet-stream");
+      reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodedFilename}`);
+      reply.header("Content-Length", size.toString());
+      reply.raw.once("close", closeHandle);
+      const fileStream = Readable.fromWeb(
+        Bun.file(handle.fd).stream() as unknown as NodeWebReadableStream,
+      );
+      fileStream.on("error", (error: Error) => {
+        this.logger.error({ err: error, file: fileInfo.url }, "Ошибка отдачи файла лаунчера");
+      });
+      reply.send(fileStream);
+    } catch (error) {
+      closeHandle();
+      throw error;
+    }
   }
 
   private resolveLauncherPath(requestedUrl: string): string {

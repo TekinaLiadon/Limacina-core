@@ -5,7 +5,7 @@ import { validationMessages } from "../../common/validation-messages";
 
 export class FileDto {
   @ApiProperty()
-  @IsString()
+  @IsString({ message: validationMessages.string("url") })
   url!: string;
 }
 

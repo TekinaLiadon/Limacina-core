@@ -64,9 +64,20 @@ function captureReply(): CapturedReply {
 }
 
 describe("FilesService — watcher и стриминг", () => {
-  it("bootstrap индексирует файлы и создаёт папку лаунчера", () => {
-    expect(existsSync(LAUNCHER_DIR)).toBeTrue();
-    expect(files.launcherHash.has(FIXTURE_NAME)).toBeTrue();
+  it("bootstrap индексирует файлы и создаёт папку лаунчера", async () => {
+    const bootstrapName = "files-bootstrap-fixture.bin";
+    const bootstrapPath = join(LAUNCHER_DIR, bootstrapName);
+    writeFileSync(bootstrapPath, "bootstrap-content");
+    const service = new FilesService();
+
+    try {
+      await service.onApplicationBootstrap();
+      expect(existsSync(LAUNCHER_DIR)).toBeTrue();
+      expect(service.launcherHash.has(bootstrapName)).toBeTrue();
+    } finally {
+      service.onModuleDestroy();
+      rmSync(bootstrapPath, { force: true });
+    }
   });
 
   it("getHash отсутствующего файла отвечает null", async () => {
@@ -108,7 +119,7 @@ describe("FilesService — watcher и стриминг", () => {
 
   it("sendFile отдаёт поток с заголовками и переживает ошибку потока", async () => {
     writeFileSync(FIXTURE_PATH, "stream-body");
-    const { reply, headers, streams } = captureReply();
+    const { reply, headers, streams, raw } = captureReply();
     const fileInfo: FileDto = { url: FIXTURE_NAME };
 
     await files.sendFile(fileInfo, reply);
@@ -118,6 +129,7 @@ describe("FilesService — watcher и стриминг", () => {
     const [stream] = streams;
     expect(stream).toBeDefined();
     expect(stream?.emit("error", new Error("stream failed"))).toBeTrue();
+    raw.emit("close");
   });
 
   it("sendFile отклоняет путь вне папки лаунчера", async () => {

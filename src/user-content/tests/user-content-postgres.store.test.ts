@@ -5,7 +5,7 @@ import {
   ensurePostgresSchema,
   postgresDescribe,
 } from "../../utils/tests/postgres-suite";
-import { UserContentPostgresStore, isUserContentLimitExceededError } from "../user-content.store";
+import { UserContentPostgresStore, isUserContentLimitExceededError } from "../user_content_store";
 
 const store = new UserContentPostgresStore();
 
@@ -43,9 +43,6 @@ postgresDescribe("UserContentPostgresStore (postgres)", () => {
     expect(skins.map((item) => item.id)).toEqual([skin.id]);
     expect(capes.map((item) => item.id)).toEqual([cape.id]);
     expect(models.map((item) => item.id)).toEqual([model.id]);
-    expect(await store.countByUserUuid(user.uuid, "skin")).toBe(1);
-    expect(await store.countByUserUuid(user.uuid, "cape")).toBe(1);
-    expect(await store.countByUserUuid(user.uuid, "model")).toBe(1);
   });
 
   it("findById находит запись в своей таблице", async () => {
@@ -135,7 +132,7 @@ postgresDescribe("UserContentPostgresStore (postgres)", () => {
     const second = await store.saveWithinLimit(user.uuid, "capes/lim-2.png", "cape", 2);
     expect(second.filePath).toBe("capes/lim-2.png");
     expect(second.id).toBeGreaterThan(0);
-    expect(await store.countByUserUuid(user.uuid, "cape")).toBe(2);
+    expect((await store.findByUserUuid(user.uuid, "cape")).length).toBe(2);
 
     const skin = await store.saveWithinLimit(user.uuid, "skins/lim-skin.png", "skin", 2, "slim");
     expect(skin.skinModel).toBe("slim");
@@ -153,8 +150,8 @@ postgresDescribe("UserContentPostgresStore (postgres)", () => {
     );
     expect(isUserContentLimitExceededError(exceedSkin)).toBe(true);
 
-    expect(await store.countByUserUuid(user.uuid, "cape")).toBe(2);
-    expect(await store.countByUserUuid(user.uuid, "skin")).toBe(1);
+    expect((await store.findByUserUuid(user.uuid, "cape")).length).toBe(2);
+    expect((await store.findByUserUuid(user.uuid, "skin")).length).toBe(1);
   });
 
   it("saveWithinLimit отклоняет параллельные вставки сверх лимита", async () => {

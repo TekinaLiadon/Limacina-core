@@ -6,7 +6,7 @@ import { LauncherConfigDto } from "../../launcher/dto/dto";
 
 @ApiTags("launcher_config")
 @Public()
-@Controller("v1/launcher/config")
+@Controller("launcher/config")
 export class V1LauncherConfigController {
   constructor(private readonly launcherService: LauncherService) {}
 

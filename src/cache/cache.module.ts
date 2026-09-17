@@ -1,12 +1,12 @@
 import { Module } from "@nestjs/common";
 import { RedisClient } from "bun";
-import { CacheStoreToken, type ICacheStore } from "./cache.store";
-import { RedisCacheStore } from "./redis.store";
+import { CacheStoreToken, type ICacheStore } from "./cache_store";
+import { RedisCacheStore } from "./redis_store";
 import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 import { MemoryModule } from "../memory/memory.module";
 import { MemoryDb } from "../memory/memory-db";
-import { CacheMapStore } from "../memory/cache-map.store";
+import { CacheMapStore } from "../memory/cache_map_store";
 
 export const buildCachePrefix = (config: AppConfigType): string =>
   config.CACHE_PREFIX ?? `limacina:${config.NODE_ENV}`;

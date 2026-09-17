@@ -1,6 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
 import {
-  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -15,17 +14,10 @@ import {
 } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { validationMessages } from "../../common/validation-messages";
+import { MIN_PASSWORD_LENGTH } from "../../auth/password-policy";
 import { ASSIGNABLE_ROLES, type AssignableRole } from "../../common/roles";
 
 export const LOG_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
-export interface UserRow extends Record<string, unknown> {
-  uuid: string;
-  username: string;
-  role: string;
-  approved: boolean;
-  banned: boolean;
-}
 
 export class UsersSearchQueryDto {
   @ApiProperty({
@@ -122,10 +114,12 @@ export class SetUserPasswordDto {
   @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
   username!: string;
 
-  @ApiProperty({ example: "newsecret123", minLength: 6, maxLength: 128 })
+  @ApiProperty({ example: "newsecret123", minLength: MIN_PASSWORD_LENGTH, maxLength: 128 })
   @IsString({ message: validationMessages.string("password") })
   @IsNotEmpty({ message: validationMessages.notEmpty("password") })
-  @MinLength(6, { message: validationMessages.minLength("password", 6) })
+  @MinLength(MIN_PASSWORD_LENGTH, {
+    message: validationMessages.minLength("password", MIN_PASSWORD_LENGTH),
+  })
   @MaxLength(128, { message: validationMessages.maxLength("password", 128) })
   password!: string;
 }
@@ -295,45 +289,22 @@ export class LogsResponseDto {
   lines!: string[];
 }
 
-export class LauncherConfigUpdateDto {
-  @ApiProperty({ description: "Название проекта", example: "Cordelia" })
-  @IsString({ message: validationMessages.string("projectName") })
-  projectName!: string;
-
-  @ApiProperty({ description: "Версия Minecraft", example: "1.21.1" })
-  @IsString({ message: validationMessages.string("mcVersion") })
-  mcVersion!: string;
-
-  @ApiProperty({ description: "Тип загрузчика модов", example: "neoforge" })
-  @IsString({ message: validationMessages.string("modLoader") })
-  modLoader!: string;
-
-  @ApiProperty({ description: "Версия загрузчика", example: "21.1.234" })
-  @IsString({ message: validationMessages.string("loaderVersion") })
-  loaderVersion!: string;
-
-  @ApiProperty({ description: "Аргументы JVM", type: [String], example: [] })
-  @IsArray({ message: validationMessages.array("jvmArgs") })
-  @IsString({ each: true, message: validationMessages.arrayItemString("jvmArgs") })
-  jvmArgs!: string[];
-
-  @ApiProperty({ description: "Минимальный объём памяти", example: "-Xms512M" })
-  @IsString({ message: validationMessages.string("minMemory") })
-  minMemory!: string;
-
-  @ApiProperty({ description: "Максимальный объём памяти", example: "-Xmx2560M" })
-  @IsString({ message: validationMessages.string("maxMemory") })
-  maxMemory!: string;
-
-  @ApiProperty({ description: "Онлайн-режим", example: true })
-  @IsBoolean({ message: validationMessages.boolean("online") })
-  online!: boolean;
-}
-
 export class LauncherUpdateResponseDto {
   @ApiProperty({ example: "1.2.3" })
   version!: string;
 
   @ApiProperty({ type: [String], example: ["linux/x86_64", "macos/arm64", "windows/x86_64"] })
   updated!: string[];
+}
+
+export class LauncherReleaseResponseDto {
+  @ApiProperty({ example: "1.2.3", description: "Версия опубликованного релиза" })
+  version!: string;
+
+  @ApiProperty({
+    type: [String],
+    example: ["windows-x86_64", "darwin-aarch64"],
+    description: "Платформы релиза, опубликованные этим запросом (ключи tauri-plugin-updater)",
+  })
+  published!: string[];
 }

@@ -6,7 +6,7 @@ import {
   markPostgresUserDeleted,
   postgresDescribe,
 } from "../../../utils/tests/postgres-suite";
-import { YggdrasilPostgresStore } from "../yggdrasil_postgres";
+import { YggdrasilPostgresStore } from "../yggdrasil_postgres_store";
 
 const store = new YggdrasilPostgresStore();
 
@@ -104,6 +104,24 @@ postgresDescribe("YggdrasilPostgresStore (postgres)", () => {
     expect(untouched?.capeUrl).toBe("http://localhost:3005/capes/new.png");
   });
 
+  it("параллельное обновление текстур нового профиля не падает (upsert)", async () => {
+    const user = await createPostgresUser({ usernamePrefix: "pgygg" });
+
+    const results = await Promise.allSettled([
+      store.updateProfileTexture(user.uuid, {
+        skinUrl: "http://localhost:3005/textures/race.png",
+      }),
+      store.updateProfileTexture(user.uuid, {
+        capeUrl: "http://localhost:3005/capes/race.png",
+      }),
+    ]);
+
+    expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+    const profile = await store.findProfileByUuid(user.uuid);
+    expect(profile?.skinUrl).toBe("http://localhost:3005/textures/race.png");
+    expect(profile?.capeUrl).toBe("http://localhost:3005/capes/race.png");
+  });
+
   it("countProfilesByTextureUrl считает профили по skin_url и cape_url", async () => {
     const first = await createPostgresUser({ usernamePrefix: "pgygg" });
     const second = await createPostgresUser({ usernamePrefix: "pgygg" });
@@ -124,6 +142,17 @@ postgresDescribe("YggdrasilPostgresStore (postgres)", () => {
     expect(
       await store.countProfilesByTextureUrl("http://localhost:3005/textures/missing.png"),
     ).toBe(0);
+  });
+
+  it("countProfilesByTextureUrl игнорирует удалённых пользователей", async () => {
+    const user = await createPostgresUser({ usernamePrefix: "pgygg" });
+    const texture = "http://localhost:3005/textures/deleted-user.png";
+    await store.updateProfileTexture(user.uuid, { skinUrl: texture });
+    expect(await store.countProfilesByTextureUrl(texture)).toBe(1);
+
+    await markPostgresUserDeleted(user.uuid);
+
+    expect(await store.countProfilesByTextureUrl(texture)).toBe(0);
   });
 
   it("findUserByUsername отдаёт uuid, хеш пароля и статус banned/approved", async () => {

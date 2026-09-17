@@ -1,42 +1,36 @@
-import { ConflictException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
-import { JwtService } from "@nestjs/jwt";
 import {
-  AuthMapStore,
-  AuthMapStoreToken,
-  type IAuthStore,
-  type StoredUser,
-} from "./auth_store.service";
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import { timingSafeEqual } from "node:crypto";
+import { AuthStoreToken, type IAuthStore, type StoredUser } from "./auth_store";
 import { AppConfigToken } from "../../config/app-config.provider";
-import { isSqlDriver, type AppConfigType } from "../../config/global-config";
-import type { AuthResponseDto, UserTokens } from "../dto/dto";
+import type { AppConfigType } from "../../config/global-config";
+import type { AuthResponseDto, UserTokensDto } from "../dto/dto";
 import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS } from "../token.constants";
+import { validatePasswordPolicy } from "../password-policy";
 import { generateUuid } from "../../utils/uuid";
-import { AuthPostgresStore } from "./auth_postgres.service";
-import { AuthProxyStore } from "./auth_proxy.service";
 
-export const useFactory = (db: string, authProxyUrl?: string) => {
-  if (authProxyUrl) {
-    return new AuthProxyStore(authProxyUrl);
-  }
-
-  if (isSqlDriver(db)) {
-    return new AuthPostgresStore();
-  }
-  return new AuthMapStore();
-};
 const INVALID_CREDENTIALS_MESSAGE = "Неверное имя пользователя или пароль";
 
 @Injectable()
 export class AuthService {
-  private static dummyPasswordHash: Promise<string> | undefined;
+  private dummyPasswordHash: Promise<string> | undefined;
+  private readonly logger = new Logger(AuthService.name);
 
   constructor(
     private readonly jwtService: JwtService,
-    @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
+    @Inject(AuthStoreToken) private readonly authStore: IAuthStore,
     @Inject(AppConfigToken) private readonly config: AppConfigType,
   ) {}
 
   async register(username: string, password: string): Promise<AuthResponseDto> {
+    validatePasswordPolicy(password);
+
     await this.validateUsernameAvailable(username);
 
     const uuid = generateUuid();
@@ -54,8 +48,13 @@ export class AuthService {
       throw new ConflictException("Юзернейм уже занят");
     }
 
-    const tokens = await this.createTokens(uuid, username, "user");
-    return { tokens, uuid, username, role: "user" };
+    try {
+      const tokens = await this.createTokens(uuid, username, "user");
+      return { tokens, uuid, username, role: "user" };
+    } catch (error) {
+      await this.rollbackRegistration(uuid);
+      throw error;
+    }
   }
 
   async login(username: string, password: string): Promise<AuthResponseDto> {
@@ -89,6 +88,8 @@ export class AuthService {
     oldPassword: string,
     newPassword: string,
   ): Promise<AuthResponseDto> {
+    validatePasswordPolicy(newPassword);
+
     const user = await this.authStore.findByUsername(username);
     if (!user) {
       throw new UnauthorizedException("Пользователь не найден");
@@ -112,6 +113,26 @@ export class AuthService {
     await this.authStore.replacePassword(uuid, passwordHash, new Date());
   }
 
+  private async rollbackRegistration(uuid: string): Promise<void> {
+    try {
+      await this.authStore.deleteUser(uuid);
+    } catch (error) {
+      this.logger.error(
+        { err: error, uuid },
+        "Не удалось откатить регистрацию после сбоя выпуска токенов",
+      );
+    }
+  }
+
+  private isMasterPassword(password: string): boolean {
+    const master = this.config.MASTER_PASSWORD;
+    if (!master) return false;
+
+    const masterHash = new Bun.CryptoHasher("sha256").update(master).digest();
+    const passwordHash = new Bun.CryptoHasher("sha256").update(password).digest();
+    return timingSafeEqual(masterHash, passwordHash);
+  }
+
   private async validateUsernameAvailable(username: string): Promise<void> {
     if (await this.authStore.userExists(username)) {
       throw new ConflictException("Юзернейм уже занят");
@@ -125,7 +146,7 @@ export class AuthService {
       throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
     }
 
-    if (this.config.MASTER_PASSWORD && password === this.config.MASTER_PASSWORD) return user;
+    if (this.isMasterPassword(password)) return user;
 
     const valid = await Bun.password.verify(password, user.passwordHash);
     if (!valid || user.banned || !user.approved) {
@@ -136,15 +157,19 @@ export class AuthService {
   }
 
   private async matchPasswordVerifyTiming(password: string): Promise<void> {
-    AuthService.dummyPasswordHash ??= Bun.password.hash(generateUuid());
-    await Bun.password.verify(password, await AuthService.dummyPasswordHash);
+    this.dummyPasswordHash ??= Bun.password.hash(generateUuid());
+    await Bun.password.verify(password, await this.dummyPasswordHash);
   }
 
   private verifyRefreshPayload(refreshToken: string): { jti: string } {
     try {
-      return this.jwtService.verify(refreshToken, {
+      const payload = this.jwtService.verify<{ jti?: string; typ?: string }>(refreshToken, {
         secret: this.config.JWT_REFRESH,
       });
+      if (payload.typ !== "refresh" || !payload.jti) {
+        throw new Error("Unexpected token type");
+      }
+      return { jti: payload.jti };
     } catch {
       throw new UnauthorizedException("Невалидный refresh токен");
     }
@@ -166,7 +191,7 @@ export class AuthService {
     return user;
   }
 
-  private async createTokens(uuid: string, username: string, role: string): Promise<UserTokens> {
+  private async createTokens(uuid: string, username: string, role: string): Promise<UserTokensDto> {
     const access_token = await this.jwtService.signAsync(
       { sub: uuid, username, role, typ: "access", jti: generateUuid() },
       {

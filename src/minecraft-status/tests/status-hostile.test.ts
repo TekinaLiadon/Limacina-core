@@ -2,11 +2,13 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 
 setupTestEnv();
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
+import { Logger, ServiceUnavailableException } from "@nestjs/common";
 import { createServer, type Server } from "node:net";
 import { readVarInt, status, writeVarInt } from "../minecraft-slp";
+import { buildStatusResponse } from "./status-packet";
 import { MinecraftStatusService } from "../minecraft-status.service";
-import { CacheMapStore } from "../../memory/cache-map.store";
+import { CacheMapStore } from "../../memory/cache_map_store";
 import { MemoryDb } from "../../memory/memory-db";
 import type { AppConfigType } from "../../config/global-config";
 
@@ -46,24 +48,6 @@ function stopServer(server: Server): Promise<void> {
   return new Promise((resolveStop) => {
     server.close(() => resolveStop());
   });
-}
-
-function buildStatusResponse(payload: object): Uint8Array {
-  const json = JSON.stringify(payload);
-  const jsonBytes = new TextEncoder().encode(json);
-  const idBytes = Uint8Array.from([0]);
-  const lengthBytes = writeVarInt(jsonBytes.length);
-
-  const body = new Uint8Array(idBytes.length + lengthBytes.length + jsonBytes.length);
-  body.set(idBytes, 0);
-  body.set(lengthBytes, idBytes.length);
-  body.set(jsonBytes, idBytes.length + lengthBytes.length);
-
-  const header = writeVarInt(body.length);
-  const packet = new Uint8Array(header.length + body.length);
-  packet.set(header, 0);
-  packet.set(body, header.length);
-  return packet;
 }
 
 function buildConfig(host: string): AppConfigType {
@@ -258,5 +242,57 @@ describe("MinecraftStatusService — дедупликация ошибочных
     expect(hostile.connectionCount()).toBe(2);
 
     await stopServer(hostile.server);
+  });
+});
+
+describe("MinecraftStatusService — состояние цели", (): void => {
+  it("незаданный MINECRAFT_HOST не спамит error и честно сообщает о незаданной переменной", async () => {
+    const errorSpy = spyOn(Logger.prototype, "error");
+    const debugSpy = spyOn(Logger.prototype, "debug");
+    const service = new MinecraftStatusService(
+      {} as unknown as AppConfigType,
+      new CacheMapStore(new MemoryDb()),
+    );
+
+    await expect(service.getOnline()).rejects.toThrow("MINECRAFT_HOST не задан");
+    await expect(service.getOnline()).rejects.toThrow("MINECRAFT_HOST не задан");
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(debugSpy).toHaveBeenCalledTimes(2);
+
+    errorSpy.mockRestore();
+    debugSpy.mockRestore();
+  });
+
+  it("невалидный MINECRAFT_HOST логируется warn однократно", async () => {
+    const errorSpy = spyOn(Logger.prototype, "error");
+    const warnSpy = spyOn(Logger.prototype, "warn");
+    const service = new MinecraftStatusService(
+      buildConfig("127.0.0.1:notaport"),
+      new CacheMapStore(new MemoryDb()),
+    );
+
+    await expect(service.getOnline()).rejects.toThrow("Некорректный MINECRAFT_HOST");
+    await expect(service.getOnline()).rejects.toThrow("Некорректный MINECRAFT_HOST");
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("оба состояния отвечают 503", async () => {
+    const unconfigured = new MinecraftStatusService(
+      {} as unknown as AppConfigType,
+      new CacheMapStore(new MemoryDb()),
+    );
+    const misconfigured = new MinecraftStatusService(
+      buildConfig("no-such-host-name.invalid:1"),
+      new CacheMapStore(new MemoryDb()),
+    );
+
+    await expect(unconfigured.getOnline()).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(misconfigured.getOnline()).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });

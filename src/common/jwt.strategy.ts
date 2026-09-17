@@ -3,7 +3,7 @@ import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
-import { AuthMapStoreToken, type IAuthStore } from "../auth/service/auth_store.service";
+import { AuthStoreToken, type IAuthStore } from "../auth/service/auth_store";
 import type { RequestUser } from "./current-user.decorator";
 
 export interface JwtAccessPayload {
@@ -26,7 +26,7 @@ function issuedBeforePasswordChange(
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     @Inject(AppConfigToken) config: AppConfigType,
-    @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
+    @Inject(AuthStoreToken) private readonly authStore: IAuthStore,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -36,6 +36,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtAccessPayload): Promise<RequestUser> {
+    if (payload.typ !== "access") {
+      throw new UnauthorizedException();
+    }
+
     const user = await this.authStore.findByUsername(payload.username);
     if (!user || user.uuid !== payload.sub) {
       throw new UnauthorizedException();

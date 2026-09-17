@@ -3,9 +3,13 @@ import { setupTestEnv } from "../../../utils/tests/test-env";
 setupTestEnv();
 
 import { afterAll, beforeAll, beforeEach, expect, it } from "bun:test";
-import { YggdrasilMapStore } from "../yggdrasil_store";
-import type { IYggdrasilStore, YggdrasilProfile, YggdrasilSeedUser } from "../yggdrasil_store";
-import { YggdrasilPostgresStore } from "../yggdrasil_postgres";
+import {
+  YggdrasilMapStore,
+  type IYggdrasilStore,
+  type YggdrasilProfile,
+  type YggdrasilSeedUser,
+} from "../yggdrasil_store";
+import { YggdrasilPostgresStore } from "../yggdrasil_postgres_store";
 import { generateUuid } from "../../../utils/uuid";
 import {
   cleanupTrackedUsers,

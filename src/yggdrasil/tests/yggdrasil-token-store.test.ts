@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { MemoryDb } from "../../memory/memory-db";
-import { YggdrasilMapSessionStore, YggdrasilMapTokenStore } from "../../memory/yggdrasil-map.store";
+import { YggdrasilMapSessionStore, YggdrasilMapTokenStore } from "../../memory/yggdrasil_map_store";
 import { MAX_TOKENS_PER_USER, type TokenEntry } from "../service/yggdrasil_store";
 
 const buildTokenEntry = (username: string, userId: string): TokenEntry => ({
@@ -82,6 +82,21 @@ describe("YggdrasilMapTokenStore", () => {
     const store = new YggdrasilMapTokenStore(new MemoryDb());
 
     expect(await store.claimToken("missing-token")).toBeUndefined();
+  });
+
+  it("параллельный claimToken одного токена отдаёт запись ровно один раз", async () => {
+    const store = new YggdrasilMapTokenStore(new MemoryDb());
+    await store.saveToken("token-race", buildTokenEntry("alice", "uuid-1"));
+
+    const [first, second] = await Promise.all([
+      store.claimToken("token-race"),
+      store.claimToken("token-race"),
+    ]);
+
+    const claimed = [first, second].filter((entry) => entry !== undefined);
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0]).toEqual(buildTokenEntry("alice", "uuid-1"));
+    expect(await store.findToken("token-race")).toBeUndefined();
   });
 
   it("чистит просроченные токены при выдаче нового", async () => {

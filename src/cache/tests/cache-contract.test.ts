@@ -3,29 +3,11 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 setupTestEnv();
 
 import { describe, expect, it } from "bun:test";
-import type { ICacheStore } from "../cache.store";
-import { CacheMapStore } from "../../memory/cache-map.store";
+import type { ICacheStore } from "../cache_store";
+import { CacheMapStore } from "../../memory/cache_map_store";
 import { MemoryDb } from "../../memory/memory-db";
-import { RedisCacheStore, type RedisClientLike } from "../redis.store";
-
-class FakeRedisClient implements RedisClientLike {
-  readonly stored = new Map<string, string>();
-
-  async get(key: string): Promise<string | null> {
-    return this.stored.get(key) ?? null;
-  }
-
-  async set(key: string, value: string, _px: "PX", _milliseconds: number): Promise<unknown> {
-    this.stored.set(key, value);
-    return "OK";
-  }
-
-  async del(key: string): Promise<number> {
-    return this.stored.delete(key) ? 1 : 0;
-  }
-
-  close(): void {}
-}
+import { RedisCacheStore } from "../redis_store";
+import { FakeRedisClient } from "../../utils/tests/fake-redis";
 
 interface CacheStoreHarness {
   store: ICacheStore;

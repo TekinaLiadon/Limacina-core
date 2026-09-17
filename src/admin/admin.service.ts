@@ -12,14 +12,30 @@ import {
   DELETED_USERS_RETENTION_DAYS,
   type IAdminStore,
   type AdminUser,
-  type UsersFilter,
-  type UsersPage,
-  type DeletedUsersPage,
-} from "./admin.store";
-import { AuthMapStoreToken, type IAuthStore } from "../auth/service/auth_store.service";
+  type DeletedUser,
+} from "./admin_store";
+import { AuthStoreToken, type IAuthStore } from "../auth/service/auth_store";
+import { validatePasswordPolicy } from "../auth/password-policy";
 import { CronService } from "../cron/cron.service";
 import { ROLE_WEIGHTS, isKnownRole } from "../common/roles";
 import type { RequestUser } from "../common/current-user.decorator";
+
+export interface UsersFilter {
+  limit: number;
+  offset: number;
+  username?: string | undefined;
+  approved?: boolean | undefined;
+}
+
+export interface UsersPage {
+  items: AdminUser[];
+  total: number;
+}
+
+export interface DeletedUsersPage {
+  items: DeletedUser[];
+  total: number;
+}
 
 interface MutationStep {
   run: () => Promise<void>;
@@ -32,7 +48,7 @@ export class AdminService implements OnModuleInit {
 
   constructor(
     @Inject(AdminMapStoreToken) private readonly adminStore: IAdminStore,
-    @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
+    @Inject(AuthStoreToken) private readonly authStore: IAuthStore,
     private readonly cron: CronService,
   ) {}
 
@@ -140,6 +156,8 @@ export class AdminService implements OnModuleInit {
   }
 
   async setUserPassword(username: string, password: string, actor: RequestUser): Promise<void> {
+    validatePasswordPolicy(password);
+
     const user = await this.findMutableUser(username, actor, "setPassword");
     const passwordHash = await Bun.password.hash(password);
     await this.authStore.replacePassword(user.uuid, passwordHash, new Date());

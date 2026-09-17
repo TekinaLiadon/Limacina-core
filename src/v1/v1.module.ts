@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { RouterModule } from "@nestjs/core";
 import { AdminModule } from "../admin/admin.module";
 import { AuthModule } from "../auth/auth.module";
 import { FilesModule } from "../files/files.module";
@@ -17,6 +18,8 @@ import { V1PanelServerController } from "./panel/server.controller";
 import { V1PanelUsersController } from "./panel/users.controller";
 import { V1StatusController } from "./common/status/status.controller";
 
+export const V1_API_PREFIX = "v1";
+
 @Module({
   imports: [
     AdminModule,
@@ -26,6 +29,7 @@ import { V1StatusController } from "./common/status/status.controller";
     MinecraftStatusModule,
     TechnicalModule,
     UserContentModule,
+    RouterModule.register([{ path: V1_API_PREFIX, module: V1Module }]),
   ],
   controllers: [
     V1AuthController,

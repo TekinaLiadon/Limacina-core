@@ -6,12 +6,12 @@ import { describe, expect, it } from "bun:test";
 import { UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { JwtStrategy, type JwtAccessPayload } from "./jwt.strategy";
-import { AuthMapStore, type StoredUser } from "../auth/service/auth_store.service";
+import { AuthMapStore, type StoredUser } from "../auth/service/auth_store";
 import { AuthService } from "../auth/service/auth.service";
 import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS } from "../auth/token.constants";
 import { AdminService } from "../admin/admin.service";
 import { CronService } from "../cron/cron.service";
-import { AdminMapStore } from "../admin/admin.store";
+import { AdminMapStore } from "../admin/admin_store";
 import GlobalConfig from "../config/global-config";
 
 const TEST_UUID = "33333333333333333333333333333333";
@@ -42,6 +42,7 @@ describe("JwtStrategy store-check", (): void => {
       sub: TEST_UUID,
       username: TEST_USERNAME,
       role: "user",
+      typ: "access",
     });
 
     expect(result).toEqual({ uuid: TEST_UUID, username: TEST_USERNAME, role: "admin" });
@@ -53,7 +54,7 @@ describe("JwtStrategy store-check", (): void => {
     const strategy = new JwtStrategy(TEST_CONFIG, store);
 
     expect(
-      strategy.validate({ sub: TEST_UUID, username: TEST_USERNAME, role: "user" }),
+      strategy.validate({ sub: TEST_UUID, username: TEST_USERNAME, role: "user", typ: "access" }),
     ).rejects.toThrow(UnauthorizedException);
   });
 
@@ -62,7 +63,7 @@ describe("JwtStrategy store-check", (): void => {
     const strategy = new JwtStrategy(TEST_CONFIG, store);
 
     expect(
-      strategy.validate({ sub: TEST_UUID, username: TEST_USERNAME, role: "user" }),
+      strategy.validate({ sub: TEST_UUID, username: TEST_USERNAME, role: "user", typ: "access" }),
     ).rejects.toThrow(UnauthorizedException);
   });
 
@@ -75,6 +76,7 @@ describe("JwtStrategy store-check", (): void => {
       sub: TEST_UUID,
       username: TEST_USERNAME,
       role: "admin",
+      typ: "access",
     });
 
     expect(result.role).toBe("user");
@@ -86,7 +88,7 @@ describe("JwtStrategy store-check", (): void => {
     const strategy = new JwtStrategy(TEST_CONFIG, store);
 
     expect(
-      strategy.validate({ sub: TEST_UUID, username: TEST_USERNAME, role: "user" }),
+      strategy.validate({ sub: TEST_UUID, username: TEST_USERNAME, role: "user", typ: "access" }),
     ).rejects.toThrow(UnauthorizedException);
   });
 
@@ -99,6 +101,7 @@ describe("JwtStrategy store-check", (): void => {
       sub: TEST_UUID,
       username: TEST_USERNAME,
       role: "user",
+      typ: "access",
     });
     await expect(invalidation).rejects.toBeInstanceOf(UnauthorizedException);
     await expect(invalidation).rejects.toThrow("Нет доступа");
@@ -162,6 +165,7 @@ describe("JwtStrategy password_changed_at", (): void => {
         sub: TEST_UUID,
         username: TEST_USERNAME,
         role: "user",
+        typ: "access",
         iat: Math.floor(Date.now() / 1000) - 3600,
       }),
     ).rejects.toThrow(UnauthorizedException);
@@ -176,6 +180,7 @@ describe("JwtStrategy password_changed_at", (): void => {
       sub: TEST_UUID,
       username: TEST_USERNAME,
       role: "user",
+      typ: "access",
       iat: Math.floor(Date.now() / 1000),
     });
 
@@ -192,6 +197,7 @@ describe("JwtStrategy password_changed_at", (): void => {
       sub: TEST_UUID,
       username: TEST_USERNAME,
       role: "user",
+      typ: "access",
       iat: markSecond,
     });
 
@@ -207,6 +213,7 @@ describe("JwtStrategy password_changed_at", (): void => {
       sub: TEST_UUID,
       username: TEST_USERNAME,
       role: "user",
+      typ: "access",
       iat: 12345,
     });
 
@@ -216,6 +223,26 @@ describe("JwtStrategy password_changed_at", (): void => {
   it("401 для токена без iat при наличии метки", async (): Promise<void> => {
     const store = new AuthMapStore();
     await store.saveUser(buildUser({ passwordChangedAt: new Date() }));
+    const strategy = new JwtStrategy(TEST_CONFIG, store);
+
+    expect(
+      strategy.validate({ sub: TEST_UUID, username: TEST_USERNAME, role: "user", typ: "access" }),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it("401 для refresh-токена, подписанного секретом access", async (): Promise<void> => {
+    const store = new AuthMapStore();
+    await store.saveUser(buildUser({}));
+    const strategy = new JwtStrategy(TEST_CONFIG, store);
+
+    expect(
+      strategy.validate({ sub: TEST_UUID, username: TEST_USERNAME, role: "user", typ: "refresh" }),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it("401 для токена без typ", async (): Promise<void> => {
+    const store = new AuthMapStore();
+    await store.saveUser(buildUser({}));
     const strategy = new JwtStrategy(TEST_CONFIG, store);
 
     expect(
@@ -302,9 +329,26 @@ describe("TTL и ротация токенов (H-02a)", (): void => {
     expect(REFRESH_TOKEN_TTL_SECONDS).toBe(365 * 24 * 60 * 60);
   });
 
-  it("access-токен живёт 3 часа, refresh — 365 дней", (): void => {
-    expect(ACCESS_TOKEN_TTL_SECONDS).toBe(3 * 60 * 60);
-    expect(REFRESH_TOKEN_TTL_SECONDS).toBe(365 * 24 * 60 * 60);
+  it("refresh не принимает токен с typ access даже при валидном jti", async (): Promise<void> => {
+    const store = new AuthMapStore();
+    const { authService, jwtService } = buildAuthStack(store);
+    await store.saveUser(buildUser({ passwordHash: await Bun.password.hash(OLD_PASSWORD) }));
+
+    const login = await authService.login(TEST_USERNAME, OLD_PASSWORD);
+    const refreshPayload = jwtService.decode<{ jti: string }>(login.tokens.refresh_token);
+    const forgedToken = await jwtService.signAsync(
+      {
+        sub: TEST_UUID,
+        username: TEST_USERNAME,
+        role: "user",
+        jti: refreshPayload.jti,
+        typ: "access",
+      },
+      { secret: TEST_CONFIG.JWT_REFRESH, expiresIn: 3600 },
+    );
+
+    await expect(authService.refresh(forgedToken)).rejects.toThrow(UnauthorizedException);
+    expect(await store.findRefresh(refreshPayload.jti)).toBeDefined();
   });
 
   it("логаут завершает access-сессию за пределами TTL", async (): Promise<void> => {

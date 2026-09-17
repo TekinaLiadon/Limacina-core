@@ -13,7 +13,7 @@ import {
 } from "../../../auth/dto/dto";
 
 @ApiTags("common_auth")
-@Controller("v1/common/auth")
+@Controller("common/auth")
 export class V1AuthController {
   constructor(private readonly authService: AuthService) {}
 

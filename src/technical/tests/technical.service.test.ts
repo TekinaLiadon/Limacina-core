@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -13,6 +13,7 @@ import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   InternalServerErrorException,
@@ -25,12 +26,16 @@ import {
   currentRevision,
   runStep,
 } from "../technical.service";
-import { AdminMapStore } from "../../admin/admin.store";
-import { AuthMapStore } from "../../auth/service/auth_store.service";
+import { AdminMapStore } from "../../admin/admin_store";
+import { AuthMapStore } from "../../auth/service/auth_store";
 import type { AppConfigType } from "../../config/global-config";
 import type { RequestUser } from "../../common/current-user.decorator";
 
 const actor: RequestUser = { uuid: "owner-uuid", username: "owner", role: "owner" };
+
+function serviceLogger(service: TechnicalService): { error: (...args: unknown[]) => void } {
+  return (service as unknown as { logger: { error: (...args: unknown[]) => void } }).logger;
+}
 
 function makeConfig(overrides: Partial<AppConfigType> = {}): AppConfigType {
   return {
@@ -45,6 +50,10 @@ function makeConfig(overrides: Partial<AppConfigType> = {}): AppConfigType {
     MAX_CAPES_PER_USER: 1,
     RATE_LIMIT_AUTH_MAX: 10,
     RATE_LIMIT_AUTH_WINDOW: 60000,
+    RATE_LIMIT_AUTH_IP_MAX: 10,
+    RATE_LIMIT_GLOBAL_MAX: 600,
+    RATE_LIMIT_GLOBAL_WINDOW: 60000,
+    BEHIND_PROXY: true,
     ...overrides,
   };
 }
@@ -151,6 +160,32 @@ describe("TechnicalService", (): void => {
         await expect(service.initOwner("secondowner", "securepassword", token)).rejects.toThrow(
           "Владелец уже создан",
         );
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("отклоняет короткий пароль до создания владельца (TASK-265)", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
+      const adminStore = new AdminMapStore();
+      const authStore = new AuthMapStore();
+      const tokenPath = join(dir, "bootstrap.token");
+      const service = new TechnicalService(adminStore, authStore, makeConfig(), tokenPath);
+      try {
+        await service.onApplicationBootstrap();
+        const token = (await Bun.file(tokenPath).text()).trim();
+
+        await expect(service.initOwner("owner", "12345", token)).rejects.toThrow(
+          BadRequestException,
+        );
+
+        expect(await adminStore.hasOwner()).toBe(false);
+        expect(await authStore.findByUsername("owner")).toBeUndefined();
+        expect(existsSync(tokenPath)).toBe(true);
+
+        const result = await service.initOwner("owner", "securepassword", token);
+
+        expect(result.username).toBe("owner");
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -401,6 +436,18 @@ describe("TechnicalService", (): void => {
       await Bun.sleep(400);
 
       expect(signalCount).toBe(1);
+    });
+
+    it("отказ повторного перезапуска логируется на error (TASK-217.9)", async () => {
+      const { service } = makeService();
+      service.sendShutdownSignal = () => {};
+      const errorSpy = spyOn(serviceLogger(service), "error");
+
+      await service.restartServer(actor);
+      await expect(service.restartServer(actor)).rejects.toThrow(ConflictException);
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      errorSpy.mockRestore();
     });
   });
 

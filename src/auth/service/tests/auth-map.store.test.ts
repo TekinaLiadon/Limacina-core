@@ -3,7 +3,7 @@ import { setupTestEnv } from "../../../utils/tests/test-env";
 setupTestEnv();
 
 import { describe, expect, it } from "bun:test";
-import { AuthMapStore } from "../auth_store.service";
+import { AuthMapStore } from "../auth_store";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../../token.constants";
 import { generateUuid } from "../../../utils/uuid";
 

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { AuthPostgresStore } from "../auth_postgres.service";
-import type { StoredUser } from "../auth_store.service";
+import { AuthPostgresStore } from "../auth_postgres_store";
+import type { StoredUser } from "../auth_store";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../../token.constants";
 import { installFakeSqlClient, resetSqlClient, type SqlCall } from "../../../utils/tests/sql-fake";
 import { setupTestEnv } from "../../../utils/tests/test-env";

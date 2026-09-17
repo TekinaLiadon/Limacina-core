@@ -1,3 +1,8 @@
+import { setupTestEnv } from "../../../utils/tests/test-env";
+import { applyV1ApiPrefix } from "../../../utils/tests/v1-prefix";
+
+setupTestEnv();
+
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   existsSync,
@@ -15,6 +20,9 @@ import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
 import { V1LauncherUpdateController } from "../update.controller";
 import { LauncherService } from "../../../launcher/launcher.service";
+import { LauncherReleasesService } from "../../../launcher/launcher-releases.service";
+import { AppConfigToken } from "../../../config/app-config.provider";
+import GlobalConfig from "../../../config/global-config";
 
 const VERSION_FILE = "public/version.json";
 const VERSION_BACKUP = "public/version.json.bak";
@@ -76,10 +84,15 @@ describe("V1 launcher/update эндпоинты — версии и скачив
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       controllers: [V1LauncherUpdateController],
-      providers: [LauncherService],
+      providers: [
+        LauncherService,
+        LauncherReleasesService,
+        { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
+      ],
     }).compile();
 
     app = moduleFixture.createNestApplication(new FastifyAdapter());
+    applyV1ApiPrefix(app);
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
   });

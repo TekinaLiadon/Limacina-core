@@ -1,3 +1,4 @@
+import { enumPipeExceptionFactory } from "../common/validation-pipes";
 import {
   Body,
   Controller,
@@ -148,7 +149,13 @@ export class YggdrasilController {
   @ApiResponse({ status: 204, description: "Profile not found" })
   async getProfile(
     @Param("uuid") uuid: string,
-    @Query("unsigned", new DefaultValuePipe("true"), new ParseEnumPipe(["true", "false"]))
+    @Query(
+      "unsigned",
+      new DefaultValuePipe("true"),
+      new ParseEnumPipe(["true", "false"], {
+        exceptionFactory: enumPipeExceptionFactory("unsigned", ["true", "false"]),
+      }),
+    )
     unsigned: "true" | "false",
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<SessionProfileDto | undefined> {
@@ -183,7 +190,13 @@ export class YggdrasilController {
   @ApiResponse({ status: 403, type: YggdrasilErrorDto })
   async putTexture(
     @Param("uuid") uuid: string,
-    @Param("textureType", new ParseEnumPipe(["skin", "cape"])) textureType: "skin" | "cape",
+    @Param(
+      "textureType",
+      new ParseEnumPipe(["skin", "cape"], {
+        exceptionFactory: enumPipeExceptionFactory("textureType", ["skin", "cape"]),
+      }),
+    )
+    textureType: "skin" | "cape",
     @Body() body: UploadTextureDto,
     @Headers("authorization") authorization?: string,
   ): Promise<void> {
@@ -202,7 +215,13 @@ export class YggdrasilController {
   @ApiResponse({ status: 403, type: YggdrasilErrorDto })
   async deleteTexture(
     @Param("uuid") uuid: string,
-    @Param("textureType", new ParseEnumPipe(["skin", "cape"])) textureType: "skin" | "cape",
+    @Param(
+      "textureType",
+      new ParseEnumPipe(["skin", "cape"], {
+        exceptionFactory: enumPipeExceptionFactory("textureType", ["skin", "cape"]),
+      }),
+    )
+    textureType: "skin" | "cape",
     @Headers("authorization") authorization?: string,
   ): Promise<void> {
     await this.yggdrasilService.deleteTexture(uuid, textureType, authorization);

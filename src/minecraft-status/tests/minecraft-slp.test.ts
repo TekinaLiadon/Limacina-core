@@ -3,6 +3,7 @@ import {
   buildHandshakePacket,
   buildStatusRequestPacket,
   parseMinecraftTarget,
+  readVarInt,
 } from "../minecraft-slp";
 
 describe("buildHandshakePacket", () => {
@@ -10,47 +11,53 @@ describe("buildHandshakePacket", () => {
     const packet = buildHandshakePacket("mc.example.com", 25565);
     const bytes = [...packet];
 
+    const packetLength = readVarInt(packet, 0);
+    const packetId = readVarInt(packet, packetLength.offset);
+    const protocol = readVarInt(packet, packetId.offset);
+    const hostLength = readVarInt(packet, protocol.offset);
+    const hostStart = hostLength.offset;
+    const hostEnd = hostStart + hostLength.value;
+    const portStart = hostEnd;
+    const stateStart = portStart + 2;
+
     expect(bytes.length).toBe(25);
-    expect(bytes[0]).toBe(0x18); // packet length varint (24): id + protocol + host + port + state
-    expect(bytes[1]).toBe(0); // packet id
-
-    expect(bytes[2]).toBe(0xff); // protocol version varint (-1)
-    expect(bytes[3]).toBe(0xff);
-    expect(bytes[4]).toBe(0xff);
-    expect(bytes[5]).toBe(0xff);
-    expect(bytes[6]).toBe(0x0f);
-
-    expect(bytes[7]).toBe(14); // length of "mc.example.com"
-    expect(new TextDecoder().decode(packet.subarray(8, 22))).toBe("mc.example.com");
-
-    expect(bytes[22]).toBe(0x63); // 25565 >> 8
-    expect(bytes[23]).toBe(0xdd); // 25565 & 0xff
-
-    expect(bytes[24]).toBe(1); // next state: status
+    expect(packetLength.value).toBe(24);
+    expect(packetId.value).toBe(0);
+    expect(protocol.value).toBe(-1);
+    expect(hostLength.value).toBe(14);
+    expect(new TextDecoder().decode(packet.subarray(hostStart, hostEnd))).toBe("mc.example.com");
+    expect(bytes[portStart]).toBe(0x63);
+    expect(bytes[portStart + 1]).toBe(0xdd);
+    expect(bytes[stateStart]).toBe(1);
   });
 
   it("кодирует короткий хост", () => {
     const packet = buildHandshakePacket("mc", 1234);
     const bytes = [...packet];
 
-    expect(bytes[0]).toBe(0x0c); // packet length varint (12): id + protocol + host + port + state
-    expect(bytes[7]).toBe(2);
-    expect(bytes[8]).toBe(0x6d); // "m"
-    expect(bytes[9]).toBe(0x63); // "c"
+    const packetLength = readVarInt(packet, 0);
+    const hostLength = readVarInt(packet, packetLength.offset + 1 + 5);
 
-    expect(bytes[10]).toBe(0x04); // 1234 >> 8
-    expect(bytes[11]).toBe(0xd2); // 1234 & 0xff
-    expect(bytes[12]).toBe(1);
+    expect(packetLength.value).toBe(12);
+    expect(hostLength.value).toBe(2);
+    expect(
+      new TextDecoder().decode(packet.subarray(hostLength.offset, hostLength.offset + 2)),
+    ).toBe("mc");
+    expect(bytes[packetLength.offset + packetLength.value - 3]).toBe(0x04);
+    expect(bytes[packetLength.offset + packetLength.value - 2]).toBe(0xd2);
+    expect(bytes[packetLength.offset + packetLength.value - 1]).toBe(1);
   });
 });
 
 describe("buildStatusRequestPacket", () => {
   it("это длина 1 и id 0", () => {
     const packet = buildStatusRequestPacket();
+    const packetLength = readVarInt(packet, 0);
+    const packetId = readVarInt(packet, packetLength.offset);
 
+    expect(packetLength.value).toBe(1);
+    expect(packetId.value).toBe(0);
     expect(packet.length).toBe(2);
-    expect(packet[0]).toBe(1);
-    expect(packet[1]).toBe(0);
   });
 });
 

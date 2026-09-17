@@ -11,7 +11,8 @@ export const mariadbDialect: SqlDialect = {
   name: "mariadb",
   toClientQuery(sql: string, values: SqlValue[]): { sql: string; values: unknown[] } {
     const adaptedValues: unknown[] = [];
-    const adaptedSql = sql.replace(/\$(\d+)/g, (_match, index: string) => {
+    const adaptedSql = sql.replace(/'(?:[^']|'')*'|\$(\d+)/g, (match, index?: string) => {
+      if (index === undefined) return match;
       adaptedValues.push(values[Number(index) - 1]);
       return "?";
     });
@@ -19,7 +20,7 @@ export const mariadbDialect: SqlDialect = {
   },
   toQueryResult(raw: unknown): QueryResult<Record<string, unknown>> {
     const rows = Array.isArray(raw) ? raw : ((raw as MariaResult).rows ?? []);
-    const affectedRows = (raw as MariaResult).affectedRows;
+    const { affectedRows } = raw as MariaResult;
     const count = rows.length > 0 ? rows.length : (affectedRows ?? (raw as MariaResult).count ?? 0);
     return { rows, count };
   },

@@ -1,7 +1,11 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LogsService } from "../logs.service";
+
+function serviceLogger(service: LogsService): { error: (...args: unknown[]) => void } {
+  return (service as unknown as { logger: { error: (...args: unknown[]) => void } }).logger;
+}
 
 const TEST_DATE = "2099-12-31";
 const TEST_LOG_FILE = join(process.cwd(), "logs", `${TEST_DATE}.log`);
@@ -92,10 +96,28 @@ describe("LogsService — фильтрация логов запросов", ():
 
   it("возвращает пустой результат для отсутствующего файла", async () => {
     const service = new LogsService();
+    const errorSpy = spyOn(serviceLogger(service), "error");
     const { lines, total } = await service.getLines("2098-01-01", 0, 100);
 
     expect(total).toBe(0);
     expect(lines).toEqual([]);
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("логирует ошибку чтения на error, кроме ENOENT (TASK-217.9)", async () => {
+    const service = new LogsService();
+    const errorSpy = spyOn(serviceLogger(service), "error");
+    chmodSync(TEST_LOG_FILE, 0o000);
+    try {
+      const { total } = await service.getLines(TEST_DATE, 0, 100);
+      expect(total).toBe(0);
+    } finally {
+      chmodSync(TEST_LOG_FILE, 0o644);
+    }
+
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+    errorSpy.mockRestore();
   });
 
   it("комбинирует фильтры", async () => {

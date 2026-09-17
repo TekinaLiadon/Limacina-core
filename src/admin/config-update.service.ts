@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { existsSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { stringify as stringifyToml } from "smol-toml";
-import type { LauncherConfigUpdateDto } from "./dto/dto";
+import type { LauncherConfigDto } from "../launcher/dto/dto";
 
 const CONFIG_FILE = "config.toml";
 
@@ -9,7 +9,7 @@ const CONFIG_FILE = "config.toml";
 export class ConfigUpdateService {
   private readonly logger = new Logger(ConfigUpdateService.name);
 
-  update(dto: LauncherConfigUpdateDto): LauncherConfigUpdateDto {
+  update(dto: LauncherConfigDto): LauncherConfigDto {
     const content = stringifyToml(dto as unknown as Record<string, unknown>);
     this.writeAtomically(`${content}\n`);
 

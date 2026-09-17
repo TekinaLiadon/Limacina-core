@@ -12,6 +12,7 @@ const DIRECTORIES = [
   "launcher",
   "launcher/mods",
   ...PLATFORM_DIRECTORIES,
+  "releases",
   "textures",
   "capes",
   "models",

@@ -1,6 +1,6 @@
 import { describe } from "bun:test";
-import { AuthPostgresStore } from "../../auth/service/auth_postgres.service";
-import type { StoredUser } from "../../auth/service/auth_store.service";
+import { AuthPostgresStore } from "../../auth/service/auth_postgres_store";
+import type { StoredUser } from "../../auth/service/auth_store";
 import { deleteQuery, execute, updateQuery, TABLES } from "../sql";
 import { generateUuid } from "../uuid";
 

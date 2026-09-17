@@ -1,17 +1,27 @@
-import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import rateLimit from "@fastify/rate-limit";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import {
+  MemorySlidingWindowStore,
+  SlidingWindowRateLimiter,
+  type SlidingWindowStore,
+} from "./sliding-window-rate-limiter";
 
-type RateLimitHook = (request: FastifyRequest, reply: FastifyReply) => Promise<void> | void;
-
-const AUTH_ROUTES_PREFIX = "/v1/common/auth";
-const LOGIN_ENDPOINTS = ["/login", "/registration"];
-const PASSWORD_CHANGE_ENDPOINT = "/password";
+const AUTH_LOGIN_ROUTES = new Set(["/v1/common/auth/login", "/v1/common/auth/registration"]);
+const PASSWORD_CHANGE_ROUTE = "/v1/common/auth/password";
 const SIGNOUT_ENDPOINT = "/authserver/signout";
+
+const LOGIN_ATTEMPTS_MESSAGE = "Слишком много попыток входа";
+const PASSWORD_ATTEMPTS_MESSAGE = "Слишком много попыток смены пароля";
+
+export interface AuthRateLimitOptions {
+  max: number;
+  ipMax: number;
+  timeWindow: number;
+  store?: SlidingWindowStore;
+}
 
 export function isAuthLoginRoute(url: string): boolean {
   const path = url.split("?")[0] ?? url;
-  if (!path.startsWith(AUTH_ROUTES_PREFIX)) return false;
-  return LOGIN_ENDPOINTS.some((endpoint) => path.endsWith(endpoint));
+  return AUTH_LOGIN_ROUTES.has(path);
 }
 
 export function isSignoutRoute(url: string): boolean {
@@ -21,8 +31,7 @@ export function isSignoutRoute(url: string): boolean {
 
 export function isPasswordChangeRoute(url: string): boolean {
   const path = url.split("?")[0] ?? url;
-  if (!path.startsWith(AUTH_ROUTES_PREFIX)) return false;
-  return path.endsWith(PASSWORD_CHANGE_ENDPOINT);
+  return path === PASSWORD_CHANGE_ROUTE;
 }
 
 function buildUsernameKey(request: FastifyRequest): string {
@@ -31,57 +40,69 @@ function buildUsernameKey(request: FastifyRequest): string {
   return `username:${username || "unknown"}`;
 }
 
-function buildBearerTokenKey(request: FastifyRequest): string {
-  const header = request.headers.authorization;
-  if (header?.startsWith("Bearer ")) {
-    const digest = new Bun.CryptoHasher("sha256")
-      .update(header.slice("Bearer ".length))
-      .digest("hex");
-    return `token:${digest}`;
-  }
+function buildIpKey(request: FastifyRequest): string {
   return `ip:${request.ip}`;
+}
+
+function buildBearerTokenDigest(request: FastifyRequest): string | undefined {
+  const header = request.headers.authorization;
+  if (!header?.startsWith("Bearer ")) return undefined;
+  return new Bun.CryptoHasher("sha256").update(header.slice("Bearer ".length)).digest("hex");
+}
+
+async function sendTooManyAttempts(
+  reply: FastifyReply,
+  message: string,
+  retryAfterMs: number,
+): Promise<void> {
+  await reply.code(429).send({
+    statusCode: 429,
+    error: "Too Many Requests",
+    message: `${message}. Повторите через ${Math.max(Math.ceil(retryAfterMs / 1000), 1)} с.`,
+  });
 }
 
 export async function registerAuthRateLimit(
   instance: FastifyInstance,
-  options: { max: number; timeWindow: number },
+  options: AuthRateLimitOptions,
 ): Promise<void> {
-  await instance.register(rateLimit, {
-    global: false,
-    nameSpace: "auth-rate-limit",
-    keyGenerator: buildUsernameKey,
-    errorResponseBuilder: (_request: FastifyRequest, context) => ({
-      statusCode: 429,
-      error: "Too Many Requests",
-      message: `Слишком много попыток входа. Повторите через ${Math.ceil(context.ttl / 1000)} с.`,
-    }),
+  const store = options.store ?? new MemorySlidingWindowStore();
+  const usernameLimiter = new SlidingWindowRateLimiter(store, {
+    max: options.max,
+    windowMs: options.timeWindow,
   });
-
-  const limitLoginAttempts = instance.rateLimit({
+  const ipLimiter = new SlidingWindowRateLimiter(store, {
+    max: options.ipMax,
+    windowMs: options.timeWindow,
+  });
+  const tokenLimiter = new SlidingWindowRateLimiter(store, {
     max: options.max,
-    timeWindow: options.timeWindow,
-    keyGenerator: buildUsernameKey,
-  }) as unknown as RateLimitHook;
-
-  const limitPasswordAttempts = instance.rateLimit({
-    max: options.max,
-    timeWindow: options.timeWindow,
-    keyGenerator: buildBearerTokenKey,
-    errorResponseBuilder: (_request: FastifyRequest, context) => ({
-      statusCode: 429,
-      error: "Too Many Requests",
-      message: `Слишком много попыток смены пароля. Повторите через ${Math.ceil(context.ttl / 1000)} с.`,
-    }),
-  }) as unknown as RateLimitHook;
+    windowMs: options.timeWindow,
+  });
 
   instance.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     const url = request.raw.url ?? "";
+
     if (isAuthLoginRoute(url) || isSignoutRoute(url)) {
-      await limitLoginAttempts(request, reply);
+      const usernameHit = await usernameLimiter.hit(buildUsernameKey(request));
+      const ipHit = await ipLimiter.hit(buildIpKey(request));
+      const denied = usernameHit.allowed ? ipHit : usernameHit;
+      if (!denied.allowed) {
+        await sendTooManyAttempts(reply, LOGIN_ATTEMPTS_MESSAGE, denied.retryAfterMs);
+      }
       return;
     }
+
     if (isPasswordChangeRoute(url)) {
-      await limitPasswordAttempts(request, reply);
+      const digest = buildBearerTokenDigest(request);
+      const tokenHit = digest
+        ? await tokenLimiter.hit(`token:${digest}`)
+        : { allowed: true, retryAfterMs: 0 };
+      const ipHit = await ipLimiter.hit(buildIpKey(request));
+      const denied = tokenHit.allowed ? ipHit : tokenHit;
+      if (!denied.allowed) {
+        await sendTooManyAttempts(reply, PASSWORD_ATTEMPTS_MESSAGE, denied.retryAfterMs);
+      }
     }
   });
 }

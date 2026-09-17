@@ -53,6 +53,14 @@ describe("Bootstrap реального AppModule", () => {
     expect(html).toContain("Scalar");
   });
 
+  it("API-маршруты живут под /v1, Yggdrasil — в корне (TASK-83)", async () => {
+    const v1Response = await fetch(`${baseUrl}/v1/common/status`);
+    expect(v1Response.status).not.toBe(404);
+
+    const yggdrasilResponse = await fetch(`${baseUrl}/sessionserver/session/minecraft/hasJoined`);
+    expect(yggdrasilResponse.status).not.toBe(404);
+  });
+
   it("корень отвечает метаданными Yggdrasil", async () => {
     const response = await fetch(`${baseUrl}/`);
 

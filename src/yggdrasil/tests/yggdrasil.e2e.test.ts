@@ -21,13 +21,10 @@ import {
   type YggdrasilProfile,
   type YggdrasilSeedUser,
 } from "../service/yggdrasil_store";
-import { YggdrasilMapTokenStore, YggdrasilMapSessionStore } from "../../memory/yggdrasil-map.store";
+import { YggdrasilMapTokenStore, YggdrasilMapSessionStore } from "../../memory/yggdrasil_map_store";
 import { MemoryModule } from "../../memory/memory.module";
 import { MemoryDb } from "../../memory/memory-db";
-import {
-  UserContentMapStore,
-  UserContentMapStoreToken,
-} from "../../user-content/user-content.store";
+import { UserContentMapStore, UserContentStoreToken } from "../../user-content/user_content_store";
 import GlobalConfig from "../../config/global-config";
 import { AppConfigToken } from "../../config/app-config.provider";
 import { registerAuthRateLimit } from "../../common/auth-rate-limit";
@@ -115,7 +112,7 @@ describe("Yggdrasil эндпоинты", () => {
           inject: [MemoryDb],
         },
         {
-          provide: UserContentMapStoreToken,
+          provide: UserContentStoreToken,
           useClass: UserContentMapStore,
         },
       ],
@@ -124,13 +121,13 @@ describe("Yggdrasil эндпоинты", () => {
     app = moduleFixture.createNestApplication(new FastifyAdapter({ bodyLimit: 1024 * 1024 }));
     app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
     const fastifyInstance = app.getHttpAdapter().getInstance() as FastifyInstance;
-    await registerAuthRateLimit(fastifyInstance, { max: 10, timeWindow: 60000 });
+    await registerAuthRateLimit(fastifyInstance, { max: 10, ipMax: 1000, timeWindow: 60000 });
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
 
     store = moduleFixture.get(YggdrasilStoreToken) as YggdrasilMapStore;
     tokenStore = moduleFixture.get(YggdrasilTokenStoreToken) as YggdrasilMapTokenStore;
-    contentStore = moduleFixture.get(UserContentMapStoreToken) as UserContentMapStore;
+    contentStore = moduleFixture.get(UserContentStoreToken) as UserContentMapStore;
   });
 
   afterAll(async () => {
@@ -139,8 +136,6 @@ describe("Yggdrasil эндпоинты", () => {
     }
     await app.close();
   });
-
-  // ─── GET / (metadata) ───
 
   describe("GET /", () => {
     it("возвращает API metadata", async () => {
@@ -165,8 +160,6 @@ describe("Yggdrasil эндпоинты", () => {
       expect(res.body.skinDomains).toEqual(["localhost"]);
     });
   });
-
-  // ─── POST /authserver/authenticate ───
 
   describe("POST /authserver/authenticate", () => {
     it("успешная аутентификация", async () => {
@@ -254,8 +247,6 @@ describe("Yggdrasil эндпоинты", () => {
       expect(res.body.accessToken).not.toContain("-");
     });
   });
-
-  // ─── POST /authserver/refresh ───
 
   describe("POST /authserver/refresh", () => {
     it("выдаёт новый токен и инвалидирует старый", async () => {
@@ -430,8 +421,6 @@ describe("Yggdrasil эндпоинты", () => {
     });
   });
 
-  // ─── POST /authserver/validate ───
-
   describe("POST /authserver/validate", () => {
     it("возвращает 204 для валидного токена", async () => {
       const authRes = await supertest(app.getHttpServer())
@@ -476,8 +465,6 @@ describe("Yggdrasil эндпоинты", () => {
         .expect(403);
     });
   });
-
-  // ─── POST /authserver/invalidate ───
 
   describe("POST /authserver/invalidate", () => {
     it("инвалидирует токен", async () => {
@@ -546,8 +533,6 @@ describe("Yggdrasil эндпоинты", () => {
     });
   });
 
-  // ─── POST /authserver/signout ───
-
   describe("POST /authserver/signout", () => {
     it("инвалидирует все токены пользователя", async () => {
       const authRes = await supertest(app.getHttpServer())
@@ -582,8 +567,6 @@ describe("Yggdrasil эндпоинты", () => {
         .expect(403);
     });
   });
-
-  // ─── Session Server ───
 
   async function authenticateAndBindProfile(): Promise<string> {
     const authRes = await supertest(app.getHttpServer())
@@ -921,8 +904,6 @@ describe("Yggdrasil эндпоинты", () => {
     });
   });
 
-  // ─── API: Batch Profiles ───
-
   describe("POST /api/profiles/minecraft", () => {
     it("возвращает профили по именам", async () => {
       const res = await supertest(app.getHttpServer())
@@ -1000,8 +981,6 @@ describe("Yggdrasil эндпоинты", () => {
       expect(res.body).toEqual([]);
     });
   });
-
-  // ─── API: Texture Upload/Delete ───
 
   describe("PUT /api/user/profile/:uuid/skin", () => {
     it("возвращает 401 без Authorization заголовка", async () => {
@@ -1213,8 +1192,6 @@ describe("Yggdrasil эндпоинты", () => {
     });
   });
 
-  // ─── Жизненный цикл файлов текстур ───
-
   describe("Жизненный цикл файлов текстур", () => {
     const resetProfile = async (): Promise<void> => {
       await store.saveProfile({
@@ -1354,8 +1331,6 @@ describe("Yggdrasil эндпоинты", () => {
     });
   });
 
-  // ─── Порядок записи текстуры при сбоях (TASK-93) ───
-
   describe("Порядок записи текстуры при сбоях", () => {
     const resetProfile = async (): Promise<void> => {
       await store.saveProfile({
@@ -1424,8 +1399,6 @@ describe("Yggdrasil эндпоинты", () => {
     });
   });
 
-  // ─── Формат ошибок ───
-
   describe("Формат ошибок", () => {
     it("ошибки содержат error и errorMessage", async () => {
       const res = await supertest(app.getHttpServer())
@@ -1449,8 +1422,6 @@ describe("Yggdrasil эндпоинты", () => {
       expect(res.body.errorMessage).toBe("Invalid token.");
     });
   });
-
-  // ─── Бан и approve (TASK-35) ───
 
   const seedUserToken = async (
     username: string,
@@ -1557,8 +1528,6 @@ describe("Yggdrasil эндпоинты", () => {
     });
   });
 
-  // ─── JWT-ветка join и текстур (TASK-29) ───
-
   describe("JWT-ветка join и текстур (TASK-29)", () => {
     const accessJwt = (): string =>
       encodeAccessJwt({
@@ -1630,8 +1599,6 @@ describe("Yggdrasil эндпоинты", () => {
     });
   });
 
-  // ─── Rate limit /authserver/signout (TASK-37) ───
-
   describe("Rate limit /authserver/signout", () => {
     it("11-я попытка signout по одному username — 429", async () => {
       for (let i = 0; i < 10; i++) {
@@ -1658,8 +1625,6 @@ describe("Yggdrasil эндпоинты", () => {
       }
     });
   });
-
-  // ─── Валидация DTO: MaxLength (TASK-34) ───
 
   describe("Валидация DTO: MaxLength", () => {
     const long = (length: number): string => "a".repeat(length);

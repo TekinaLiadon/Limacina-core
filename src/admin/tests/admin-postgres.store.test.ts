@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import type { AdminUser } from "../admin.store";
-import { AdminPostgresStore } from "../admin_postgres.store";
-import { AuthPostgresStore } from "../../auth/service/auth_postgres.service";
-import type { StoredUser } from "../../auth/service/auth_store.service";
+import type { AdminUser } from "../admin_store";
+import { AdminPostgresStore } from "../admin_postgres_store";
+import { AuthPostgresStore } from "../../auth/service/auth_postgres_store";
+import type { StoredUser } from "../../auth/service/auth_store";
 import {
   cleanupTrackedUsers,
   createPostgresUser,

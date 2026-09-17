@@ -5,7 +5,6 @@ import { RegisterDto, AuthDto, ChangePasswordDto, AuthRefreshDto } from "../../a
 import {
   ApproveUserDto,
   BanUserDto,
-  LauncherConfigUpdateDto,
   SetOwnerDto,
   SetRoleDto,
   SetUserPasswordDto,
@@ -14,7 +13,8 @@ import {
   V1LogsQueryDto,
 } from "../../admin/dto/dto";
 import { InitOwnerDto, RestartServerDto } from "../../technical/dto/dto";
-import { AuthenticateDto, JoinDto, SignoutDto } from "../../yggdrasil/dto/dto";
+import { LauncherConfigDto } from "../../launcher/dto/dto";
+import { AuthenticateDto, GameProfileDto, JoinDto, SignoutDto } from "../../yggdrasil/dto/dto";
 
 const LATIN_ONLY = /[A-Za-z]/;
 const ALLOWED_TERMS =
@@ -78,6 +78,11 @@ describe("Сообщения валидации DTO на русском", () => 
   it("AuthDto: длинный username (TASK-11)", () => {
     const errors = validate(AuthDto, { username: "a".repeat(65), password: "secret123" });
     expect(errors).toEqual(["username: максимум 64 символов"]);
+  });
+
+  it("AuthDto: минимум 3 символа пароля — логин не режет легаси-аккаунты", () => {
+    const errors = validate(AuthDto, { username: "john", password: "12" });
+    expect(errors).toEqual(["password: минимум 3 символов"]);
   });
 
   it("ChangePasswordDto: границы длины пароля", () => {
@@ -161,8 +166,8 @@ describe("Сообщения валидации DTO на русском", () => 
     expect(errors).toEqual(["password: минимум 6 символов"]);
   });
 
-  it("LauncherConfigUpdateDto: типы полей", () => {
-    const errors = validate(LauncherConfigUpdateDto, {
+  it("LauncherConfigDto: типы полей", () => {
+    const errors = validate(LauncherConfigDto, {
       projectName: "Cordelia",
       mcVersion: "1.21.1",
       modLoader: "neoforge",
@@ -227,6 +232,18 @@ describe("Сообщения валидации DTO на русском", () => 
     expect(errors).toContain("serverId: ожидается строка");
   });
 
+  it("GameProfileDto: вложенные поля профиля", () => {
+    const errors = validate(GameProfileDto, {
+      id: 1,
+      name: 2,
+      properties: [{ name: 3, value: 4 }],
+    });
+    expect(errors).toContain("profile.id: ожидается строка");
+    expect(errors).toContain("profile.name: ожидается строка");
+    expect(errors).toContain("profile.properties.name: ожидается строка");
+    expect(errors).toContain("profile.properties.value: ожидается строка");
+  });
+
   it("все сообщения на русском", () => {
     const allCases: [new () => object, object][] = [
       [RegisterDto, { username: "player_2024", password: "pass123" }],
@@ -247,7 +264,7 @@ describe("Сообщения валидации DTO на русском", () => 
       [InitOwnerDto, { username: "owner", password: "securepassword" }],
       [RestartServerDto, { rebuild: true }],
       [
-        LauncherConfigUpdateDto,
+        LauncherConfigDto,
         {
           projectName: "Cordelia",
           mcVersion: "1.21.1",

@@ -5,9 +5,9 @@ setupTestEnv();
 import { describe, expect, it } from "bun:test";
 import { Test } from "@nestjs/testing";
 import { buildCachePrefix, CacheModule, createCacheStore } from "../cache.module";
-import { CacheStoreToken, DEFAULT_CACHE_TTL_MS, type ICacheStore } from "../cache.store";
-import { RedisCacheStore } from "../redis.store";
-import { CacheMapStore } from "../../memory/cache-map.store";
+import { CacheStoreToken, DEFAULT_CACHE_TTL_MS, type ICacheStore } from "../cache_store";
+import { RedisCacheStore } from "../redis_store";
+import { CacheMapStore } from "../../memory/cache_map_store";
 import { MemoryDb } from "../../memory/memory-db";
 import type { AppConfigType } from "../../config/global-config";
 

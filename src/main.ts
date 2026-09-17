@@ -8,27 +8,28 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { apiReference } from "@scalar/nestjs-api-reference";
 import { ValidationPipe, Logger as NestLogger, type INestApplication } from "@nestjs/common";
 import { Logger } from "nestjs-pino";
-import GlobalConfig from "./config/global-config";
+import GlobalConfig, { type AppConfigType } from "./config/global-config";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { RedisClient } from "bun";
 import fastifyStatic from "@fastify/static";
 import cors from "@fastify/cors";
 import fastifyMultipart from "@fastify/multipart";
 import { registerAuthRateLimit } from "./common/auth-rate-limit";
+import { registerGlobalRateLimit } from "./common/global-rate-limit";
+import { RedisRateLimitStore } from "./common/rate-limit-redis-store";
+import { buildCachePrefix } from "./cache/cache.module";
+import { buildAdapterOptions } from "./config/adapter-options";
 import { registerProcessErrorHandlers } from "./config/process-error-handlers";
-
-const DEFAULT_BODY_LIMIT_BYTES = Math.round(1.3 * 1024 * 1024);
 
 export async function bootstrap(): Promise<INestApplication> {
   const envConfig = GlobalConfig.parseEnvOrExit();
-  const adapterOptions: { trustProxy?: string; bodyLimit: number } = {
-    bodyLimit: DEFAULT_BODY_LIMIT_BYTES,
-  };
-  if (envConfig.TRUST_PROXY && envConfig.TRUST_PROXY.length > 0) {
-    adapterOptions.trustProxy = envConfig.TRUST_PROXY;
-  }
-  const app = await NestFactory.create(AppModule, new FastifyAdapter(adapterOptions), {
-    bufferLogs: true,
-  });
+  const app = await NestFactory.create(
+    AppModule,
+    new FastifyAdapter(buildAdapterOptions(envConfig)),
+    {
+      bufferLogs: true,
+    },
+  );
 
   const logger = app.get(Logger);
   app.useLogger(logger);
@@ -77,9 +78,25 @@ export async function bootstrap(): Promise<INestApplication> {
 
   await instance.register(fastifyMultipart, { limits: { fileSize: 50 * 1024 * 1024 } });
 
+  const rateLimitStore = createRateLimitStore(envConfig);
+  if (rateLimitStore) {
+    instance.addHook("onClose", async (): Promise<void> => {
+      rateLimitStore.close();
+    });
+  }
+
+  const storeOptions = rateLimitStore ? { store: rateLimitStore } : {};
+  await registerGlobalRateLimit(instance, {
+    max: envConfig.RATE_LIMIT_GLOBAL_MAX,
+    timeWindow: envConfig.RATE_LIMIT_GLOBAL_WINDOW,
+    ...storeOptions,
+  });
+
   await registerAuthRateLimit(instance, {
     max: envConfig.RATE_LIMIT_AUTH_MAX,
+    ipMax: envConfig.RATE_LIMIT_AUTH_IP_MAX,
     timeWindow: envConfig.RATE_LIMIT_AUTH_WINDOW,
+    ...storeOptions,
   });
 
   logger.log("Идет запуск...", "App");
@@ -113,7 +130,8 @@ export async function bootstrap(): Promise<INestApplication> {
     )
     .build();
 
-  const documentFactory = () => SwaggerModule.createDocument(app, config);
+  let openApiDocument: ReturnType<typeof SwaggerModule.createDocument> | undefined;
+  const documentFactory = () => (openApiDocument ??= SwaggerModule.createDocument(app, config));
   await instance.get("/openapi.json", async (_request: FastifyRequest, reply: FastifyReply) => {
     try {
       return documentFactory();
@@ -141,6 +159,13 @@ export async function bootstrap(): Promise<INestApplication> {
 
   await app.listen(envConfig.PORT, "0.0.0.0");
   return app;
+}
+
+function createRateLimitStore(envConfig: AppConfigType): RedisRateLimitStore | undefined {
+  if (!envConfig.REDIS_URL) return undefined;
+
+  const client = new RedisClient(envConfig.REDIS_URL, { enableOfflineQueue: false });
+  return new RedisRateLimitStore(client, `${buildCachePrefix(envConfig)}:rate-limit:`);
 }
 
 async function servePanelFallback(

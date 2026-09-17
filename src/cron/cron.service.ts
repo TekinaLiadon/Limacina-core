@@ -64,7 +64,11 @@ export class CronService implements OnModuleInit, OnModuleDestroy {
   private scheduleNextFire(): void {
     const delay = nextDailyFireAt(CRON_FIRE_HOUR, Date.now()) - Date.now();
     this.timer = setTimeout(() => {
-      void this.runAll().then(() => this.scheduleNextFire());
+      void this.runAll()
+        .catch((error: unknown) => {
+          this.logger.error({ err: error }, "Ошибка прогона cron-задач");
+        })
+        .then(() => this.scheduleNextFire());
     }, delay);
     this.timer.unref();
   }

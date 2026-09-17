@@ -3,7 +3,7 @@ import { mkdir, readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 
-const LOGS_DIR = join(process.cwd(), "logs");
+export const LOGS_DIR = join(process.cwd(), "logs");
 const RETENTION_DAYS = 7;
 const CLEANUP_INTERVAL_MS = 3600_000;
 const FILE_CHECK_INTERVAL_MS = 60_000;
@@ -94,6 +94,7 @@ export function createLogStream(): Writable {
 
   const wrapper = new Writable({
     write(chunk, encoding, callback) {
+      process.stdout.write(chunk, encoding);
       const date = today();
       if (date !== currentDate || streamFailed) {
         closeLogStream(stream);

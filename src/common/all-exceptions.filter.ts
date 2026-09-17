@@ -20,12 +20,21 @@ export class AllExceptionsFilter implements ExceptionFilter {
     }
 
     if (exception instanceof HttpException) {
+      if (exception.getStatus() >= 500) {
+        this.logger.error(
+          { err: exception, statusCode: exception.getStatus() },
+          "Ошибка сервера в обработчике запроса",
+        );
+      }
       response.status(exception.getStatus()).send(exception.getResponse());
       return;
     }
 
     const statusCode = extractErrorStatusCode(exception);
     if (statusCode !== undefined) {
+      if (statusCode >= 500) {
+        this.logger.error({ err: exception, statusCode }, "Ошибка сервера в обработчике запроса");
+      }
       const message =
         statusCode < 500 && exception instanceof Error
           ? exception.message

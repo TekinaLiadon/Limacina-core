@@ -12,11 +12,13 @@ import {
 } from "@nestjs/common";
 import { parse as parseToml } from "smol-toml";
 import { watch, type FSWatcher } from "chokidar";
+import { isMissingFileError } from "../utils/fs";
 import type { LauncherConfigDto, LauncherVersionsDto } from "./dto/dto";
 import type { FastifyReply } from "fastify";
 import {
   LAUNCHER_VERSION_REGEX,
   OLD_VERSIONS_DIR,
+  PUBLIC_DIR,
   SUPPORTED_PLATFORMS,
   buildLauncherZipName,
   compareVersions,
@@ -24,18 +26,8 @@ import {
   parseLauncherZipName,
 } from "./launcher-files";
 
-const PUBLIC_DIR = "public";
 const VERSION_FILE = join(PUBLIC_DIR, "version.json");
 const CONFIG_FILE = "config.toml";
-
-function isMissingFileError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code: unknown }).code === "ENOENT"
-  );
-}
 
 interface PlatformInfo {
   os: string;

@@ -1,4 +1,5 @@
 import { setupTestEnv } from "../../../../utils/tests/test-env";
+import { applyV1ApiPrefix } from "../../../../utils/tests/v1-prefix";
 
 setupTestEnv();
 
@@ -14,15 +15,12 @@ import { ExtractJwt, Strategy } from "passport-jwt";
 import fastifyMultipart from "@fastify/multipart";
 import supertest from "supertest";
 import { V1ContentController } from "../content.controller";
-import {
-  MAX_MODEL_BYTES,
-  MAX_SKIN_BYTES,
-  UserContentService,
-} from "../../../../user-content/user-content.service";
+import { MAX_MODEL_BYTES, UserContentService } from "../../../../user-content/user-content.service";
+import { MAX_TEXTURE_BYTES } from "../../../../utils/texture";
 import {
   UserContentMapStore,
-  UserContentMapStoreToken,
-} from "../../../../user-content/user-content.store";
+  UserContentStoreToken,
+} from "../../../../user-content/user_content_store";
 import GlobalConfig from "../../../../config/global-config";
 import { AppConfigToken } from "../../../../config/app-config.provider";
 import { Jwt_authGuard } from "../../../../common/jwt_auth.guard";
@@ -75,7 +73,7 @@ describe("V1 common/content — лимиты и валидация загруз�
         { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
         TestJwtStrategy,
         {
-          provide: UserContentMapStoreToken,
+          provide: UserContentStoreToken,
           useClass: UserContentMapStore,
         },
       ],
@@ -91,14 +89,20 @@ describe("V1 common/content — лимиты и валидация загруз�
     const reflector = app.get(Reflector);
     app.useGlobalGuards(new Jwt_authGuard(reflector), new RolesGuard(reflector));
     jwtService = moduleFixture.get(JwtService);
+    applyV1ApiPrefix(app);
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
 
-    userToken = jwtService.sign({ sub: TEST_UUID, username: "streamlimit", role: "user" });
+    userToken = jwtService.sign({
+      typ: "access",
+      sub: TEST_UUID,
+      username: "streamlimit",
+      role: "user",
+    });
   });
 
   afterAll(async () => {
-    const store = app.get(UserContentMapStoreToken);
+    const store = app.get(UserContentStoreToken);
     for (const type of ["skin", "cape", "model"] as const) {
       for (const item of await store.findByUserUuid(TEST_UUID, type)) {
         await store.deleteByIdAndCountRemaining(item.id, type);
@@ -168,7 +172,11 @@ describe("V1 common/content — лимиты и валидация загруз�
     });
 
     it("загружает скин ровно 512 КБ и удаляет его", async (): Promise<void> => {
-      const res = await upload("/v1/common/content/skins", pngBuffer(MAX_SKIN_BYTES), "skin.png");
+      const res = await upload(
+        "/v1/common/content/skins",
+        pngBuffer(MAX_TEXTURE_BYTES),
+        "skin.png",
+      );
       expect(res.status).toBe(201);
       trackUploadedFile(res.body.url);
 
@@ -192,7 +200,7 @@ describe("V1 common/content — лимиты и валидация загруз�
     it("возвращает 413 для скина сверх 1 МБ", async (): Promise<void> => {
       const res = await upload(
         "/v1/common/content/skins",
-        pngBuffer(MAX_SKIN_BYTES * 2 + 1),
+        pngBuffer(MAX_TEXTURE_BYTES * 2 + 1),
         "skin.png",
       );
       expect(res.status).toBe(413);

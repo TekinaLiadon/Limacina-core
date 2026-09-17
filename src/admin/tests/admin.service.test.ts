@@ -3,9 +3,10 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 setupTestEnv();
 
 import { describe, expect, it, spyOn } from "bun:test";
+import { BadRequestException } from "@nestjs/common";
 import { AdminService } from "../admin.service";
-import { AdminMapStore } from "../admin.store";
-import { AuthMapStore } from "../../auth/service/auth_store.service";
+import { AdminMapStore } from "../admin_store";
+import { AuthMapStore } from "../../auth/service/auth_store";
 import { CronService } from "../../cron/cron.service";
 
 const ACTOR = {
@@ -143,6 +144,17 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     const stored = await authStore.findByUsername("rollbacktarget");
     expect(await Bun.password.verify("newownerpass", stored!.passwordHash)).toBe(true);
     expect(await authStore.findRefresh("rollback-jti")).toBeUndefined();
+  });
+
+  it("setUserPassword отклоняет короткий пароль (TASK-265)", async (): Promise<void> => {
+    const { authStore, service } = await seed();
+
+    await expect(service.setUserPassword("rollbacktarget", "12345", ACTOR)).rejects.toThrow(
+      BadRequestException,
+    );
+
+    const stored = await authStore.findByUsername("rollbacktarget");
+    expect(await Bun.password.verify("rollbackpass", stored!.passwordHash)).toBe(true);
   });
 
   it("deleteUser откатывает удаление в admin-сторе при сбое auth-стора", async (): Promise<void> => {

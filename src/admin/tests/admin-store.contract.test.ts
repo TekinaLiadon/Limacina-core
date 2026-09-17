@@ -3,11 +3,11 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 setupTestEnv();
 
 import { afterAll, beforeAll, beforeEach, expect, it } from "bun:test";
-import { AdminMapStore } from "../admin.store";
-import type { AdminUser, IAdminStore, UsersFilter } from "../admin.store";
-import { AdminPostgresStore } from "../admin_postgres.store";
-import { AuthPostgresStore } from "../../auth/service/auth_postgres.service";
-import type { StoredUser } from "../../auth/service/auth_store.service";
+import { AdminMapStore, type AdminUser, type IAdminStore } from "../admin_store";
+import type { UsersFilter } from "../admin.service";
+import { AdminPostgresStore } from "../admin_postgres_store";
+import { AuthPostgresStore } from "../../auth/service/auth_postgres_store";
+import type { StoredUser } from "../../auth/service/auth_store";
 import { generateUuid } from "../../utils/uuid";
 import {
   cleanupTrackedUsers,

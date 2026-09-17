@@ -10,8 +10,9 @@ import {
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { copyFile, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { AdminMapStoreToken, type IAdminStore } from "../admin/admin.store";
-import { AuthMapStoreToken, type IAuthStore } from "../auth/service/auth_store.service";
+import { AdminMapStoreToken, type IAdminStore } from "../admin/admin_store";
+import { AuthStoreToken, type IAuthStore } from "../auth/service/auth_store";
+import { validatePasswordPolicy } from "../auth/password-policy";
 import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 import { generateUuid } from "../utils/uuid";
@@ -186,7 +187,7 @@ export class TechnicalService {
 
   constructor(
     @Inject(AdminMapStoreToken) private readonly adminStore: IAdminStore,
-    @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
+    @Inject(AuthStoreToken) private readonly authStore: IAuthStore,
     @Inject(AppConfigToken) private readonly appConfig: AppConfigType,
     @Optional() private readonly bootstrapTokenPath: string = join(
       process.cwd(),
@@ -231,7 +232,7 @@ export class TechnicalService {
 
   async restartServer(actor: RequestUser): Promise<void> {
     if (!this.scheduleShutdown()) {
-      this.logger.warn(
+      this.logger.error(
         { actor: actor.username },
         "Повторный запрос перезапуска отклонён: остановка уже запланирована",
       );
@@ -472,6 +473,8 @@ export class TechnicalService {
   }
 
   private async saveOwner(username: string, password: string): Promise<InitOwnerResponseDto> {
+    validatePasswordPolicy(password);
+
     if (await this.authStore.userExists(username)) {
       throw new ConflictException("Юзернейм уже занят");
     }

@@ -17,7 +17,7 @@ const TOTAL_COUNT_HEADER = {
 
 @ApiTags("launcher_files")
 @Public()
-@Controller("v1/launcher/files")
+@Controller("launcher/files")
 export class V1LauncherFilesController {
   constructor(private readonly filesService: FilesService) {}
 

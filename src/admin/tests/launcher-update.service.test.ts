@@ -7,13 +7,14 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  rmdirSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { LauncherUpdateService, type LauncherPlatformFile } from "../launcher-update.service";
-import { OLD_VERSIONS_DIR } from "../../launcher/launcher-files";
+import { OLD_VERSIONS_DIR, UPLOAD_TMP_DIR } from "../../launcher/launcher-files";
 
 const VERSION_FILE = "public/version.json";
 const VERSION_BACKUP = "public/version.json.bak";
@@ -22,7 +23,6 @@ const OLD_DIR = join(PLATFORM_DIR, "old");
 const MACOS_PLATFORM_DIR = "public/macos/arm64";
 const MACOS_PARENT_DIR = "public/macos";
 const MACOS_ZIP_PATH = join(MACOS_PLATFORM_DIR, "Limacina-1.0.0-macos-arm64.zip");
-const UPLOAD_TMP_DIR = "public/.upload-tmp";
 
 function zipPath(version: string): string {
   return join(PLATFORM_DIR, `Limacina-${version}-linux-x86_64.zip`);
@@ -374,6 +374,40 @@ describe("LauncherUpdateService — порядок мутаций и атома�
     expect(existsSync(sandboxZipPath("4.0.0"))).toBe(false);
     expect(zipsInDir(sandboxOldDir)).toEqual([]);
     expect(existsSync(UPLOAD_TMP_DIR) ? readdirSync(UPLOAD_TMP_DIR) : []).toEqual([]);
+  });
+
+  it("сбой записи version.json при перезаливке той же версии не теряет текущий zip", () => {
+    seedBaseline();
+
+    mkdirSync(join("public", "version.json.tmp"), { recursive: true });
+    try {
+      expect(() =>
+        service.update("1.0.0", [stageZip("windows", "x86_64", "content-1.0.0-hotfix")]),
+      ).toThrow();
+    } finally {
+      rmdirSync(join("public", "version.json.tmp"));
+    }
+
+    expect(readVersionFile()).toBe("1.0.0");
+    expect(readFileSync(sandboxZipPath("1.0.0"), "utf-8")).toBe("content-1.0.0");
+    expect(existsSync(`${sandboxZipPath("1.0.0")}.replaced`)).toBe(false);
+    expect(zipsInDir(sandboxDir)).toEqual(["Limacina-1.0.0-windows-x86_64.zip"]);
+    expect(zipsInDir(sandboxOldDir)).toEqual([]);
+    expect(existsSync(UPLOAD_TMP_DIR) ? readdirSync(UPLOAD_TMP_DIR) : []).toEqual([]);
+  });
+
+  it("сбой переименования temp-файла откатывает архивацию old/ — текущий zip на месте", () => {
+    seedBaseline();
+
+    const missingTempPath = join(UPLOAD_TMP_DIR, "missing.zip");
+    expect(() =>
+      service.update("2.0.0", [{ os: "windows", arch: "x86_64", tempPath: missingTempPath }]),
+    ).toThrow();
+
+    expect(readVersionFile()).toBe("1.0.0");
+    expect(readFileSync(sandboxZipPath("1.0.0"), "utf-8")).toBe("content-1.0.0");
+    expect(zipsInDir(sandboxDir)).toEqual(["Limacina-1.0.0-windows-x86_64.zip"]);
+    expect(zipsInDir(sandboxOldDir)).toEqual([]);
   });
 
   it("мультиплатформенный update не оставляет частичного состояния при сбое второй платформы", () => {

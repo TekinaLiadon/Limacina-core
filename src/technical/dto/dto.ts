@@ -1,6 +1,7 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { validationMessages } from "../../common/validation-messages";
+import { MIN_PASSWORD_LENGTH } from "../../auth/password-policy";
 export class InitOwnerDto {
   @ApiProperty({
     example: "9f2c4a1e8d7b3f6c0a5e9d2b7c1f4a8e3d6b9c2f5a8e1d4b7c0f3a6e9d2b5c18",
@@ -21,11 +22,13 @@ export class InitOwnerDto {
   @ApiProperty({
     example: "securepassword",
     description: "Пароль владельца",
-    minLength: 6,
+    minLength: MIN_PASSWORD_LENGTH,
     maxLength: 128,
   })
   @IsString({ message: validationMessages.string("password") })
-  @MinLength(6, { message: validationMessages.minLength("password", 6) })
+  @MinLength(MIN_PASSWORD_LENGTH, {
+    message: validationMessages.minLength("password", MIN_PASSWORD_LENGTH),
+  })
   @MaxLength(128, { message: validationMessages.maxLength("password", 128) })
   password!: string;
 }

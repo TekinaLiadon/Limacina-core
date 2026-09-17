@@ -9,6 +9,13 @@ lerna-debug.log*
 
 public/launcher/
 public/panel
+public/version.json
+public/releases/
+public/textures/*
+!public/textures/default.png
+public/capes/*
+public/models/*
+public/.upload-tmp/
 keys/
 bootstrap.token
 .idea

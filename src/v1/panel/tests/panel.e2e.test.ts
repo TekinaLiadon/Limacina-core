@@ -1,4 +1,5 @@
 import { setupTestEnv } from "../../../utils/tests/test-env";
+import { applyV1ApiPrefix } from "../../../utils/tests/v1-prefix";
 
 setupTestEnv();
 
@@ -37,10 +38,11 @@ import { AdminService } from "../../../admin/admin.service";
 import { CronService } from "../../../cron/cron.service";
 import { LogsService } from "../../../admin/logs.service";
 import { LauncherUpdateService } from "../../../admin/launcher-update.service";
+import { LauncherReleaseService } from "../../../admin/launcher-release.service";
 import { ConfigUpdateService } from "../../../admin/config-update.service";
 import { TechnicalService } from "../../../technical/technical.service";
-import { AdminMapStore, AdminMapStoreToken } from "../../../admin/admin.store";
-import { AuthMapStore, AuthMapStoreToken } from "../../../auth/service/auth_store.service";
+import { AdminMapStore, AdminMapStoreToken } from "../../../admin/admin_store";
+import { AuthMapStore, AuthStoreToken } from "../../../auth/service/auth_store";
 import { buildLauncherZipName } from "../../../launcher/launcher-files";
 import GlobalConfig from "../../../config/global-config";
 import { AppConfigToken } from "../../../config/app-config.provider";
@@ -116,6 +118,7 @@ describe("V1 panel эндпоинты", (): void => {
         CronService,
         LogsService,
         LauncherUpdateService,
+        LauncherReleaseService,
         ConfigUpdateService,
         TechnicalService,
         { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
@@ -125,7 +128,7 @@ describe("V1 panel эндпоинты", (): void => {
           useClass: AdminMapStore,
         },
         {
-          provide: AuthMapStoreToken,
+          provide: AuthStoreToken,
           useClass: AuthMapStore,
         },
       ],
@@ -137,12 +140,28 @@ describe("V1 panel эндпоинты", (): void => {
     const reflector = app.get(Reflector);
     app.useGlobalGuards(new Jwt_authGuard(reflector), new RolesGuard(reflector));
     jwtService = moduleFixture.get(JwtService);
+    applyV1ApiPrefix(app);
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
 
-    adminToken = jwtService.sign({ sub: "admin-uuid", username: "admin", role: "admin" });
-    ownerToken = jwtService.sign({ sub: "owner-uuid", username: "owner", role: "owner" });
-    userToken = jwtService.sign({ sub: "user-uuid", username: "user", role: "user" });
+    adminToken = jwtService.sign({
+      typ: "access",
+      sub: "admin-uuid",
+      username: "admin",
+      role: "admin",
+    });
+    ownerToken = jwtService.sign({
+      typ: "access",
+      sub: "owner-uuid",
+      username: "owner",
+      role: "owner",
+    });
+    userToken = jwtService.sign({
+      typ: "access",
+      sub: "user-uuid",
+      username: "user",
+      role: "user",
+    });
 
     const storeInstance = moduleFixture.get(AdminMapStoreToken);
     await storeInstance.saveUser({
@@ -180,7 +199,7 @@ describe("V1 panel эндпоинты", (): void => {
       });
     }
 
-    const authStoreInstance = moduleFixture.get(AuthMapStoreToken);
+    const authStoreInstance = moduleFixture.get(AuthStoreToken);
     await authStoreInstance.saveUser({
       uuid: "user-uuid",
       username: "user",
@@ -537,7 +556,7 @@ describe("V1 panel эндпоинты", (): void => {
 
   describe("PATCH /v1/panel/users/password", () => {
     it("владелец задаёт новый пароль без знания старого", async () => {
-      const authStore = app.get(AuthMapStoreToken, { strict: false });
+      const authStore = app.get(AuthStoreToken, { strict: false });
       await authStore.saveRefresh(
         "password-test-jti",
         { userId: "user-uuid", username: "user" },
@@ -618,7 +637,7 @@ describe("V1 panel эндпоинты", (): void => {
       expect(res.body.success).toBe(true);
 
       const adminStore = app.get(AdminMapStoreToken, { strict: false });
-      const authStore = app.get(AuthMapStoreToken, { strict: false });
+      const authStore = app.get(AuthStoreToken, { strict: false });
       expect((await adminStore.findByUsername("futureowner"))?.role).toBe("owner");
       expect((await authStore.findByUsername("futureowner"))?.role).toBe("owner");
       expect((await adminStore.findByUsername("owner"))?.role).toBe("owner");
@@ -719,7 +738,7 @@ describe("V1 panel эндпоинты", (): void => {
 
     it("удаление отзывает доступ в auth-сторе и чистит refresh-токены (TASK-15)", async () => {
       const adminStore = app.get(AdminMapStoreToken, { strict: false });
-      const authStore = app.get(AuthMapStoreToken, { strict: false });
+      const authStore = app.get(AuthStoreToken, { strict: false });
       await adminStore.saveUser({
         uuid: "deletable-uuid",
         username: "deletable",
@@ -751,8 +770,8 @@ describe("V1 panel эндпоинты", (): void => {
         expect(await authStore.userExists("deletable")).toBe(false);
         expect(await authStore.findRefresh("deletable-jti")).toBeUndefined();
       } finally {
-        await adminStore.__test__deleteUser("deletable");
-        await authStore.__test__deleteUser("deletable");
+        await adminStore.deleteUser("deletable");
+        await authStore.deleteUser("deletable-uuid");
       }
     });
 
@@ -932,7 +951,7 @@ describe("V1 panel эндпоинты", (): void => {
 
     it("восстановление возвращает доступ в auth-сторе (TASK-15)", async () => {
       const adminStore = app.get(AdminMapStoreToken, { strict: false });
-      const authStore = app.get(AuthMapStoreToken, { strict: false });
+      const authStore = app.get(AuthStoreToken, { strict: false });
       const passwordHash = await Bun.password.hash("restorablepass");
       await adminStore.saveUser({
         uuid: "restorable-uuid",
@@ -967,8 +986,8 @@ describe("V1 panel эндпоинты", (): void => {
         expect(restored?.uuid).toBe("restorable-uuid");
         expect(restored?.passwordHash).toBe(passwordHash);
       } finally {
-        await adminStore.__test__deleteUser("restorable");
-        await authStore.__test__deleteUser("restorable");
+        await adminStore.deleteUser("restorable");
+        await authStore.deleteUser("restorable-uuid");
       }
     });
 
@@ -1013,7 +1032,7 @@ describe("V1 panel эндпоинты", (): void => {
       expect((await store.findByUsername("occupied"))?.uuid).toBe("occupied-live-uuid");
       expect(await store.findDeletedByUsername("occupied")).toBeDefined();
 
-      await store.__test__deleteUser("occupied");
+      await store.deleteUser("occupied");
     });
   });
 
@@ -1102,7 +1121,7 @@ describe("V1 panel эндпоинты", (): void => {
         logSpy.mockRestore();
         errorSpy.mockRestore();
         await store.setBanned("audituser", false);
-        await store.__test__deleteUser("audituser");
+        await store.deleteUser("audituser");
       }
     });
   });
@@ -1697,6 +1716,131 @@ describe("V1 panel эндпоинты", (): void => {
 
     it("возвращает 401 без токена", async () => {
       await supertest(app.getHttpServer()).patch("/v1/panel/launcher").expect(401);
+    });
+  });
+
+  describe("PATCH /v1/panel/launcher/release (tauri-plugin-updater)", () => {
+    const RELEASES_ROOT = join("public", "releases");
+    const RELEASES_BACKUP = join("public", "releases.bak");
+    const RELEASE_VERSION = "6.6.1";
+    const UPLOAD_TMP_DIR = join("public", ".upload-tmp");
+    let releasesRootExisted = false;
+
+    const releaseArtifact = (version: string, fileName: string): string =>
+      join(RELEASES_ROOT, version, fileName);
+
+    beforeAll(() => {
+      releasesRootExisted = existsSync(RELEASES_ROOT);
+      if (releasesRootExisted) {
+        renameSync(RELEASES_ROOT, RELEASES_BACKUP);
+      }
+    });
+
+    afterAll(() => {
+      rmSync(RELEASES_ROOT, { recursive: true, force: true });
+      rmSync(UPLOAD_TMP_DIR, { recursive: true, force: true });
+      if (releasesRootExisted) {
+        renameSync(RELEASES_BACKUP, RELEASES_ROOT);
+      }
+    });
+
+    it("возвращает 401 без токена", async () => {
+      await supertest(app.getHttpServer()).patch("/v1/panel/launcher/release").expect(401);
+    });
+
+    it("возвращает 400 без поля version", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher/release")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .attach("windows-x86_64", Buffer.from("installer"), "Setup.exe")
+        .attach("windows-x86_64_sig", Buffer.from("sig"), "Setup.exe.sig")
+        .expect(400);
+    });
+
+    it("возвращает 400 при невалидной версии", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher/release")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .field("version", "bad-version")
+        .expect(400);
+    });
+
+    it("возвращает 400 при неизвестном имени файлового поля", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher/release")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .field("version", RELEASE_VERSION)
+        .attach("linux_x64", Buffer.from("installer"), "app.AppImage")
+        .expect(400);
+    });
+
+    it("возвращает 400 при неподдерживаемом расширении артефакта", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher/release")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .field("version", RELEASE_VERSION)
+        .attach("windows-x86_64", Buffer.from("installer"), "Setup.msi")
+        .attach("windows-x86_64_sig", Buffer.from("sig"), "Setup.exe.sig")
+        .expect(400);
+    });
+
+    it("возвращает 400 при неполной паре артефакт+подпись", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher/release")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .field("version", RELEASE_VERSION)
+        .attach("windows-x86_64", Buffer.from("installer"), "Setup.exe")
+        .expect(400);
+    });
+
+    it("публикует релиз: артефакт и подпись по каноническим путям, temp чистится", async () => {
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher/release")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .field("version", RELEASE_VERSION)
+        .attach("windows-x86_64", Buffer.from("installer-content"), "Setup.exe")
+        .attach("windows-x86_64_sig", Buffer.from("sig-content"), "Setup.exe.sig")
+        .expect(200);
+
+      expect(res.body).toEqual({
+        version: RELEASE_VERSION,
+        published: ["windows-x86_64"],
+      });
+      expect(
+        readFileSync(
+          releaseArtifact(RELEASE_VERSION, `Limacina-${RELEASE_VERSION}-windows-x86_64.exe`),
+          "utf-8",
+        ),
+      ).toBe("installer-content");
+      expect(
+        readFileSync(
+          releaseArtifact(RELEASE_VERSION, `Limacina-${RELEASE_VERSION}-windows-x86_64.exe.sig`),
+          "utf-8",
+        ),
+      ).toBe("sig-content");
+      expect(existsSync(UPLOAD_TMP_DIR) ? readdirSync(UPLOAD_TMP_DIR) : []).toEqual([]);
+    });
+
+    it("повторная публикация заменяет файлы релиза", async () => {
+      const artifactPath = releaseArtifact(
+        RELEASE_VERSION,
+        `Limacina-${RELEASE_VERSION}-windows-x86_64.exe`,
+      );
+
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher/release")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .field("version", RELEASE_VERSION)
+        .attach("windows-x86_64", Buffer.from("installer-v2"), "Setup.exe")
+        .attach("windows-x86_64_sig", Buffer.from("sig-v2"), "Setup.exe.sig")
+        .expect(200);
+
+      expect(readFileSync(artifactPath, "utf-8")).toBe("installer-v2");
+      expect(
+        readdirSync(join(RELEASES_ROOT, RELEASE_VERSION)).some((file) =>
+          file.endsWith(".replaced"),
+        ),
+      ).toBe(false);
     });
   });
 });

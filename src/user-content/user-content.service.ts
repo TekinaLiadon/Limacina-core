@@ -8,23 +8,28 @@ import {
   Optional,
 } from "@nestjs/common";
 import {
-  UserContentMapStoreToken,
+  UserContentStoreToken,
   isUserContentLimitExceededError,
   type ContentType,
   type IUserContentStore,
-} from "./user-content.store";
+} from "./user_content_store";
 import type { UserContentUploadResponseDto } from "./dto/dto";
 import { unlinkSync } from "node:fs";
 import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 import { YggdrasilStoreToken, type IYggdrasilStore } from "../yggdrasil/service/yggdrasil_store";
 import { sanitizeFilePrefix } from "../utils/file-prefix";
-import { PngStructureError, validatePngStructure } from "../utils/png";
+import {
+  DEFAULT_SKIN_PATH,
+  MAX_TEXTURE_BYTES,
+  type SkinModel,
+  buildDefaultSkinUrl,
+  pngStructureErrorMessage,
+  sha256Hex,
+} from "../utils/texture";
+import { lastById } from "../utils/collection";
 
-export const MAX_SKIN_BYTES = 512 * 1024;
 export const MAX_MODEL_BYTES = 256 * 1024;
-const SKIN_MODELS = ["classic", "slim"] as const;
-export type SkinModel = (typeof SKIN_MODELS)[number];
 
 const hasBinaryBytes = (file: Uint8Array): boolean =>
   file.some((byte) => byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d);
@@ -35,11 +40,11 @@ export class UserContentService {
   private readonly defaultSkinUrl: string;
 
   constructor(
-    @Inject(UserContentMapStoreToken) private readonly store: IUserContentStore,
+    @Inject(UserContentStoreToken) private readonly store: IUserContentStore,
     @Inject(AppConfigToken) private readonly config: AppConfigType,
     @Optional() @Inject(YggdrasilStoreToken) private readonly profileStore?: IYggdrasilStore,
   ) {
-    this.defaultSkinUrl = `${config.BASE_URL}/textures/default.png`;
+    this.defaultSkinUrl = buildDefaultSkinUrl(config.BASE_URL);
   }
 
   async uploadSkin(
@@ -108,9 +113,7 @@ export class UserContentService {
       this.validatePngFile(file, type);
     }
 
-    const hasher = new Bun.CryptoHasher("sha256");
-    hasher.update(new Uint8Array(file));
-    const hash = hasher.digest("hex");
+    const hash = sha256Hex(file);
     const prefix = sanitizeFilePrefix(username, userUuid);
     const filename = `${prefix}-${hash}.${extension}`;
     const url = `${this.config.BASE_URL}/${directory}/${filename}`;
@@ -127,7 +130,12 @@ export class UserContentService {
       );
     }
 
-    await Bun.write(filePath, new Uint8Array(file));
+    try {
+      await Bun.write(filePath, new Uint8Array(file));
+    } catch (error) {
+      await this.rollbackSavedItem(item.id, type);
+      throw error;
+    }
 
     if (type === "cape") {
       await this.syncProfileTexture(userUuid, { capeUrl: url });
@@ -135,6 +143,17 @@ export class UserContentService {
 
     this.logger.debug({ userUuid, type, id: item.id }, "Uploaded");
     return { id: item.id, url };
+  }
+
+  private async rollbackSavedItem(id: number, type: ContentType): Promise<void> {
+    try {
+      await this.store.deleteByIdAndCountRemaining(id, type);
+    } catch (error) {
+      this.logger.error(
+        { err: error, id, type },
+        "Не удалось откатить запись контента после сбоя записи файла",
+      );
+    }
   }
 
   async setActiveSkin(ownerUuid: string, skinId: number): Promise<void> {
@@ -150,19 +169,46 @@ export class UserContentService {
       throw new BadRequestException("Нельзя выбрать дефолтный скин как активный");
     }
 
+    const previousActiveId = (await this.store.findByUserUuid(ownerUuid, "skin")).find(
+      (skin) => skin.active,
+    )?.id;
+
     await this.store.updateActiveSkin(ownerUuid, skinId);
-    await this.syncProfileTexture(ownerUuid, {
-      skinUrl: item.filePath,
-      skinModel: item.skinModel ?? null,
-    });
+    try {
+      await this.syncProfileTexture(ownerUuid, {
+        skinUrl: item.filePath,
+        skinModel: item.skinModel ?? null,
+      });
+    } catch (error) {
+      await this.restoreActiveSkin(ownerUuid, previousActiveId);
+      throw error;
+    }
 
     this.logger.debug({ ownerUuid, skinId }, "Active skin changed");
+  }
+
+  private async restoreActiveSkin(
+    ownerUuid: string,
+    previousActiveId: number | undefined,
+  ): Promise<void> {
+    try {
+      if (previousActiveId === undefined) {
+        await this.store.deactivateAllSkins(ownerUuid);
+        return;
+      }
+      await this.store.updateActiveSkin(ownerUuid, previousActiveId);
+    } catch (error) {
+      this.logger.error(
+        { err: error, ownerUuid, previousActiveId },
+        "Не удалось откатить активный скин после сбоя синхронизации профиля",
+      );
+    }
   }
 
   private async syncProfileAfterDelete(userUuid: string, type: ContentType): Promise<void> {
     if (type === "skin") {
       const remaining = await this.store.findByUserUuid(userUuid, "skin");
-      const latest = remaining.toSorted((a, b) => a.id - b.id).at(-1);
+      const latest = lastById(remaining);
       if (latest) {
         await this.store.updateActiveSkin(userUuid, latest.id);
         await this.syncProfileTexture(userUuid, {
@@ -175,10 +221,8 @@ export class UserContentService {
     }
 
     if (type === "cape") {
-      const remaining = (await this.store.findByUserUuid(userUuid, "cape")).toSorted(
-        (a, b) => a.id - b.id,
-      );
-      const latest = remaining.at(-1);
+      const remaining = await this.store.findByUserUuid(userUuid, "cape");
+      const latest = lastById(remaining);
       if (latest) {
         await this.syncProfileTexture(userUuid, { capeUrl: latest.filePath });
         return;
@@ -208,7 +252,7 @@ export class UserContentService {
 
   private isDefaultSkin(type: ContentType, filePath: string): boolean {
     if (type !== "skin") return false;
-    return filePath === this.defaultSkinUrl || filePath === "/textures/default.png";
+    return filePath === this.defaultSkinUrl || filePath === DEFAULT_SKIN_PATH;
   }
 
   private validatePngFile(file: Uint8Array, type: ContentType): void {
@@ -216,17 +260,15 @@ export class UserContentService {
     if (file.length === 0) {
       throw new BadRequestException(`Файл ${contentName} пустой`);
     }
-    if (file.length > MAX_SKIN_BYTES) {
+    if (file.length > MAX_TEXTURE_BYTES) {
       throw new BadRequestException(
-        `Файл ${contentName} слишком большой: ${file.length} байт (максимум ${MAX_SKIN_BYTES})`,
+        `Файл ${contentName} слишком большой: ${file.length} байт (максимум ${MAX_TEXTURE_BYTES})`,
       );
     }
 
-    try {
-      validatePngStructure(file);
-    } catch (error) {
-      if (!(error instanceof PngStructureError)) throw error;
-      throw new BadRequestException(`Невалидный файл ${contentName}: ${error.message}`);
+    const invalidMessage = pngStructureErrorMessage(file);
+    if (invalidMessage) {
+      throw new BadRequestException(`Невалидный файл ${contentName}: ${invalidMessage}`);
     }
   }
 

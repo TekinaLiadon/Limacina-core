@@ -7,7 +7,7 @@ import { LogsResponseDto, V1LogsQueryDto } from "../../admin/dto/dto";
 @ApiTags("panel_logs")
 @ApiBearerAuth()
 @Roles("admin")
-@Controller("v1/panel/logs")
+@Controller("panel/logs")
 export class V1PanelLogsController {
   constructor(private readonly logsService: LogsService) {}
 

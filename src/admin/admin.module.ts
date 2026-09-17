@@ -2,9 +2,10 @@ import { Module } from "@nestjs/common";
 import { AdminService } from "./admin.service";
 import { LogsService } from "./logs.service";
 import { LauncherUpdateService } from "./launcher-update.service";
+import { LauncherReleaseService } from "./launcher-release.service";
 import { ConfigUpdateService } from "./config-update.service";
-import { AdminMapStore, AdminMapStoreToken } from "./admin.store";
-import { AdminPostgresStore } from "./admin_postgres.store";
+import { AdminMapStore, AdminMapStoreToken } from "./admin_store";
+import { AdminPostgresStore } from "./admin_postgres_store";
 import { AuthStoreModule } from "../auth/service/auth_store.module";
 import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
 import { CronModule } from "../cron/cron.module";
@@ -23,6 +24,7 @@ const useFactory = (db: string) => {
     AdminService,
     LogsService,
     LauncherUpdateService,
+    LauncherReleaseService,
     ConfigUpdateService,
     {
       provide: AdminMapStoreToken,
@@ -34,6 +36,7 @@ const useFactory = (db: string) => {
     AdminService,
     LogsService,
     LauncherUpdateService,
+    LauncherReleaseService,
     ConfigUpdateService,
     AdminMapStoreToken,
   ],

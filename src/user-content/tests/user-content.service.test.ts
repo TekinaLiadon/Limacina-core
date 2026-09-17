@@ -4,10 +4,10 @@ setupTestEnv();
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { buildTestPng } from "../../utils/tests/test-png";
-import { existsSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, statSync, unlinkSync } from "node:fs";
 import { BadRequestException } from "@nestjs/common";
 import { UserContentService } from "../user-content.service";
-import { UserContentMapStore } from "../user-content.store";
+import { UserContentMapStore } from "../user_content_store";
 import { YggdrasilMapStore } from "../../yggdrasil/service/yggdrasil_store";
 import GlobalConfig, { type AppConfigType } from "../../config/global-config";
 
@@ -62,7 +62,7 @@ describe("UserContentService — лимит загрузок", (): void => {
 
     expect(fulfilled.length).toBe(MAX_SKINS);
     expect(rejected.length).toBe(6 - MAX_SKINS);
-    expect(await store.countByUserUuid(uuid, "skin")).toBe(MAX_SKINS);
+    expect((await store.findByUserUuid(uuid, "skin")).length).toBe(MAX_SKINS);
   });
 
   it("последовательная загрузка свыше лимита отклоняется", async () => {
@@ -75,7 +75,7 @@ describe("UserContentService — лимит загрузок", (): void => {
     await expect(service.uploadSkin(uuid, "sequser", pngBytes(12))).rejects.toBeInstanceOf(
       BadRequestException,
     );
-    expect(await store.countByUserUuid(uuid, "skin")).toBe(MAX_SKINS);
+    expect((await store.findByUserUuid(uuid, "skin")).length).toBe(MAX_SKINS);
   });
 });
 
@@ -176,6 +176,90 @@ describe("UserContentService — нейминг файлов и условный
   });
 });
 
+describe("UserContentService — откат при сбоях атомарности (TASK-217.2)", (): void => {
+  let service: UserContentService;
+  let store: UserContentMapStore;
+  let config: AppConfigType;
+  const writtenFiles: string[] = [];
+
+  beforeAll(() => {
+    config = GlobalConfig.parseEnvOrExit({
+      ...process.env,
+      MAX_SKINS_PER_USER: "2",
+    });
+    store = new UserContentMapStore();
+    service = new UserContentService(store, config);
+  });
+
+  afterAll(() => {
+    for (const filePath of writtenFiles) {
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+
+  const trackFile = (filePath: string): void => {
+    if (!writtenFiles.includes(filePath)) writtenFiles.push(filePath);
+  };
+
+  const localPathOf = (url: string): string => `public/${url.replace(`${config.BASE_URL}/`, "")}`;
+
+  it("при сбое записи файла запись в БД откатывается", async () => {
+    const userUuid = "rb-upload-0001";
+    const dirMode = statSync("public/textures").mode & 0o777;
+    chmodSync("public/textures", 0o555);
+    try {
+      await expect(service.uploadSkin(userUuid, "rbupload", pngBytes(41))).rejects.toThrow();
+    } finally {
+      chmodSync("public/textures", dirMode);
+    }
+
+    expect((await store.findByUserUuid(userUuid, "skin")).length).toBe(0);
+  });
+
+  it("при сбое синхронизации профиля активный скин откатывается к предыдущему", async () => {
+    const userUuid = "rb-active-0001";
+    const first = await service.uploadSkin(userUuid, "rbactive", pngBytes(51));
+    const second = await service.uploadSkin(userUuid, "rbactive", pngBytes(52));
+    trackFile(localPathOf(first.url));
+    trackFile(localPathOf(second.url));
+
+    await service.setActiveSkin(userUuid, first.id);
+
+    const failingProfiles = new FailingTextureSyncStore();
+    await failingProfiles.saveProfile({
+      uuid: userUuid,
+      userId: userUuid,
+      username: "rbactive",
+    });
+    const failingService = new UserContentService(store, config, failingProfiles);
+
+    await expect(failingService.setActiveSkin(userUuid, second.id)).rejects.toThrow();
+
+    const skins = await store.findByUserUuid(userUuid, "skin");
+    const active = skins.filter((item) => item.active);
+    expect(active.map((item) => item.id)).toEqual([first.id]);
+  });
+
+  it("при сбое синхронизации и отсутствии активного скина все остаются неактивными", async () => {
+    const userUuid = "rb-none-0001";
+    const upload = await service.uploadSkin(userUuid, "rbnone", pngBytes(61));
+    trackFile(localPathOf(upload.url));
+
+    const failingProfiles = new FailingTextureSyncStore();
+    await failingProfiles.saveProfile({
+      uuid: userUuid,
+      userId: userUuid,
+      username: "rbnone",
+    });
+    const failingService = new UserContentService(store, config, failingProfiles);
+
+    await expect(failingService.setActiveSkin(userUuid, upload.id)).rejects.toThrow();
+
+    const skins = await store.findByUserUuid(userUuid, "skin");
+    expect(skins.every((item) => !item.active)).toBe(true);
+  });
+});
+
 describe("UserContentService — unlink с учётом профильных ссылок (TASK-99)", (): void => {
   let service: UserContentService;
   let store: UserContentMapStore;
@@ -258,3 +342,9 @@ describe("UserContentService — unlink с учётом профильных с�
     expect(existsSync(localPathOf(upload.url))).toBe(false);
   });
 });
+
+class FailingTextureSyncStore extends YggdrasilMapStore {
+  override async updateProfileTexture(): Promise<void> {
+    throw new Error("Синхронизация профиля недоступна");
+  }
+}

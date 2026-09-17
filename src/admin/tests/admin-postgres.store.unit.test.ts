@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { AdminPostgresStore } from "../admin_postgres.store";
-import type { AdminUser } from "../admin.store";
+import { AdminPostgresStore } from "../admin_postgres_store";
+import type { AdminUser } from "../admin_store";
 import { installFakeSqlClient, resetSqlClient } from "../../utils/tests/sql-fake";
 import { setupTestEnv } from "../../utils/tests/test-env";
 
@@ -146,7 +146,7 @@ describe("AdminPostgresStore (мок SQL-клиента)", () => {
     const deleted = await store.deleteUser("pgadm_user");
 
     expect(deleted).toEqual(adminUser());
-    const update = lastCalls(2)[1];
+    const [, update] = lastCalls(2);
     expect(update?.sql).toContain("UPDATE users SET deleted = $1");
     expect(update?.sql).not.toContain("RETURNING");
   });

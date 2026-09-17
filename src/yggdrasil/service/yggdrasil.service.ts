@@ -3,6 +3,7 @@ import { JwtService } from "@nestjs/jwt";
 import { readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { sign } from "node:crypto";
+import { generateUuid } from "../../utils/uuid";
 import type {
   ApiMetadataResponseDto,
   AuthenticateDto,
@@ -31,17 +32,21 @@ import {
 import type { JwtAccessPayload } from "../../common/jwt.strategy";
 import { MAX_PROFILE_NAMES } from "../batch-profiles.pipe";
 import {
-  UserContentMapStoreToken,
+  UserContentStoreToken,
   type IUserContentStore,
-} from "../../user-content/user-content.store";
+} from "../../user-content/user_content_store";
 import { AppConfigToken } from "../../config/app-config.provider";
 import type { AppConfigType } from "../../config/global-config";
 import { resolveKeysDir } from "./keys-dir";
 import { sanitizeFilePrefix } from "../../utils/file-prefix";
-import { PngStructureError, validatePngStructure } from "../../utils/png";
-
-const MAX_TEXTURE_BYTES = 512 * 1024;
-const SKIN_MODEL_VALUES = ["classic", "slim"] as const;
+import {
+  MAX_TEXTURE_BYTES,
+  buildDefaultSkinUrl,
+  isSkinModel,
+  pngStructureErrorMessage,
+  sha256Hex,
+} from "../../utils/texture";
+import { lastById } from "../../utils/collection";
 
 type TextureAccessPrincipal =
   | { kind: "token"; entry: TokenEntry }
@@ -59,11 +64,11 @@ export class YggdrasilService {
     @Inject(YggdrasilStoreToken) private readonly store: IYggdrasilStore,
     @Inject(YggdrasilTokenStoreToken) private readonly tokenStore: IYggdrasilTokenStore,
     @Inject(YggdrasilSessionStoreToken) private readonly sessionStore: IYggdrasilSessionStore,
-    @Inject(UserContentMapStoreToken) private readonly contentStore: IUserContentStore,
+    @Inject(UserContentStoreToken) private readonly contentStore: IUserContentStore,
     @Inject(AppConfigToken) private readonly config: AppConfigType,
     private readonly jwtService: JwtService,
   ) {
-    this.defaultSkinUrl = `${config.BASE_URL}/textures/default.png`;
+    this.defaultSkinUrl = buildDefaultSkinUrl(config.BASE_URL);
     this.jwtSecret = config.JWT_ACCESS;
 
     const keysDir = resolveKeysDir(config.KEYS_DIR);
@@ -80,7 +85,7 @@ export class YggdrasilService {
     }
   }
 
-  createError(
+  private createError(
     message: { info: string },
     context: string,
     errorMessage: string,
@@ -271,7 +276,7 @@ export class YggdrasilService {
     };
   }
 
-  async getProfile(uuid: string, signed = true): Promise<SessionProfileDto | null> {
+  async getProfile(uuid: string, signed: boolean): Promise<SessionProfileDto | null> {
     const normalized = uuid.replace(/-/g, "");
     const profile = await this.store.findProfileByUuid(normalized);
     if (!profile) return null;
@@ -330,7 +335,7 @@ export class YggdrasilService {
 
   private normalizeSkinModel(model?: string): string | null {
     if (model === undefined || model === null || model === "") return null;
-    if (SKIN_MODEL_VALUES.includes(model as (typeof SKIN_MODEL_VALUES)[number])) return model;
+    if (isSkinModel(model)) return model;
     throw this.createError(
       { info: model },
       "invalid model",
@@ -349,14 +354,12 @@ export class YggdrasilService {
       );
     }
 
-    try {
-      validatePngStructure(file);
-    } catch (error) {
-      if (!(error instanceof PngStructureError)) throw error;
+    const invalidMessage = pngStructureErrorMessage(file);
+    if (invalidMessage) {
       throw this.createError(
-        { info: error.message },
+        { info: invalidMessage },
         "texture upload",
-        `Invalid texture file: ${error.message}.`,
+        `Invalid texture file: ${invalidMessage}.`,
       );
     }
   }
@@ -366,10 +369,8 @@ export class YggdrasilService {
     ownerUsername: string,
     fallbackPrefix: string,
   ): { url: string; path: string } {
-    const hasher = new Bun.CryptoHasher("sha256");
-    hasher.update(new Uint8Array(file));
     const prefix = sanitizeFilePrefix(ownerUsername, fallbackPrefix);
-    const filename = `${prefix}-${hasher.digest("hex")}.png`;
+    const filename = `${prefix}-${sha256Hex(file)}.png`;
     return {
       url: `${this.config.BASE_URL}/textures/${filename}`,
       path: `public/textures/${filename}`,
@@ -493,7 +494,7 @@ export class YggdrasilService {
     return match?.[1] ?? null;
   }
 
-  createTextures(
+  private createTextures(
     textureType: "skin" | "cape",
     model: string | null = null,
     url: string | null = null,
@@ -611,7 +612,7 @@ export class YggdrasilService {
 
     if (!capeUrl) {
       const userCapes = await this.contentStore.findByUserUuid(profile.userId, "cape");
-      const latestCape = userCapes.toSorted((a, b) => a.id - b.id).at(-1);
+      const latestCape = lastById(userCapes);
       if (latestCape) capeUrl = latestCape.filePath;
     }
 
@@ -660,6 +661,6 @@ export class YggdrasilService {
   }
 
   private generateAccessToken(): string {
-    return crypto.randomUUID().replace(/-/g, "");
+    return generateUuid();
   }
 }

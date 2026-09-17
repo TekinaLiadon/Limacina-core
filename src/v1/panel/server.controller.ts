@@ -10,7 +10,7 @@ import { RebuildStatusDto, RestartServerDto } from "../../technical/dto/dto";
 @ApiTags("panel_server")
 @ApiBearerAuth()
 @Roles("owner")
-@Controller("v1/panel/server")
+@Controller("panel/server")
 export class V1PanelServerController {
   constructor(private readonly technicalService: TechnicalService) {}
 

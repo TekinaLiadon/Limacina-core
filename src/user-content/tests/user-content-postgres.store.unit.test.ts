@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { UserContentPostgresStore, isUserContentLimitExceededError } from "../user-content.store";
+import { UserContentPostgresStore, isUserContentLimitExceededError } from "../user_content_store";
 import { installFakeSqlClient, resetSqlClient } from "../../utils/tests/sql-fake";
 import { setupTestEnv } from "../../utils/tests/test-env";
 
@@ -26,20 +26,6 @@ function lastCalls(count: number) {
 }
 
 describe("UserContentPostgresStore (мок SQL-клиента)", () => {
-  it("countByUserUuid выбирает таблицу по типу контента", async () => {
-    fake.onSql(() => [{ count: "5" }]);
-
-    expect(await store.countByUserUuid("uuid-1", "skin")).toBe(5);
-    expect(await store.countByUserUuid("uuid-1", "cape")).toBe(5);
-    expect(await store.countByUserUuid("uuid-1", "model")).toBe(5);
-
-    const calls = lastCalls(3);
-    expect(calls[0]?.sql).toContain("FROM user_skins");
-    expect(calls[1]?.sql).toContain("FROM user_capes");
-    expect(calls[2]?.sql).toContain("FROM user_models");
-    expect(calls[0]?.values).toEqual(["uuid-1"]);
-  });
-
   it("countByFilePath без строк отвечает 0", async () => {
     fake.onSql(() => []);
 

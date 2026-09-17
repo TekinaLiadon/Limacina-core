@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { AdminMapStore } from "../admin.store";
+import { AdminMapStore } from "../admin_store";
 
 const buildUser = (username: string, overrides: Record<string, unknown> = {}) => ({
   uuid: `uuid-${username}`,

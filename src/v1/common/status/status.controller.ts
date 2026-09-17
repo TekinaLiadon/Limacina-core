@@ -6,7 +6,7 @@ import { MinecraftStatusDto } from "../../../minecraft-status/dto/dto";
 
 @ApiTags("common_status")
 @Public()
-@Controller("v1/common/status")
+@Controller("common/status")
 export class V1StatusController {
   constructor(private readonly statusService: MinecraftStatusService) {}
 
