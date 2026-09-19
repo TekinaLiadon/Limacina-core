@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -8,18 +7,22 @@ import {
   ParseEnumPipe,
   ParseIntPipe,
   Patch,
-  PayloadTooLargeException,
   Post,
   Query,
   Req,
 } from "@nestjs/common";
-import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from "@nestjs/swagger";
 import {
-  MAX_MODEL_BYTES,
-  MAX_SKIN_BYTES,
-  UserContentService,
-  type SkinModel,
-} from "../../../user-content/user-content.service";
+  enumPipeExceptionFactory,
+  intPipeExceptionFactory,
+} from "../../../common/validation-pipes";
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from "@nestjs/swagger";
+import { UserContentService } from "../../../user-content/user-content.service";
+import { SKIN_MODELS, type SkinModel } from "../../../utils/texture";
+import {
+  MODEL_UPLOAD_LIMIT_BYTES,
+  TEXTURE_UPLOAD_LIMIT_BYTES,
+  parseContentUpload,
+} from "../../../user-content/user-content.parser";
 import { SuccessResponseDto } from "../../../common/dto/dto";
 import { CurrentUser, type RequestUser } from "../../../common/current-user.decorator";
 import {
@@ -28,31 +31,10 @@ import {
   UserContentUploadResponseDto,
 } from "../../../user-content/dto/dto";
 import type { FastifyRequest } from "fastify";
-import type { MultipartFile } from "@fastify/multipart";
-
-const STREAM_LIMIT_MULTIPLIER = 2;
-const SKIN_STREAM_LIMIT_BYTES = MAX_SKIN_BYTES * STREAM_LIMIT_MULTIPLIER;
-const MODEL_STREAM_LIMIT_BYTES = MAX_MODEL_BYTES * STREAM_LIMIT_MULTIPLIER;
-
-const concatChunks = (chunks: Uint8Array[], total: number): Uint8Array => {
-  const merged = new Uint8Array(total);
-  let cursor = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, cursor);
-    cursor += chunk.length;
-  }
-  return merged;
-};
-
-const drainFilePart = async (part: MultipartFile): Promise<void> => {
-  for await (const chunk of part.file) {
-    void chunk;
-  }
-};
 
 @ApiTags("common_content")
 @ApiBearerAuth()
-@Controller("v1/common/content")
+@Controller("common/content")
 export class V1ContentController {
   constructor(private readonly userContentService: UserContentService) {}
 
@@ -67,10 +49,16 @@ export class V1ContentController {
   async uploadSkin(
     @CurrentUser() user: RequestUser,
     @Req() request: FastifyRequest,
-    @Query("model", new ParseEnumPipe(["classic", "slim"], { optional: true }))
+    @Query(
+      "model",
+      new ParseEnumPipe(SKIN_MODELS, {
+        optional: true,
+        exceptionFactory: enumPipeExceptionFactory("model", [...SKIN_MODELS]),
+      }),
+    )
     model?: SkinModel,
   ): Promise<UserContentUploadResponseDto> {
-    const buffer = await this.extractFile(request, SKIN_STREAM_LIMIT_BYTES);
+    const buffer = await parseContentUpload(request, TEXTURE_UPLOAD_LIMIT_BYTES);
     return this.userContentService.uploadSkin(user.uuid, user.username, buffer, model ?? undefined);
   }
 
@@ -91,7 +79,8 @@ export class V1ContentController {
   @ApiResponse({ status: 404, description: "Скин не найден" })
   async deleteSkin(
     @CurrentUser() user: RequestUser,
-    @Param("id", ParseIntPipe) id: number,
+    @Param("id", new ParseIntPipe({ exceptionFactory: intPipeExceptionFactory("id") }))
+    id: number,
   ): Promise<SuccessResponseDto> {
     await this.userContentService.delete(user.uuid, id, "skin");
     return { success: true };
@@ -123,7 +112,7 @@ export class V1ContentController {
     @CurrentUser() user: RequestUser,
     @Req() request: FastifyRequest,
   ): Promise<UserContentUploadResponseDto> {
-    const buffer = await this.extractFile(request, SKIN_STREAM_LIMIT_BYTES);
+    const buffer = await parseContentUpload(request, TEXTURE_UPLOAD_LIMIT_BYTES);
     return this.userContentService.uploadCape(user.uuid, user.username, buffer);
   }
 
@@ -143,7 +132,8 @@ export class V1ContentController {
   @ApiResponse({ status: 404, description: "Плащ не найден" })
   async deleteCape(
     @CurrentUser() user: RequestUser,
-    @Param("id", ParseIntPipe) id: number,
+    @Param("id", new ParseIntPipe({ exceptionFactory: intPipeExceptionFactory("id") }))
+    id: number,
   ): Promise<SuccessResponseDto> {
     await this.userContentService.delete(user.uuid, id, "cape");
     return { success: true };
@@ -158,7 +148,7 @@ export class V1ContentController {
     @CurrentUser() user: RequestUser,
     @Req() request: FastifyRequest,
   ): Promise<UserContentUploadResponseDto> {
-    const buffer = await this.extractFile(request, MODEL_STREAM_LIMIT_BYTES);
+    const buffer = await parseContentUpload(request, MODEL_UPLOAD_LIMIT_BYTES);
     return this.userContentService.uploadModel(user.uuid, user.username, buffer);
   }
 
@@ -178,42 +168,10 @@ export class V1ContentController {
   @ApiResponse({ status: 404, description: "Модель не найдена" })
   async deleteModel(
     @CurrentUser() user: RequestUser,
-    @Param("id", ParseIntPipe) id: number,
+    @Param("id", new ParseIntPipe({ exceptionFactory: intPipeExceptionFactory("id") }))
+    id: number,
   ): Promise<SuccessResponseDto> {
     await this.userContentService.delete(user.uuid, id, "model");
     return { success: true };
-  }
-
-  private async extractFile(request: FastifyRequest, maxBytes: number): Promise<Uint8Array> {
-    const parts = request.parts({ limits: { fileSize: maxBytes } });
-    let file: Uint8Array | undefined;
-    for await (const part of parts) {
-      if (part.type !== "file") continue;
-      if (file !== undefined) {
-        await drainFilePart(part);
-        throw new BadRequestException("Ожидается ровно один файл");
-      }
-      file = await this.readFilePart(part, maxBytes);
-    }
-    if (file === undefined) {
-      throw new BadRequestException("Файл не загружен");
-    }
-    return file;
-  }
-
-  private async readFilePart(part: MultipartFile, maxBytes: number): Promise<Uint8Array> {
-    const chunks: Uint8Array[] = [];
-    let received = 0;
-    for await (const chunk of part.file) {
-      received += chunk.length;
-      if (received > maxBytes) {
-        throw new PayloadTooLargeException(`Файл слишком большой: максимум ${maxBytes} байт`);
-      }
-      chunks.push(chunk);
-    }
-    if (part.file.truncated) {
-      throw new PayloadTooLargeException(`Файл слишком большой: максимум ${maxBytes} байт`);
-    }
-    return concatChunks(chunks, received);
   }
 }

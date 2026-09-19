@@ -1,4 +1,5 @@
 import { setupTestEnv } from "../../../../utils/tests/test-env";
+import { applyV1ApiPrefix } from "../../../../utils/tests/v1-prefix";
 
 setupTestEnv();
 
@@ -14,11 +15,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import supertest from "supertest";
 import { V1AuthController } from "../auth.controller";
 import { AuthService } from "../../../../auth/service/auth.service";
-import {
-  AuthMapStore,
-  AuthMapStoreToken,
-  type StoredUser,
-} from "../../../../auth/service/auth_store.service";
+import { AuthMapStore, AuthStoreToken, type StoredUser } from "../../../../auth/service/auth_store";
 import GlobalConfig from "../../../../config/global-config";
 import { AppConfigToken } from "../../../../config/app-config.provider";
 import { registerAuthRateLimit } from "../../../../common/auth-rate-limit";
@@ -80,7 +77,7 @@ describe("V1 common/auth эндпоинты", (): void => {
         AuthService,
         { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
         {
-          provide: AuthMapStoreToken,
+          provide: AuthStoreToken,
           useClass: AuthMapStore,
         },
         TestJwtStrategy,
@@ -94,11 +91,13 @@ describe("V1 common/auth эндпоинты", (): void => {
     const fastifyInstance = app.getHttpAdapter().getInstance() as FastifyInstance;
     await registerAuthRateLimit(fastifyInstance, {
       max: 10,
+      ipMax: 1000,
       timeWindow: 60000,
     });
+    applyV1ApiPrefix(app);
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
-    authStore = moduleFixture.get<AuthMapStore>(AuthMapStoreToken);
+    authStore = moduleFixture.get<AuthMapStore>(AuthStoreToken);
     jwtService = moduleFixture.get(JwtService);
 
     const registerRes = await supertest(app.getHttpServer())
@@ -159,7 +158,7 @@ describe("V1 common/auth эндпоинты", (): void => {
         .send({ username: "CIRegUser", password: "pass123" })
         .expect(409);
 
-      await authStore.__test__deleteUser(registered.body.username);
+      await authStore.deleteUser(registered.body.uuid);
     });
 
     it("параллельная регистрация одного юзернейма: один 201, второй 409", async () => {
@@ -177,7 +176,7 @@ describe("V1 common/auth эндпоинты", (): void => {
 
       const user = await authStore.findByUsername("raceruser");
       expect(user).toBeDefined();
-      await authStore.__test__deleteUser("raceruser");
+      await authStore.deleteUser(user!.uuid);
     });
 
     it("возвращает 400 при пустом username", async () => {
@@ -226,6 +225,13 @@ describe("V1 common/auth эндпоинты", (): void => {
         .post("/v1/common/auth/login")
         .send({ username: "loginuser", password: "" })
         .expect(400);
+    });
+
+    it("короткий пароль идёт на авторизацию (401, не 400)", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: "loginuser", password: "abc" })
+        .expect(401);
     });
 
     it("возвращает 400 при username длиннее 64 символов (TASK-11)", async () => {
@@ -435,7 +441,7 @@ describe("V1 common/auth эндпоинты", (): void => {
         .expect(201);
 
       try {
-        await authStore.__test__deleteUser("replaceduser");
+        await authStore.deleteUser("replaced-user-uuid");
 
         await supertest(app.getHttpServer())
           .post("/v1/common/auth/refresh")
@@ -512,7 +518,12 @@ describe("V1 common/auth эндпоинты", (): void => {
     });
 
     const buildPasschangerToken = (): string =>
-      jwtService.sign({ sub: "passchanger-uuid", username: "passchanger", role: "user" });
+      jwtService.sign({
+        typ: "access",
+        sub: "passchanger-uuid",
+        username: "passchanger",
+        role: "user",
+      });
 
     it("успешная смена пароля с перевыпуском токенов", async () => {
       const loginRes = await supertest(app.getHttpServer())
@@ -541,7 +552,7 @@ describe("V1 common/auth эндпоинты", (): void => {
         .send({ refresh_token: res.body.tokens.refresh_token })
         .expect(201);
 
-      const authStoreInstance = app.get(AuthMapStoreToken, { strict: false });
+      const authStoreInstance = app.get(AuthStoreToken, { strict: false });
       await seedUser(authStoreInstance, "passchanger", "passchanger-uuid", "oldpass123");
     });
 
@@ -596,6 +607,7 @@ describe("V1 common/auth эндпоинты", (): void => {
       });
 
       const token = jwtService.sign({
+        typ: "access",
         sub: "banned-passchanger-uuid",
         username: "bannedpasschanger",
         role: "user",
@@ -614,6 +626,7 @@ describe("V1 common/auth эндпоинты", (): void => {
       });
 
       const token = jwtService.sign({
+        typ: "access",
         sub: "unapproved-passchanger-uuid",
         username: "unapprovedpasschanger",
         role: "user",
@@ -635,7 +648,12 @@ describe("V1 common/auth эндпоинты", (): void => {
     });
 
     const buildBruteforcerToken = (): string =>
-      jwtService.sign({ sub: "bruteforcer-uuid", username: "bruteforcer", role: "user" });
+      jwtService.sign({
+        typ: "access",
+        sub: "bruteforcer-uuid",
+        username: "bruteforcer",
+        role: "user",
+      });
 
     it("429 после превышения лимита попыток подбора старого пароля", async () => {
       const token = buildBruteforcerToken();
@@ -660,6 +678,7 @@ describe("V1 common/auth эндпоинты", (): void => {
       await seedUser(authStore, "bruteforcer2", "bruteforcer2-uuid", "realpass1");
 
       const otherToken = jwtService.sign({
+        typ: "access",
         sub: "bruteforcer2-uuid",
         username: "bruteforcer2",
         role: "user",

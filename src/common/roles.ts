@@ -5,7 +5,7 @@ export const ROLE_WEIGHTS = {
   owner: 4,
 } as const;
 
-export type UserRole = keyof typeof ROLE_WEIGHTS;
+type UserRole = keyof typeof ROLE_WEIGHTS;
 
 export const ASSIGNABLE_ROLES = ["admin", "moderator", "user"] as const;
 export type AssignableRole = (typeof ASSIGNABLE_ROLES)[number];

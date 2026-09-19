@@ -7,8 +7,8 @@ import {
   UserContentMapStore,
   UserContentPostgresStore,
   isUserContentLimitExceededError,
-} from "../user-content.store";
-import type { IUserContentStore } from "../user-content.store";
+  type IUserContentStore,
+} from "../user_content_store";
 import { generateUuid } from "../../utils/uuid";
 import {
   cleanupTrackedUsers,
@@ -78,9 +78,6 @@ contractDescribeEach("контракт IUserContentStore", (driver) => {
     expect(skins.map((item) => item.id)).toEqual([skin.id]);
     expect(capes.map((item) => item.id)).toEqual([cape.id]);
     expect(models.map((item) => item.id)).toEqual([model.id]);
-    expect(await ctx.store.countByUserUuid(user.uuid, "skin")).toBe(1);
-    expect(await ctx.store.countByUserUuid(user.uuid, "cape")).toBe(1);
-    expect(await ctx.store.countByUserUuid(user.uuid, "model")).toBe(1);
   });
 
   it("findById находит запись своего типа, неизвестный id — undefined", async () => {
@@ -114,14 +111,14 @@ contractDescribeEach("контракт IUserContentStore", (driver) => {
     await ctx.store.saveWithinLimit(user.uuid, "capes/lim-1.png", "cape", 2);
     const second = await ctx.store.saveWithinLimit(user.uuid, "capes/lim-2.png", "cape", 2);
     expect(second.id).toBeGreaterThan(0);
-    expect(await ctx.store.countByUserUuid(user.uuid, "cape")).toBe(2);
+    expect((await ctx.store.findByUserUuid(user.uuid, "cape")).length).toBe(2);
 
     const exceed = await ctx.store.saveWithinLimit(user.uuid, "capes/lim-3.png", "cape", 2).then(
       () => undefined,
       (error: unknown) => error,
     );
     expect(isUserContentLimitExceededError(exceed)).toBe(true);
-    expect(await ctx.store.countByUserUuid(user.uuid, "cape")).toBe(2);
+    expect((await ctx.store.findByUserUuid(user.uuid, "cape")).length).toBe(2);
 
     const skin = await ctx.store.saveWithinLimit(
       user.uuid,
@@ -173,5 +170,19 @@ contractDescribeEach("контракт IUserContentStore", (driver) => {
     expect(foreign.map((item) => item.active)).toEqual([false]);
 
     expect(foreignSkin.id).toBeGreaterThan(0);
+  });
+
+  it("deactivateAllSkins снимает активный флаг и не трогает чужие", async () => {
+    const first = await ctx.makeUser();
+    const second = await ctx.makeUser();
+    const firstSkin = await ctx.store.save(first.uuid, "skins/first.png", "skin");
+    const foreignSkin = await ctx.store.save(second.uuid, "skins/foreign.png", "skin");
+    await ctx.store.updateActiveSkin(first.uuid, firstSkin.id);
+    await ctx.store.updateActiveSkin(second.uuid, foreignSkin.id);
+
+    await ctx.store.deactivateAllSkins(first.uuid);
+
+    expect((await ctx.store.findById(firstSkin.id, "skin"))?.active).toBe(false);
+    expect((await ctx.store.findById(foreignSkin.id, "skin"))?.active).toBe(true);
   });
 });

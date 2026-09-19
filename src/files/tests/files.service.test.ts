@@ -64,9 +64,20 @@ function captureReply(): CapturedReply {
 }
 
 describe("FilesService — watcher и стриминг", () => {
-  it("bootstrap индексирует файлы и создаёт папку лаунчера", () => {
-    expect(existsSync(LAUNCHER_DIR)).toBeTrue();
-    expect(files.launcherHash.has(FIXTURE_NAME)).toBeTrue();
+  it("bootstrap индексирует файлы и создаёт папку лаунчера", async () => {
+    const bootstrapName = "files-bootstrap-fixture.bin";
+    const bootstrapPath = join(LAUNCHER_DIR, bootstrapName);
+    writeFileSync(bootstrapPath, "bootstrap-content");
+    const service = new FilesService();
+
+    try {
+      await service.onApplicationBootstrap();
+      expect(existsSync(LAUNCHER_DIR)).toBeTrue();
+      expect(service.launcherHash.has(bootstrapName)).toBeTrue();
+    } finally {
+      service.onModuleDestroy();
+      rmSync(bootstrapPath, { force: true });
+    }
   });
 
   it("getHash отсутствующего файла отвечает null", async () => {
@@ -108,7 +119,7 @@ describe("FilesService — watcher и стриминг", () => {
 
   it("sendFile отдаёт поток с заголовками и переживает ошибку потока", async () => {
     writeFileSync(FIXTURE_PATH, "stream-body");
-    const { reply, headers, streams } = captureReply();
+    const { reply, headers, streams, raw } = captureReply();
     const fileInfo: FileDto = { url: FIXTURE_NAME };
 
     await files.sendFile(fileInfo, reply);
@@ -118,6 +129,7 @@ describe("FilesService — watcher и стриминг", () => {
     const [stream] = streams;
     expect(stream).toBeDefined();
     expect(stream?.emit("error", new Error("stream failed"))).toBeTrue();
+    raw.emit("close");
   });
 
   it("sendFile отклоняет путь вне папки лаунчера", async () => {
@@ -127,4 +139,62 @@ describe("FilesService — watcher и стриминг", () => {
       files.sendFile({ url: "../textures/default.png" } as FileDto, reply),
     ).rejects.toThrow("Недопустимый путь к файлу");
   });
+
+  it("хеш, завершившийся после удаления файла, не возвращает запись в карту (TASK-267.15)", async () => {
+    writeFileSync(FIXTURE_PATH, "race-content");
+    await waitFor(() => files.launcherHash.has(FIXTURE_NAME));
+
+    const getHashOriginal = files.getHash;
+    files.getHash = async (): Promise<string | null> => "stale-hash";
+    try {
+      rmSync(FIXTURE_PATH, { force: true });
+      files.launcherHash.delete(FIXTURE_NAME);
+
+      await (
+        files as unknown as {
+          handleWatcherFileEvent(
+            dir: string,
+            map: Map<string, string>,
+            filePath: string,
+            event: string,
+          ): Promise<void>;
+        }
+      ).handleWatcherFileEvent(LAUNCHER_DIR, files.launcherHash, FIXTURE_PATH, "change");
+
+      expect(files.launcherHash.has(FIXTURE_NAME)).toBeFalse();
+      expect(files.getList().files[FIXTURE_NAME]).toBeUndefined();
+    } finally {
+      files.getHash = getHashOriginal;
+      rmSync(FIXTURE_PATH, { force: true });
+    }
+  });
+
+  it("сверка с диском удаляет фантом из манифеста при потерянном unlink (TASK-267.15)", () => {
+    const phantomName = "files-phantom-fixture.bin";
+    files.launcherHash.set(phantomName, "phantom-hash");
+
+    triggerIndexRescan(files);
+
+    expect(files.launcherHash.has(phantomName)).toBeFalse();
+    expect(files.getList().files[phantomName]).toBeUndefined();
+  });
+
+  it("сверка с диском подхватывает файл, добавленный мимо watcher (потерянный add, TASK-267.15)", async () => {
+    const lostName = "files-lost-add-fixture.bin";
+    const lostPath = join(LAUNCHER_DIR, lostName);
+    writeFileSync(lostPath, "lost-add-content");
+
+    triggerIndexRescan(files);
+    await waitFor(() => files.launcherHash.has(lostName));
+
+    expect(files.launcherHash.get(lostName)).toBeDefined();
+
+    rmSync(lostPath, { force: true });
+    triggerIndexRescan(files);
+    expect(files.launcherHash.has(lostName)).toBeFalse();
+  });
 });
+
+function triggerIndexRescan(service: FilesService): void {
+  (service as unknown as { reconcileLauncherIndex(): void }).reconcileLauncherIndex();
+}

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "path";
 import type { INestApplication } from "@nestjs/common";
 import { bootstrap } from "./main";
@@ -53,6 +54,14 @@ describe("Bootstrap реального AppModule", () => {
     expect(html).toContain("Scalar");
   });
 
+  it("API-маршруты живут под /v1, Yggdrasil — в корне (TASK-83)", async () => {
+    const v1Response = await fetch(`${baseUrl}/v1/common/status`);
+    expect(v1Response.status).not.toBe(404);
+
+    const yggdrasilResponse = await fetch(`${baseUrl}/sessionserver/session/minecraft/hasJoined`);
+    expect(yggdrasilResponse.status).not.toBe(404);
+  });
+
   it("корень отвечает метаданными Yggdrasil", async () => {
     const response = await fetch(`${baseUrl}/`);
 
@@ -71,6 +80,54 @@ describe("Bootstrap реального AppModule", () => {
       expect(await response.text()).toBe(staticFixtureBody);
     } finally {
       rmSync(publicCopy, { force: true });
+    }
+  });
+
+  it("точечные файлы и служебные каталоги не раздаются статикой", async () => {
+    const releasesRoot = join(process.cwd(), "public", "releases");
+    const stagingDir = join(releasesRoot, ".staging-e2e");
+    const backupName = `.old-9.9.9-e2e-${randomUUID()}`;
+    const backupDir = join(releasesRoot, backupName);
+    const releasesRootExisted = existsSync(releasesRoot);
+    mkdirSync(stagingDir, { recursive: true });
+    writeFileSync(join(stagingDir, "artifact.exe"), "unpublished-payload");
+    mkdirSync(backupDir, { recursive: true });
+    writeFileSync(join(backupDir, "artifact.exe"), "backup-payload");
+    const platformDir = join(process.cwd(), "public", "linux", "x86_64");
+    const replacedZip = join(platformDir, ".Limacina-9.9.9-linux-x86_64.zip.replaced");
+    const platformDirExisted = existsSync(platformDir);
+    writeFileSync(replacedZip, "replaced-payload");
+
+    try {
+      const staging = await fetch(`${baseUrl}/releases/.staging-e2e/artifact.exe`);
+      expect(staging.status).toBe(404);
+
+      const backup = await fetch(`${baseUrl}/releases/${backupName}/artifact.exe`);
+      expect(backup.status).toBe(404);
+
+      const lock = await fetch(`${baseUrl}/releases/.lock-9.9.9-e2e`);
+      expect(lock.status).toBe(404);
+
+      const replaced = await fetch(
+        `${baseUrl}/linux/x86_64/.Limacina-9.9.9-linux-x86_64.zip.replaced`,
+      );
+      expect(replaced.status).toBe(404);
+
+      const publicDotfile = await fetch(`${baseUrl}/.upload-tmp/leftover.exe`);
+      expect(publicDotfile.status).toBe(404);
+
+      const panelDotfile = await fetch(`${baseUrl}/panel/.env`);
+      expect(panelDotfile.status).toBe(404);
+    } finally {
+      rmSync(stagingDir, { recursive: true, force: true });
+      rmSync(backupDir, { recursive: true, force: true });
+      rmSync(replacedZip, { force: true });
+      if (!platformDirExisted) {
+        rmSync(join(process.cwd(), "public", "linux"), { recursive: true, force: true });
+      }
+      if (!releasesRootExisted) {
+        rmSync(releasesRoot, { recursive: true, force: true });
+      }
     }
   });
 

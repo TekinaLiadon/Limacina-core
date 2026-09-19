@@ -1,4 +1,11 @@
-export { deleteQuery, insertQuery, selectQuery, updateQuery } from "./builder";
+export {
+  deleteQuery,
+  insertQuery,
+  selectQuery,
+  updateQuery,
+  updateColumnQuery,
+  setSoftDeletedQuery,
+} from "./builder";
 export {
   currentDialect,
   currentSqlClient,
@@ -14,6 +21,7 @@ export {
 } from "./execute";
 export { toBoolean } from "./dialects/dialect";
 export type { SqlDialect, SqlDialectName } from "./dialects/dialect";
+export { isUniqueViolation } from "./errors";
 export { TABLES } from "./types";
 export type {
   BuiltQuery,

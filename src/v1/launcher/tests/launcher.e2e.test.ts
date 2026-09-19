@@ -1,4 +1,5 @@
 import { setupTestEnv } from "../../../utils/tests/test-env";
+import { applyV1ApiPrefix } from "../../../utils/tests/v1-prefix";
 
 setupTestEnv();
 
@@ -14,7 +15,10 @@ import { V1LauncherUpdateController } from "../update.controller";
 import { V1LauncherConfigController } from "../config.controller";
 import { V1LauncherFilesController } from "../files.controller";
 import { LauncherService } from "../../../launcher/launcher.service";
+import { LauncherReleasesService } from "../../../launcher/launcher-releases.service";
 import { FilesService, FILES_LIST_EXCLUDED_FOLDERS } from "../../../files/files.service";
+import { AppConfigToken } from "../../../config/app-config.provider";
+import GlobalConfig from "../../../config/global-config";
 
 const DOWNLOAD_DIR = "public/linux/x86_64";
 const TEST_ZIP = `${DOWNLOAD_DIR}/Limacina-9.9.9-linux-x86_64.zip`;
@@ -96,11 +100,17 @@ describe("V1 launcher эндпоинты", (): void => {
         V1LauncherConfigController,
         V1LauncherFilesController,
       ],
-      providers: [LauncherService, FilesService],
+      providers: [
+        LauncherService,
+        LauncherReleasesService,
+        FilesService,
+        { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
+      ],
     }).compile();
 
     app = moduleFixture.createNestApplication(new FastifyAdapter());
     app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+    applyV1ApiPrefix(app);
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
     filesService = app.get(FilesService);

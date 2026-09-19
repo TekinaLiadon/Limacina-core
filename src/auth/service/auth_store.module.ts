@@ -1,18 +1,32 @@
 import { Module } from "@nestjs/common";
 import { AppConfigModule, AppConfigToken } from "../../config/app-config.provider";
-import type { AppConfigType } from "../../config/global-config";
-import { useFactory } from "./auth.service";
-import { AuthMapStoreToken } from "./auth_store.service";
+import { isSqlDriver, type AppConfigType } from "../../config/global-config";
+import { MemoryDb } from "../../memory/memory-db";
+import { MemoryModule } from "../../memory/memory.module";
+import { AuthMapStore, AuthStoreToken, type IAuthStore } from "./auth_store";
+import { AuthPostgresStore } from "./auth_postgres_store";
+import { AuthProxyStore } from "./auth_proxy_store";
+
+function createAuthStore(config: AppConfigType, db: MemoryDb): IAuthStore {
+  if (config.AUTH_PROXY_URL) {
+    return new AuthProxyStore(config.AUTH_PROXY_URL);
+  }
+
+  if (isSqlDriver(config.DB_DRIVER)) {
+    return new AuthPostgresStore();
+  }
+  return new AuthMapStore(db);
+}
 
 @Module({
-  imports: [AppConfigModule],
+  imports: [AppConfigModule, MemoryModule],
   providers: [
     {
-      provide: AuthMapStoreToken,
-      useFactory: (config: AppConfigType) => useFactory(config.DB_DRIVER, config.AUTH_PROXY_URL),
-      inject: [AppConfigToken],
+      provide: AuthStoreToken,
+      useFactory: (config: AppConfigType, db: MemoryDb) => createAuthStore(config, db),
+      inject: [AppConfigToken, MemoryDb],
     },
   ],
-  exports: [AuthMapStoreToken],
+  exports: [AuthStoreToken],
 })
 export class AuthStoreModule {}

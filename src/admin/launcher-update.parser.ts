@@ -1,9 +1,9 @@
 import { BadRequestException } from "@nestjs/common";
 import type { FastifyRequest } from "fastify";
-import { mkdirSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { SUPPORTED_PLATFORMS } from "../launcher/launcher-files";
+import { SUPPORTED_PLATFORMS, UPLOAD_TMP_DIR } from "../launcher/launcher-files";
+import { removeFile, streamPartToFile } from "../utils/multipart-file";
 import type { LauncherPlatformFile } from "./launcher-update.service";
 
 const FIELD_PLATFORMS: Record<string, { os: string; arch: string }> = Object.fromEntries(
@@ -11,8 +11,6 @@ const FIELD_PLATFORMS: Record<string, { os: string; arch: string }> = Object.fro
     archs.map((arch) => [`${os}_${arch}`, { os, arch }]),
   ),
 );
-
-const UPLOAD_TMP_DIR = join("public", ".upload-tmp");
 
 export interface LauncherUpdateRequest {
   version: string;
@@ -26,6 +24,7 @@ export async function parseLauncherUpdateRequest(
   try {
     let version = "";
     const files: LauncherPlatformFile[] = [];
+    const seenFields = new Set<string>();
 
     for await (const part of request.parts()) {
       if (part.type === "field" && part.fieldname === "version") {
@@ -40,6 +39,11 @@ export async function parseLauncherUpdateRequest(
         throw new BadRequestException(`Неизвестное файловое поле: ${part.fieldname}`);
       }
 
+      if (seenFields.has(part.fieldname)) {
+        throw new BadRequestException(`Повторное файловое поле: ${part.fieldname}`);
+      }
+      seenFields.add(part.fieldname);
+
       const tempPath = join(UPLOAD_TMP_DIR, `${randomUUID()}.zip`);
       await streamPartToFile(part.file, tempPath);
       staged.push(tempPath);
@@ -50,30 +54,5 @@ export async function parseLauncherUpdateRequest(
   } catch (error) {
     for (const tempPath of staged) removeFile(tempPath);
     throw error;
-  }
-}
-
-async function streamPartToFile(
-  stream: AsyncIterable<Uint8Array>,
-  tempPath: string,
-): Promise<void> {
-  mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
-  const writer = Bun.file(tempPath).writer();
-  try {
-    for await (const chunk of stream) {
-      writer.write(chunk);
-    }
-    await writer.end();
-  } catch (error) {
-    removeFile(tempPath);
-    throw error;
-  }
-}
-
-function removeFile(tempPath: string): void {
-  try {
-    unlinkSync(tempPath);
-  } catch {
-    return;
   }
 }

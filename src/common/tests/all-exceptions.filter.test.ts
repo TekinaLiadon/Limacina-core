@@ -1,5 +1,11 @@
-import { describe, expect, it } from "bun:test";
-import { HttpException, HttpStatus, type ArgumentsHost } from "@nestjs/common";
+import { describe, expect, it, spyOn } from "bun:test";
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  InternalServerErrorException,
+  type ArgumentsHost,
+} from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { AllExceptionsFilter } from "../all-exceptions.filter";
 
@@ -58,9 +64,12 @@ describe("AllExceptionsFilter", () => {
     });
   });
 
-  it("маппит ошибку fastify с statusCode 413 вместо 500", () => {
+  it("маппит ошибку @fastify/multipart с statusCode 413 вместо 500 и отдаёт её message", () => {
     const { reply, state } = createReplyMock();
-    const exception = Object.assign(new Error("request file too large"), { statusCode: 413 });
+    const exception = Object.assign(new Error("request file too large"), {
+      statusCode: 413,
+      code: "FST_REQ_FILE_TOO_LARGE",
+    });
 
     filter.catch(exception, createHostMock(reply));
 
@@ -68,15 +77,55 @@ describe("AllExceptionsFilter", () => {
     expect(state.body).toEqual({ statusCode: 413, message: "request file too large" });
   });
 
-  it("маппит ошибку fastify с statusCode 406 вместо 500", () => {
+  it("маппит ошибку @fastify/multipart с statusCode 406 вместо 500 и отдаёт её message", () => {
     const { reply, state } = createReplyMock();
     const exception = Object.assign(new Error("the request is not multipart"), {
       statusCode: 406,
+      code: "FST_INVALID_MULTIPART_CONTENT_TYPE",
     });
 
     filter.catch(exception, createHostMock(reply));
 
     expect(state.statusCode).toBe(406);
+    expect(state.body).toEqual({ statusCode: 406, message: "the request is not multipart" });
+  });
+
+  it("отдаёт message для лимитных ошибок multipart (FST_PARTS_LIMIT)", () => {
+    const { reply, state } = createReplyMock();
+    const exception = Object.assign(new Error("reach parts limit"), {
+      statusCode: 413,
+      code: "FST_PARTS_LIMIT",
+    });
+
+    filter.catch(exception, createHostMock(reply));
+
+    expect(state.statusCode).toBe(413);
+    expect(state.body).toEqual({ statusCode: 413, message: "reach parts limit" });
+  });
+
+  it("не отдаёт message сторонней библиотеки для 4xx с кодом вне allowlist", () => {
+    const { reply, state } = createReplyMock();
+    const exception = Object.assign(new Error("busboy internals: unexpected file"), {
+      statusCode: 413,
+      code: "LIMIT_UNEXPECTED_FILE",
+    });
+
+    filter.catch(exception, createHostMock(reply));
+
+    expect(state.statusCode).toBe(413);
+    expect(state.body).toEqual({ statusCode: 413, message: "Bad Request" });
+  });
+
+  it("не отдаёт message сторонней библиотеки для 4xx без кода fastify", () => {
+    const { reply, state } = createReplyMock();
+    const exception = Object.assign(new Error("driver internals: sql and credentials"), {
+      statusCode: 418,
+    });
+
+    filter.catch(exception, createHostMock(reply));
+
+    expect(state.statusCode).toBe(418);
+    expect(state.body).toEqual({ statusCode: 418, message: "Bad Request" });
   });
 
   it("не отдаёт error.message наружу для 5xx-ошибки с statusCode", () => {
@@ -96,7 +145,7 @@ describe("AllExceptionsFilter", () => {
     filter.catch(exception, createHostMock(reply));
 
     expect(state.statusCode).toBe(418);
-    expect(state.body).toEqual({ statusCode: 418, message: "Internal Server Error" });
+    expect(state.body).toEqual({ statusCode: 418, message: "Bad Request" });
   });
 
   it("возвращает 500 с генерическим телом для неизвестной ошибки", () => {
@@ -134,7 +183,58 @@ describe("AllExceptionsFilter", () => {
     expect(state.statusCode).toBeUndefined();
     expect(state.body).toBeUndefined();
   });
+
+  it("логирует HttpException со статусом 5xx и отдаёт её клиенту", () => {
+    const { reply, state } = createReplyMock();
+    const errorSpy = spyOn(filterLogger(filter), "error");
+    filter.catch(new InternalServerErrorException("db exploded"), createHostMock(reply));
+
+    expect(state.statusCode).toBe(500);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
+  });
+
+  it("не логирует 4xx HttpException", () => {
+    const { reply, state } = createReplyMock();
+    const errorSpy = spyOn(filterLogger(filter), "error");
+    filter.catch(new BadRequestException("невалидный запрос"), createHostMock(reply));
+
+    expect(state.statusCode).toBe(400);
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("логирует не-Http ошибку со statusCode 5xx на error", () => {
+    const { reply, state } = createReplyMock();
+    const errorSpy = spyOn(filterLogger(filter), "error");
+    const exception = Object.assign(new Error("driver internal details"), { statusCode: 503 });
+
+    filter.catch(exception, createHostMock(reply));
+
+    expect(state.statusCode).toBe(503);
+    expect(state.body).toEqual({ statusCode: 503, message: "Internal Server Error" });
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
+  });
+
+  it("не логирует не-Http 4xx ошибку", () => {
+    const { reply, state } = createReplyMock();
+    const errorSpy = spyOn(filterLogger(filter), "error");
+    const exception = Object.assign(new Error("the request is not multipart"), {
+      statusCode: 406,
+    });
+
+    filter.catch(exception, createHostMock(reply));
+
+    expect(state.statusCode).toBe(406);
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });
+
+function filterLogger(filter: AllExceptionsFilter): { error: (...args: unknown[]) => void } {
+  return (filter as unknown as { logger: { error: (...args: unknown[]) => void } }).logger;
+}
 
 class BadRequestBodyException extends HttpException {
   constructor() {

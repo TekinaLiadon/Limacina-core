@@ -3,7 +3,7 @@ import { JwtModule } from "@nestjs/jwt";
 import { YggdrasilController } from "./yggdrasil.controller";
 import { YggdrasilService } from "./service/yggdrasil.service";
 import { YggdrasilSessionStoreToken, YggdrasilTokenStoreToken } from "./service/yggdrasil_store";
-import { YggdrasilMapSessionStore, YggdrasilMapTokenStore } from "../memory/yggdrasil-map.store";
+import { YggdrasilMapSessionStore, YggdrasilMapTokenStore } from "../memory/yggdrasil_map_store";
 import { MemoryModule } from "../memory/memory.module";
 import { MemoryDb } from "../memory/memory-db";
 import { YggdrasilProfileStoreModule } from "./service/yggdrasil_store.module";

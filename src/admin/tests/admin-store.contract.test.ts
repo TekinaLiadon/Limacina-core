@@ -3,11 +3,10 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 setupTestEnv();
 
 import { afterAll, beforeAll, beforeEach, expect, it } from "bun:test";
-import { AdminMapStore } from "../admin.store";
-import type { AdminUser, IAdminStore, UsersFilter } from "../admin.store";
-import { AdminPostgresStore } from "../admin_postgres.store";
-import { AuthPostgresStore } from "../../auth/service/auth_postgres.service";
-import type { StoredUser } from "../../auth/service/auth_store.service";
+import { AdminMapStore, type AdminUser, type IAdminStore, type UsersFilter } from "../admin_store";
+import { AdminPostgresStore } from "../admin_postgres_store";
+import { AuthPostgresStore } from "../../auth/service/auth_postgres_store";
+import type { StoredUser } from "../../auth/service/auth_store";
 import { generateUuid } from "../../utils/uuid";
 import {
   cleanupTrackedUsers,
@@ -218,7 +217,7 @@ contractDescribeEach("контракт IAdminStore", (driver) => {
     expect(await ctx.store.findDeletedByUsername(user.username)).toBeUndefined();
   });
 
-  it("restoreUser при двух удалённых записях восстанавливает новейшую и убирает дубль", async () => {
+  it("restoreUser при двух удалённых записях восстанавливает новейшую, дубликат живёт до чистки", async () => {
     const stem = uniqueUsername("dup");
     const first = await ctx.makeUser({ username: stem });
     await ctx.store.deleteUser(stem);
@@ -232,14 +231,33 @@ contractDescribeEach("контракт IAdminStore", (driver) => {
     const restored = await ctx.store.findByUsername(stem);
     expect(restored?.uuid).toBe(second.uuid);
     expect(restored?.uuid).not.toBe(first.uuid);
-    expect(await ctx.store.findDeletedByUsername(stem)).toBeUndefined();
 
-    const deletedPage = await ctx.store.searchDeletedUsers({
+    const stillDeleted = await ctx.store.searchDeletedUsers({
       limit: 100,
       offset: 0,
       username: stem,
     });
-    expect(deletedPage.items.map((item) => item.username)).not.toContain(stem);
+    expect(stillDeleted.items.map((item) => item.uuid)).toEqual([first.uuid]);
+
+    expect(await ctx.store.removeDeletedDuplicates(stem)).toBe(1);
+    expect(await ctx.store.findDeletedByUsername(stem)).toBeUndefined();
+    expect((await ctx.store.findByUsername(stem))?.uuid).toBe(second.uuid);
+  });
+
+  it("removeDeletedDuplicates не трогает живых и чужих удалённых", async () => {
+    const stem = uniqueUsername("dup");
+    await ctx.makeUser({ username: stem });
+    await ctx.store.deleteUser(stem);
+    const other = await ctx.makeUser();
+    await ctx.store.deleteUser(other.username);
+    const live = await ctx.makeUser({ username: stem });
+
+    const removed = await ctx.store.removeDeletedDuplicates(stem);
+
+    expect(removed).toBe(1);
+    expect((await ctx.store.findByUsername(live.username))?.uuid).toBe(live.uuid);
+    expect(await ctx.store.findDeletedByUsername(other.username)).toBeDefined();
+    expect(await ctx.store.findDeletedByUsername(stem)).toBeUndefined();
   });
 
   it("purgeOldDeletedUsers не вычищает свежеудалённых при retention 30 дней", async () => {

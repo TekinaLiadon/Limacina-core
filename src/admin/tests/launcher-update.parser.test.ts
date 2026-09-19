@@ -1,3 +1,4 @@
+import { UPLOAD_TMP_DIR } from "../../launcher/launcher-files";
 import { afterEach, describe, expect, it } from "bun:test";
 import { BadRequestException } from "@nestjs/common";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
@@ -5,8 +6,6 @@ import type { FastifyRequest } from "fastify";
 import { Readable } from "node:stream";
 import { parseLauncherUpdateRequest } from "../launcher-update.parser";
 import type { LauncherPlatformFile } from "../launcher-update.service";
-
-const UPLOAD_TMP_DIR = "public/.upload-tmp";
 
 interface FakePart {
   type: "field" | "file";
@@ -76,6 +75,20 @@ describe("parseLauncherUpdateRequest (TASK-20: стриминг в temp-файл
     ]);
 
     await expect(parseLauncherUpdateRequest(request)).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(readdirSync(UPLOAD_TMP_DIR)).toEqual([]);
+  });
+
+  it("отклоняет повторное файловое поле платформы и подчищает temp", async () => {
+    mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
+    const request = buildFakeRequest([
+      filePart("linux_x86_64", "first-zip"),
+      filePart("linux_x86_64", "second-zip"),
+    ]);
+
+    await expect(parseLauncherUpdateRequest(request)).rejects.toThrow(
+      "Повторное файловое поле: linux_x86_64",
+    );
 
     expect(readdirSync(UPLOAD_TMP_DIR)).toEqual([]);
   });

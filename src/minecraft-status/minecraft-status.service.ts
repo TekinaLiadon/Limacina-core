@@ -3,11 +3,12 @@ import { parseMinecraftTarget, status, type MinecraftTarget } from "./minecraft-
 import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 import type { MinecraftStatusDto } from "./dto/dto";
-import { CacheStoreToken, type ICacheStore } from "../cache/cache.store";
+import { CacheStoreToken, type ICacheStore } from "../cache/cache_store";
 
 export const STATUS_CACHE_KEY = "minecraft-status";
 const STATUS_CACHE_TTL_MS = 60_000;
-export const FAILURE_COOLDOWN_MS = 5_000;
+const FAILURE_COOLDOWN_MS = 5_000;
+const TARGET_NOT_CONFIGURED = "MINECRAFT_HOST не задан — мониторинг игрового сервера отключён";
 const TARGET_PARSE_ERROR =
   "Некорректный MINECRAFT_HOST — ожидается host, host:port или [ipv6]:port";
 const SERVER_UNAVAILABLE_MESSAGE = "Игровой сервер недоступен";
@@ -16,6 +17,8 @@ const SERVER_UNAVAILABLE_MESSAGE = "Игровой сервер недоступ
 export class MinecraftStatusService {
   private readonly logger = new Logger(MinecraftStatusService.name);
   private readonly target: MinecraftTarget | undefined;
+  private readonly targetMisconfigured: boolean = false;
+  private misconfigurationLogged = false;
   private pendingPing: Promise<MinecraftStatusDto> | undefined;
   private failureCooldownUntil = 0;
   readonly failureCooldownMs: number = FAILURE_COOLDOWN_MS;
@@ -24,15 +27,24 @@ export class MinecraftStatusService {
     @Inject(AppConfigToken) config: AppConfigType,
     @Inject(CacheStoreToken) private readonly cache: ICacheStore,
   ) {
-    if (config.MINECRAFT_HOST) {
-      this.target = parseMinecraftTarget(config.MINECRAFT_HOST) ?? undefined;
-    }
+    if (!config.MINECRAFT_HOST) return;
+
+    this.target = parseMinecraftTarget(config.MINECRAFT_HOST) ?? undefined;
+    this.targetMisconfigured = !this.target;
   }
 
   async getOnline(): Promise<MinecraftStatusDto> {
-    if (!this.target) {
-      this.logger.error(TARGET_PARSE_ERROR);
+    if (this.targetMisconfigured) {
+      if (!this.misconfigurationLogged) {
+        this.misconfigurationLogged = true;
+        this.logger.warn(TARGET_PARSE_ERROR);
+      }
       throw new ServiceUnavailableException(TARGET_PARSE_ERROR);
+    }
+
+    if (!this.target) {
+      this.logger.debug(TARGET_NOT_CONFIGURED);
+      throw new ServiceUnavailableException(TARGET_NOT_CONFIGURED);
     }
 
     const cached = await this.cache.get<MinecraftStatusDto>(STATUS_CACHE_KEY);

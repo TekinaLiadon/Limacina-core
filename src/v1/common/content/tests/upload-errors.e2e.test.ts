@@ -1,4 +1,5 @@
 import { setupTestEnv } from "../../../../utils/tests/test-env";
+import { applyV1ApiPrefix } from "../../../../utils/tests/v1-prefix";
 
 setupTestEnv();
 
@@ -13,11 +14,13 @@ import { ExtractJwt, Strategy } from "passport-jwt";
 import fastifyMultipart from "@fastify/multipart";
 import supertest from "supertest";
 import { V1ContentController } from "../content.controller";
-import { MAX_SKIN_BYTES, UserContentService } from "../../../../user-content/user-content.service";
+import { UserContentService } from "../../../../user-content/user-content.service";
+import { MAX_TEXTURE_BYTES } from "../../../../utils/texture";
+import { TEXTURE_UPLOAD_LIMIT_BYTES } from "../../../../user-content/user-content.parser";
 import {
   UserContentMapStore,
-  UserContentMapStoreToken,
-} from "../../../../user-content/user-content.store";
+  UserContentStoreToken,
+} from "../../../../user-content/user_content_store";
 import GlobalConfig from "../../../../config/global-config";
 import { AppConfigToken } from "../../../../config/app-config.provider";
 import { Jwt_authGuard } from "../../../../common/jwt_auth.guard";
@@ -62,7 +65,7 @@ describe("V1 common/content — ошибки загрузки файлов", ():
         { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
         TestJwtStrategy,
         {
-          provide: UserContentMapStoreToken,
+          provide: UserContentStoreToken,
           useClass: UserContentMapStore,
         },
       ],
@@ -78,10 +81,16 @@ describe("V1 common/content — ошибки загрузки файлов", ():
     const reflector = app.get(Reflector);
     app.useGlobalGuards(new Jwt_authGuard(reflector), new RolesGuard(reflector));
     jwtService = moduleFixture.get(JwtService);
+    applyV1ApiPrefix(app);
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
 
-    userToken = jwtService.sign({ sub: TEST_UUID, username: "v1upload", role: "user" });
+    userToken = jwtService.sign({
+      typ: "access",
+      sub: TEST_UUID,
+      username: "v1upload",
+      role: "user",
+    });
   });
 
   afterAll(async () => {
@@ -96,14 +105,21 @@ describe("V1 common/content — ошибки загрузки файлов", ():
       .send("{}");
 
     expect(res.status).toBe(406);
+    expect(res.body).toEqual({
+      statusCode: 406,
+      message: "the request is not multipart",
+    });
   });
 
   it("возвращает 413, а не 500, при превышении стрим-лимита маршрута", async () => {
     const res = await supertest(app.getHttpServer())
       .post("/v1/common/content/skins")
       .set("Authorization", `Bearer ${userToken}`)
-      .attach("file", Buffer.alloc(MAX_SKIN_BYTES * 2 + 1, "a"), "skin.png");
+      .attach("file", Buffer.alloc(MAX_TEXTURE_BYTES * 2 + 1, "a"), "skin.png");
 
     expect(res.status).toBe(413);
+    expect(res.body.message).toBe(
+      `Файл слишком большой: максимум ${TEXTURE_UPLOAD_LIMIT_BYTES} байт`,
+    );
   });
 });

@@ -19,10 +19,23 @@ describe("auth-rate-limit route matchers", () => {
     expect(isAuthLoginRoute("/authserver/signout")).toBe(false);
   });
 
+  it("isAuthLoginRoute не ловит коллизии префикса и суффикса", () => {
+    expect(isAuthLoginRoute("/v1/common/authX/login")).toBe(false);
+    expect(isAuthLoginRoute("/v1/common/auth/legacy/login")).toBe(false);
+    expect(isAuthLoginRoute("/v1/common/auth/login/extra")).toBe(false);
+    expect(isAuthLoginRoute("/v1/common/auth/registration-old")).toBe(false);
+  });
+
   it("isPasswordChangeRoute матчит только смену пароля", () => {
     expect(isPasswordChangeRoute("/v1/common/auth/password")).toBe(true);
     expect(isPasswordChangeRoute("/v1/common/auth/password?x=1")).toBe(true);
     expect(isPasswordChangeRoute("/v1/common/auth/login")).toBe(false);
     expect(isPasswordChangeRoute("/authserver/signout")).toBe(false);
+  });
+
+  it("isPasswordChangeRoute не ловит коллизии префикса и суффикса", () => {
+    expect(isPasswordChangeRoute("/v1/common/authX/password")).toBe(false);
+    expect(isPasswordChangeRoute("/v1/common/auth/reset-password")).toBe(false);
+    expect(isPasswordChangeRoute("/v1/common/auth/password/old")).toBe(false);
   });
 });

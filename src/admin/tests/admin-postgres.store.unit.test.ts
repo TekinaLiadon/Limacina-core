@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { AdminPostgresStore } from "../admin_postgres.store";
-import type { AdminUser } from "../admin.store";
+import { AdminPostgresStore } from "../admin_postgres_store";
+import type { AdminUser } from "../admin_store";
 import { installFakeSqlClient, resetSqlClient } from "../../utils/tests/sql-fake";
 import { setupTestEnv } from "../../utils/tests/test-env";
 
@@ -146,7 +146,7 @@ describe("AdminPostgresStore (мок SQL-клиента)", () => {
     const deleted = await store.deleteUser("pgadm_user");
 
     expect(deleted).toEqual(adminUser());
-    const update = lastCalls(2)[1];
+    const [, update] = lastCalls(2);
     expect(update?.sql).toContain("UPDATE users SET deleted = $1");
     expect(update?.sql).not.toContain("RETURNING");
   });
@@ -170,16 +170,27 @@ describe("AdminPostgresStore (мок SQL-клиента)", () => {
     expect(call?.sql).toContain("LIMIT 1");
   });
 
-  it("restoreUser восстанавливает новейшую запись и чистит дубли", async () => {
+  it("restoreUser восстанавливает новейшую запись, не трогая дубликаты", async () => {
     fake.onSql(({ sql }) => (sql.includes("SELECT") ? [deletedRow()] : []));
 
     await store.restoreUser("pgadm_user");
 
-    const [restore, cleanup] = lastCalls(2);
-    expect(restore?.sql).toContain("SET deleted = $1");
-    expect(restore?.sql).toContain("ORDER BY deleted_at DESC LIMIT 1");
-    expect(cleanup?.sql).toContain("DELETE FROM users");
-    expect(cleanup?.sql).toContain("deleted = true");
+    const [, update] = lastCalls(2);
+    expect(update?.sql).toContain("SET deleted = $1");
+    expect(update?.sql).toContain("ORDER BY deleted_at DESC LIMIT 1");
+    expect(update?.sql).not.toContain("DELETE");
+  });
+
+  it("removeDeletedDuplicates жёстко удаляет только удалённых с этим ником", async () => {
+    fake.onSql(() => [{ uuid: "uuid-1" }, { uuid: "uuid-2" }]);
+
+    expect(await store.removeDeletedDuplicates("pgadm_user")).toBe(2);
+
+    const [call] = lastCalls(1);
+    expect(call?.sql).toContain("DELETE FROM users");
+    expect(call?.sql).toContain("username = $1");
+    expect(call?.sql).toContain("deleted = true");
+    expect(call?.values).toEqual(["pgadm_user"]);
   });
 
   it("restoreUser отсутствующего ничего не делает", async () => {

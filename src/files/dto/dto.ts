@@ -1,11 +1,11 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsInt, IsOptional, IsString, Max, Min } from "class-validator";
-import { Type } from "class-transformer";
+import { IsString } from "class-validator";
 import { validationMessages } from "../../common/validation-messages";
+import { LimitQuery, OffsetQuery } from "../../common/dto/dto";
 
 export class FileDto {
   @ApiProperty()
-  @IsString()
+  @IsString({ message: validationMessages.string("url") })
   url!: string;
 }
 
@@ -16,10 +16,7 @@ export class FilesListQueryDto {
     default: 0,
     description: "Смещение от начала отсортированного списка",
   })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: validationMessages.int("offset") })
-  @Min(0, { message: validationMessages.min("offset", 0) })
+  @OffsetQuery()
   offset?: number;
 
   @ApiProperty({
@@ -28,11 +25,7 @@ export class FilesListQueryDto {
     maximum: 1000,
     description: "Максимум записей в ответе (без параметра — весь список)",
   })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: validationMessages.int("limit") })
-  @Min(1, { message: validationMessages.min("limit", 1) })
-  @Max(1000, { message: validationMessages.max("limit", 1000) })
+  @LimitQuery(1000)
   limit?: number;
 }
 

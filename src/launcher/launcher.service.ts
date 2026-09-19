@@ -1,52 +1,53 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { open, type FileHandle } from "node:fs/promises";
-import { join } from "node:path";
-import { Readable } from "node:stream";
-import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import {
   Injectable,
   BadRequestException,
   Logger,
   NotFoundException,
+  Optional,
   type OnModuleDestroy,
 } from "@nestjs/common";
 import { parse as parseToml } from "smol-toml";
 import { watch, type FSWatcher } from "chokidar";
-import type { LauncherConfigDto, LauncherVersionsDto } from "./dto/dto";
+import { plainToInstance } from "class-transformer";
+import { validateSync } from "class-validator";
+import { streamFileToReply } from "../utils/file-stream";
+import { LauncherConfigDto, type LauncherVersionsDto } from "./dto/dto";
 import type { FastifyReply } from "fastify";
 import {
   LAUNCHER_VERSION_REGEX,
   OLD_VERSIONS_DIR,
+  PUBLIC_DIR,
   SUPPORTED_PLATFORMS,
   buildLauncherZipName,
   compareVersions,
   isSupportedPlatform,
   parseLauncherZipName,
 } from "./launcher-files";
+import { VERSION_FILE, readLauncherVersion } from "./version-file";
 
-const PUBLIC_DIR = "public";
-const VERSION_FILE = join(PUBLIC_DIR, "version.json");
 const CONFIG_FILE = "config.toml";
 
-function isMissingFileError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code: unknown }).code === "ENOENT"
-  );
-}
+export const PLATFORM_RESCAN_INTERVAL_MS = 30_000;
 
 interface PlatformInfo {
   os: string;
   arch: string;
 }
 
-function extractVersion(data: unknown): string | undefined {
-  if (typeof data !== "object" || data === null) return undefined;
-  const { version } = data as { version?: unknown };
-  if (typeof version !== "string" || !LAUNCHER_VERSION_REGEX.test(version)) return undefined;
-  return version;
+function platformDirs(): string[] {
+  return Object.entries(SUPPORTED_PLATFORMS).flatMap(([os, archs]) =>
+    archs.map((arch) => join(PUBLIC_DIR, os, arch)),
+  );
+}
+
+export function parseLauncherConfig(content: string): LauncherConfigDto | undefined {
+  const parsed: unknown = parseToml(content);
+  const config = plainToInstance(LauncherConfigDto, parsed);
+  const errors = validateSync(config, { whitelist: true });
+  if (errors.length > 0) return undefined;
+  return config;
 }
 
 @Injectable()
@@ -57,14 +58,20 @@ export class LauncherService implements OnModuleDestroy {
   private platforms: PlatformInfo[] = [];
   private config: LauncherConfigDto | undefined;
   private versionWatcher?: FSWatcher;
-  private platformsWatcher?: FSWatcher;
   private configWatcher?: FSWatcher;
+  private platformsRescanTimer: Timer | undefined;
+
+  constructor(
+    @Optional()
+    private readonly platformsRescanIntervalMs: number = PLATFORM_RESCAN_INTERVAL_MS,
+  ) {}
 
   async onApplicationBootstrap() {
+    this.ensureWatchedDirs();
     this.loadVersion();
     this.watchVersion();
     this.scanPlatforms();
-    this.watchPlatforms();
+    this.startPlatformsRescan();
     this.loadConfig();
     this.watchConfig();
 
@@ -74,26 +81,28 @@ export class LauncherService implements OnModuleDestroy {
     );
   }
 
-  private loadVersion(): void {
-    try {
-      const data: unknown = JSON.parse(readFileSync(VERSION_FILE, "utf-8"));
-      const version = extractVersion(data);
-      if (version) {
-        this.version = version;
-        return;
-      }
-      this.logger.warn(
-        { file: VERSION_FILE },
-        "Некорректная форма version.json, используется 0.0.0",
-      );
-      this.version = "0.0.0";
-    } catch (error) {
-      this.logger.warn(
-        { err: error, file: VERSION_FILE },
-        "Ошибка чтения version.json, используется 0.0.0",
-      );
-      this.version = "0.0.0";
+  private ensureWatchedDirs(): void {
+    this.ensureWatchedDir(PUBLIC_DIR);
+    for (const dir of platformDirs()) {
+      this.ensureWatchedDir(dir);
     }
+  }
+
+  private ensureWatchedDir(dir: string): void {
+    if (existsSync(dir)) return;
+
+    mkdirSync(dir, { recursive: true });
+    this.logger.warn({ dir }, "Наблюдаемый каталог отсутствовал и создан при старте");
+  }
+
+  private loadVersion(): void {
+    const version = readLauncherVersion();
+    if (version) {
+      this.version = version;
+      return;
+    }
+    this.logger.warn({ file: VERSION_FILE }, "Ошибка чтения version.json, используется 0.0.0");
+    this.version = "0.0.0";
   }
 
   private watchVersion(): void {
@@ -118,13 +127,34 @@ export class LauncherService implements OnModuleDestroy {
       return;
     }
 
+    let content: string;
     try {
-      const content = readFileSync(CONFIG_FILE, "utf-8");
-      this.config = parseToml(content) as unknown as LauncherConfigDto;
+      content = readFileSync(CONFIG_FILE, "utf-8");
     } catch (error) {
       this.logger.error({ err: error }, "Ошибка чтения config.toml");
       this.config = undefined;
+      return;
     }
+
+    let config: LauncherConfigDto | undefined;
+    try {
+      config = parseLauncherConfig(content);
+    } catch (error) {
+      this.logger.error({ err: error }, "Ошибка чтения config.toml");
+      this.config = undefined;
+      return;
+    }
+
+    if (!config) {
+      this.logger.warn(
+        { file: CONFIG_FILE },
+        "Некорректная форма config.toml, конфиг лаунчера отключён",
+      );
+      this.config = undefined;
+      return;
+    }
+
+    this.config = config;
   }
 
   private watchConfig(): void {
@@ -180,36 +210,38 @@ export class LauncherService implements OnModuleDestroy {
     }
   }
 
-  private watchPlatforms(): void {
-    const dirs = Object.entries(SUPPORTED_PLATFORMS).flatMap(([os, archs]) =>
-      archs.map((arch) => join(PUBLIC_DIR, os, arch)),
-    );
-
-    this.platformsWatcher = watch(dirs, {
-      ignoreInitial: true,
-      awaitWriteFinish: { stabilityThreshold: 200 },
-    });
-
-    this.platformsWatcher.on("add", (filePath: string) => {
-      this.handlePlatformFileChange(filePath, "добавлен");
-    });
-
-    this.platformsWatcher.on("unlink", (filePath: string) => {
-      this.handlePlatformFileChange(filePath, "удалён");
-    });
-
-    this.platformsWatcher.on("error", (error: unknown) => {
-      this.logger.error({ err: error }, "Ошибка watcher платформ");
-    });
+  private startPlatformsRescan(): void {
+    this.platformsRescanTimer = setInterval(() => {
+      try {
+        this.rereadVersion();
+        this.rescanPlatforms();
+      } catch (error) {
+        this.logger.error({ err: error }, "Ошибка пересканирования платформенных каталогов");
+      }
+    }, this.platformsRescanIntervalMs);
+    this.platformsRescanTimer.unref();
   }
 
-  private handlePlatformFileChange(filePath: string, event: string): void {
-    try {
-      if (!filePath.endsWith(".zip")) return;
-      this.scanPlatforms();
-      this.logger.log({ file: filePath }, `Платформенный файл ${event}`);
-    } catch (error) {
-      this.logger.error({ err: error, file: filePath }, "Ошибка обработки изменения платформы");
+  private rereadVersion(): void {
+    const version = readLauncherVersion();
+    if (!version || version === this.version) return;
+
+    this.version = version;
+    this.logger.log({ version }, "version.json перечитан с диска");
+  }
+
+  private rescanPlatforms(): void {
+    const previous = this.platforms;
+    this.scanPlatforms();
+
+    const changed =
+      previous.length !== this.platforms.length ||
+      previous.some((platform, index) => {
+        const current = this.platforms[index];
+        return !current || current.os !== platform.os || current.arch !== platform.arch;
+      });
+    if (changed) {
+      this.logger.log({ platforms: this.platforms }, "Набор платформ лаунчера изменился");
     }
   }
 
@@ -227,8 +259,6 @@ export class LauncherService implements OnModuleDestroy {
         }
       }
     }
-
-    this.logger.log({ platforms: this.platforms }, "Доступные платформы");
   }
 
   getVersions(): LauncherVersionsDto {
@@ -283,8 +313,9 @@ export class LauncherService implements OnModuleDestroy {
 
   onModuleDestroy(): void {
     this.versionWatcher?.close();
-    this.platformsWatcher?.close();
     this.configWatcher?.close();
+    clearInterval(this.platformsRescanTimer);
+    this.platformsRescanTimer = undefined;
   }
 
   async download(os: string, arch: string, reply: FastifyReply, version?: string): Promise<void> {
@@ -309,51 +340,17 @@ export class LauncherService implements OnModuleDestroy {
       );
     }
 
-    const filePath = join(dir, zipFile);
-
-    let handle: FileHandle;
-    try {
-      handle = await open(filePath, "r");
-    } catch (error) {
-      if (isMissingFileError(error)) {
-        throw new NotFoundException(`Файл лаунчера не найден: ${zipFile}`);
-      }
-      throw error;
-    }
-
-    let closed = false;
-    const closeHandle = (): void => {
-      if (closed) return;
-      closed = true;
-      void handle
-        .close()
-        .catch((closeError: unknown) =>
-          this.logger.error({ err: closeError, file: zipFile }, "Не удалось закрыть файл лаунчера"),
-        );
-    };
-
-    try {
-      const { size } = await handle.stat();
-      reply.header("Content-Type", "application/zip");
-      reply.header("Content-Disposition", `attachment; filename="${zipFile}"`);
-      reply.header("Content-Length", size.toString());
-      reply.raw.once("close", closeHandle);
-      const fileStream = Readable.fromWeb(
-        Bun.file(handle.fd).stream() as unknown as NodeWebReadableStream,
-      );
-      fileStream.on("error", (error: Error) => {
-        this.logger.error({ err: error, file: zipFile }, "Ошибка отдачи файла лаунчера");
-      });
-      reply.send(fileStream);
-    } catch (error) {
-      closeHandle();
-      throw error;
-    }
+    await streamFileToReply(reply, join(dir, zipFile), {
+      contentType: "application/zip",
+      contentDisposition: `attachment; filename="${basename(zipFile)}"`,
+      notFoundMessage: `Файл лаунчера не найден: ${zipFile}`,
+      fileLabel: zipFile,
+      rangeHeader: reply.request.headers.range,
+    });
   }
 
   private findCurrentZip(dir: string, os: string, arch: string): string | null {
-    const expectedZip = buildLauncherZipName(this.version, os, arch);
-    return readdirSync(dir).includes(expectedZip) ? expectedZip : null;
+    return this.findZip(dir, buildLauncherZipName(this.version, os, arch));
   }
 
   private findVersionZip(dir: string, os: string, arch: string, version: string): string | null {
@@ -361,7 +358,10 @@ export class LauncherService implements OnModuleDestroy {
       throw new BadRequestException("Версия должна быть в формате x.x.x (например 1.2.3)");
     }
 
-    const expectedZip = buildLauncherZipName(version, os, arch);
+    return this.findZip(dir, buildLauncherZipName(version, os, arch));
+  }
+
+  private findZip(dir: string, expectedZip: string): string | null {
     if (readdirSync(dir).includes(expectedZip)) {
       return expectedZip;
     }

@@ -1,12 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import AppConfig from "./global-config";
+import { baseRequiredEnv } from "../utils/tests/test-env";
 
-const baseEnv = {
-  NODE_ENV: "development",
-  JWT_ACCESS: "test-access-secret-test-access-secret-32",
-  JWT_REFRESH: "test-refresh-secret-test-refresh-secret-32",
-  BASE_URL: "http://localhost:3005",
-};
+const baseEnv = baseRequiredEnv();
 
 describe("AppConfig", () => {
   it("принимает map вне production", () => {
@@ -106,10 +102,19 @@ describe("AppConfig", () => {
     }
   });
 
-  it("BASE_URL обязателен", () => {
+  it("BASE_URL по умолчанию http://localhost:3005", () => {
     const { BASE_URL: _, ...envWithoutBaseUrl } = baseEnv;
 
     const result = AppConfig.tryParseEnv(envWithoutBaseUrl);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.BASE_URL).toBe("http://localhost:3005");
+    }
+  });
+
+  it("отклоняет невалидный BASE_URL", () => {
+    const result = AppConfig.tryParseEnv({ ...baseEnv, BASE_URL: "not-a-url" });
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -201,6 +206,33 @@ describe("AppConfig", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.CORS_ORIGINS).toBeUndefined();
+    }
+  });
+
+  it("PORT по умолчанию 3005", () => {
+    const result = AppConfig.tryParseEnv({ ...baseEnv });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.PORT).toBe(3005);
+    }
+  });
+
+  it("отвергает нецелочисленный PORT", () => {
+    const result = AppConfig.tryParseEnv({ ...baseEnv, PORT: "3005.7" });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path.includes("PORT"))).toBe(true);
+    }
+  });
+
+  it("PORT=0 допустим — случайный порт для тестов и флоу-харнесса", () => {
+    const result = AppConfig.tryParseEnv({ ...baseEnv, PORT: "0" });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.PORT).toBe(0);
     }
   });
 });

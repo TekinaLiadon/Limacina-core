@@ -1,21 +1,22 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { Readable } from "node:stream";
-import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import {
   BadRequestException,
   Injectable,
   Logger,
+  Optional,
   type OnModuleDestroy,
-  NotFoundException,
 } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { watch, type FSWatcher } from "chokidar";
 import { FileDto } from "./dto/dto";
+import { streamFileToReply } from "../utils/file-stream";
 
 const LAUNCHER_DIR = "public/launcher";
 
 export const FILES_LIST_EXCLUDED_FOLDERS: string[] = ["mods"];
+
+export const FILES_RESCAN_INTERVAL_MS = 30_000;
 
 export interface FilesPage {
   files: Record<string, string>;
@@ -25,12 +26,27 @@ export interface FilesPage {
 const isExcludedFolder = (key: string): boolean =>
   FILES_LIST_EXCLUDED_FOLDERS.some((folder) => key.startsWith(`${folder}/`));
 
+function encodeAttachmentFilename(filename: string): string {
+  return encodeURIComponent(filename)
+    .replace(/'/g, "%27")
+    .replace(/\(/g, "%28")
+    .replace(/\)/g, "%29")
+    .replace(/\*/g, "%2A");
+}
+
 @Injectable()
 export class FilesService implements OnModuleDestroy {
   readonly logger: Logger = new Logger(FilesService.name);
   watcherLauncher!: FSWatcher;
 
+  private readonly filesRescanIntervalMs: number;
+  private rescanTimer: Timer | undefined;
+
   readonly launcherHash: Map<string, string> = new Map();
+
+  constructor(@Optional() filesRescanIntervalMs: number = FILES_RESCAN_INTERVAL_MS) {
+    this.filesRescanIntervalMs = filesRescanIntervalMs;
+  }
 
   async onApplicationBootstrap() {
     this.ensureDir(LAUNCHER_DIR);
@@ -38,12 +54,45 @@ export class FilesService implements OnModuleDestroy {
     await this.indexDir(LAUNCHER_DIR, this.launcherHash);
 
     this.watcherLauncher = this.createWatcher(LAUNCHER_DIR, this.launcherHash);
+    this.startIndexRescan();
 
     this.logger.log({ launcher: this.launcherHash.size }, "Файлы проиндексированы");
   }
 
   onModuleDestroy(): void {
     this.watcherLauncher?.close();
+    clearInterval(this.rescanTimer);
+    this.rescanTimer = undefined;
+  }
+
+  private startIndexRescan(): void {
+    this.rescanTimer = setInterval(() => {
+      try {
+        this.reconcileLauncherIndex();
+      } catch (error) {
+        this.logger.error({ err: error }, "Ошибка сверки манифеста файлов с диском");
+      }
+    }, this.filesRescanIntervalMs);
+    this.rescanTimer.unref();
+  }
+
+  private reconcileLauncherIndex(): void {
+    for (const namePath of [...this.launcherHash.keys()]) {
+      if (existsSync(join(LAUNCHER_DIR, namePath))) continue;
+      this.launcherHash.delete(namePath);
+      this.logger.debug({ file: namePath }, "Файл отсутствует на диске, запись манифеста удалена");
+    }
+    this.indexMissingFiles(LAUNCHER_DIR, this.launcherHash);
+  }
+
+  private indexMissingFiles(dir: string, map: Map<string, string>): void {
+    if (!existsSync(dir)) return;
+
+    for (const entry of readdirSync(dir, { recursive: true })) {
+      const namePath = String(entry);
+      if (map.has(namePath)) continue;
+      void this.indexFile(dir, map, join(dir, namePath));
+    }
   }
 
   private ensureDir(dir: string): void {
@@ -73,6 +122,7 @@ export class FilesService implements OnModuleDestroy {
 
       const hash = await this.getHash(fullPath);
       if (!hash) return;
+      if (!existsSync(fullPath)) return;
       map.set(namePath, hash);
     } catch (error) {
       this.logger.error({ err: error, file: namePath }, "Не удалось проиндексировать файл");
@@ -122,6 +172,7 @@ export class FilesService implements OnModuleDestroy {
 
       const hash = await this.getHash(filePath);
       if (!hash) return;
+      if (!existsSync(filePath)) return;
       map.set(namePath, hash);
       this.logger.debug({ file: namePath, event }, "Файл лаунчера обновлён");
     } catch (error) {
@@ -176,25 +227,13 @@ export class FilesService implements OnModuleDestroy {
 
   async sendFile(fileInfo: FileDto, reply: FastifyReply): Promise<void> {
     const filePath = this.resolveLauncherPath(fileInfo.url);
-    if (!existsSync(filePath)) {
-      throw new NotFoundException(`Файл не найден: ${fileInfo.url}`);
-    }
 
-    const file = Bun.file(filePath);
-    const encodedFilename = encodeURIComponent(fileInfo.url)
-      .replace(/'/g, "%27")
-      .replace(/\(/g, "%28")
-      .replace(/\)/g, "%29")
-      .replace(/\*/g, "%2A");
-
-    reply.header("Content-Type", "application/octet-stream");
-    reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodedFilename}`);
-    reply.header("Content-Length", (await file.size).toString());
-    const fileStream = Readable.fromWeb(file.stream() as unknown as NodeWebReadableStream);
-    fileStream.on("error", (error: Error) => {
-      this.logger.error({ err: error, file: fileInfo.url }, "Ошибка отдачи файла лаунчера");
+    await streamFileToReply(reply, filePath, {
+      contentType: "application/octet-stream",
+      contentDisposition: `attachment; filename*=UTF-8''${encodeAttachmentFilename(fileInfo.url)}`,
+      notFoundMessage: `Файл не найден: ${fileInfo.url}`,
+      fileLabel: fileInfo.url,
     });
-    reply.send(fileStream);
   }
 
   private resolveLauncherPath(requestedUrl: string): string {

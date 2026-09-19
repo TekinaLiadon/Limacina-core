@@ -3,9 +3,8 @@ import { setupTestEnv } from "../../../utils/tests/test-env";
 setupTestEnv();
 
 import { afterAll, beforeAll, beforeEach, expect, it } from "bun:test";
-import { AuthMapStore } from "../auth_store.service";
-import { AuthPostgresStore } from "../auth_postgres.service";
-import type { IAuthStore, StoredUser } from "../auth_store.service";
+import { AuthMapStore, type IAuthStore, type StoredUser } from "../auth_store";
+import { AuthPostgresStore } from "../auth_postgres_store";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../../token.constants";
 import { generateUuid } from "../../../utils/uuid";
 import {

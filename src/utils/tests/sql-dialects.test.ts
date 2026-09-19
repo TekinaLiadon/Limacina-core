@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mariadbDialect } from "../sql/dialects/mariadb.dialect";
 import { postgresDialect } from "../sql/dialects/postgres.dialect";
 import { toBoolean } from "../sql/dialects/dialect";
+import { resolveSqlDialect } from "../sql/client";
+import { mergeSecretsIntoEnv } from "../../config/zod-env";
 
 describe("postgresDialect", () => {
   it("оставляет плейсхолдеры $n без изменений", () => {
@@ -50,6 +52,25 @@ describe("mariadbDialect", () => {
 
     expect(adapted.sql).toBe("a = ? AND b = ? AND c = ?");
     expect(adapted.values).toEqual(["second", "first", "second"]);
+  });
+
+  it("не переписывает $n внутри строковых литералов", () => {
+    const adapted = mariadbDialect.toClientQuery(
+      "SELECT * FROM users WHERE note = 'цена $1 за штуку' AND uuid = $1",
+      ["uuid-1"],
+    );
+
+    expect(adapted.sql).toBe("SELECT * FROM users WHERE note = 'цена $1 за штуку' AND uuid = ?");
+    expect(adapted.values).toEqual(["uuid-1"]);
+  });
+
+  it("не переписывает $n внутри литерала с экранированной кавычкой", () => {
+    const adapted = mariadbDialect.toClientQuery("WHERE a = 'он сказал ''$1'' AND b = $1", [
+      "uuid-1",
+    ]);
+
+    expect(adapted.sql).toBe("WHERE a = 'он сказал ''$1'' AND b = ?");
+    expect(adapted.values).toEqual(["uuid-1"]);
   });
 
   it("рендерит RETURNING — клиент Bun поддерживает его для INSERT и DELETE", () => {
@@ -102,5 +123,30 @@ describe("toBoolean", () => {
     expect(toBoolean(0)).toBe(false);
     expect(toBoolean(null)).toBe(false);
     expect(toBoolean("1")).toBe(false);
+  });
+});
+
+describe("resolveSqlDialect", () => {
+  it("postgres по умолчанию и при postgres-URL", async () => {
+    expect(resolveSqlDialect({}).name).toBe("postgres");
+    expect(resolveSqlDialect({ DATABASE_URL: "postgres://u:p@host/db" }).name).toBe("postgres");
+  });
+
+  it("mariadb по mariadb/mysql URL", () => {
+    expect(resolveSqlDialect({ DATABASE_URL: "mariadb://u:p@host/db" }).name).toBe("mariadb");
+    expect(resolveSqlDialect({ DATABASE_URL: "mysql://u:p@host/db" }).name).toBe("mariadb");
+  });
+
+  it("читает DATABASE_URL из SECRETS, если переменной окружения нет", () => {
+    const env = mergeSecretsIntoEnv({ SECRETS: '{"DATABASE_URL":"mariadb://u:p@host/db"}' });
+    expect(resolveSqlDialect(env).name).toBe("mariadb");
+  });
+
+  it("переменная окружения перекрывает DATABASE_URL из SECRETS", () => {
+    const env = mergeSecretsIntoEnv({
+      SECRETS: '{"DATABASE_URL":"mariadb://u:p@host/db"}',
+      DATABASE_URL: "postgres://u:p@host/db",
+    });
+    expect(resolveSqlDialect(env).name).toBe("postgres");
   });
 });

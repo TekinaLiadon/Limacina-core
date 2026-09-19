@@ -2,6 +2,7 @@ import { mariadbDialect } from "./dialects/mariadb.dialect";
 import { postgresDialect } from "./dialects/postgres.dialect";
 import type { SqlDialect, SqlDialectName } from "./dialects/dialect";
 import type { SqlClient } from "./types";
+import { mergeSecretsIntoEnv } from "../../config/zod-env";
 
 const DIALECTS: Record<SqlDialectName, SqlDialect> = {
   postgres: postgresDialect,
@@ -38,6 +39,12 @@ export function sqlDialect(): SqlDialectName {
 }
 
 function detectDialect(): SqlDialect {
-  const url = process.env["DATABASE_URL"] ?? "";
-  return /^(mariadb|mysql):/.test(url) ? DIALECTS.mariadb : DIALECTS.postgres;
+  return resolveSqlDialect(mergeSecretsIntoEnv());
+}
+
+export function resolveSqlDialect(env: Record<string, unknown>): SqlDialect {
+  const url = env["DATABASE_URL"];
+  return typeof url === "string" && /^(mariadb|mysql):/.test(url)
+    ? DIALECTS.mariadb
+    : DIALECTS.postgres;
 }

@@ -1,37 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_CACHE_TTL_MS } from "../cache.store";
-import { COMMAND_TIMEOUT_MS, RedisCacheStore, type RedisClientLike } from "../redis.store";
+import { DEFAULT_CACHE_TTL_MS } from "../cache_store";
+import { RedisCacheStore, type RedisClientLike } from "../redis_store";
+import { REDIS_COMMAND_TIMEOUT_MS } from "../../utils/redis-lifecycle";
+import { FakeRedisClient } from "../../utils/tests/fake-redis";
 
 function consecutiveFailuresOf(store: RedisCacheStore): number {
-  return (store as unknown as { consecutiveFailures: number }).consecutiveFailures;
-}
-
-class FakeRedisClient implements RedisClientLike {
-  readonly stored = new Map<string, string>();
-  lastSet: { key: string; value: string; px: string; milliseconds: number } | null = null;
-  failMode = false;
-  closed = false;
-
-  async get(key: string): Promise<string | null> {
-    if (this.failMode) throw new Error("redis unavailable");
-    return this.stored.get(key) ?? null;
-  }
-
-  async set(key: string, value: string, px: "PX", milliseconds: number): Promise<unknown> {
-    if (this.failMode) throw new Error("redis unavailable");
-    this.lastSet = { key, value, px, milliseconds };
-    this.stored.set(key, value);
-    return "OK";
-  }
-
-  async del(key: string): Promise<number> {
-    if (this.failMode) throw new Error("redis unavailable");
-    return this.stored.delete(key) ? 1 : 0;
-  }
-
-  close(): void {
-    this.closed = true;
-  }
+  return (store as unknown as { lifecycle: { consecutiveFailures: number } }).lifecycle
+    .consecutiveFailures;
 }
 
 describe("RedisCacheStore", (): void => {
@@ -159,7 +134,7 @@ describe("RedisCacheStore — таймаут команд", (): void => {
     const cached = await store.get("status");
 
     expect(cached).toBeUndefined();
-    expect(Date.now() - started).toBeLessThan(COMMAND_TIMEOUT_MS * 4);
+    expect(Date.now() - started).toBeLessThan(REDIS_COMMAND_TIMEOUT_MS * 4);
   });
 
   it("set не ждёт зависший Redis дольше таймаута", async (): Promise<void> => {
@@ -168,7 +143,7 @@ describe("RedisCacheStore — таймаут команд", (): void => {
     const started = Date.now();
     await store.set("status", { online: 1 });
 
-    expect(Date.now() - started).toBeLessThan(COMMAND_TIMEOUT_MS * 4);
+    expect(Date.now() - started).toBeLessThan(REDIS_COMMAND_TIMEOUT_MS * 4);
   });
 
   it("delete не ждёт зависший Redis дольше таймаута", async (): Promise<void> => {
@@ -177,7 +152,7 @@ describe("RedisCacheStore — таймаут команд", (): void => {
     const started = Date.now();
     await store.delete("status");
 
-    expect(Date.now() - started).toBeLessThan(COMMAND_TIMEOUT_MS * 4);
+    expect(Date.now() - started).toBeLessThan(REDIS_COMMAND_TIMEOUT_MS * 4);
   });
 });
 

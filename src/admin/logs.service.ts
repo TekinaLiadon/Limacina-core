@@ -2,9 +2,8 @@ import { Injectable, Logger, BadRequestException } from "@nestjs/common";
 import { createReadStream, readdirSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
+import { LOGS_DIR } from "../config/log-stream";
 import { LOG_DATE_PATTERN } from "./dto/dto";
-
-const LOGS_DIR = join(process.cwd(), "logs");
 
 export interface LogsFilter {
   statusCode?: number | undefined;
@@ -33,7 +32,8 @@ export class LogsService {
         dates.unshift(today);
       }
       return dates;
-    } catch {
+    } catch (error) {
+      this.logReadError(error, LOGS_DIR);
       return [today];
     }
   }
@@ -59,8 +59,8 @@ export class LogsService {
       for await (const line of this.readLines(filePath)) {
         if (this.isMatchedRequestLine(line, filter)) total++;
       }
-    } catch {
-      this.logger.warn({ filePath }, "Лог-файл не прочитан");
+    } catch (error) {
+      this.logReadError(error, filePath);
     }
     return total;
   }
@@ -83,10 +83,15 @@ export class LogsService {
         lines.push(line);
         if (lines.length >= limit) break;
       }
-    } catch {
-      this.logger.warn({ filePath }, "Лог-файл не прочитан");
+    } catch (error) {
+      this.logReadError(error, filePath);
     }
     return lines;
+  }
+
+  private logReadError(error: unknown, filePath: string): void {
+    if (error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT") return;
+    this.logger.error({ err: error, filePath }, "Лог-файл не прочитан");
   }
 
   private readLines(filePath: string): ReturnType<typeof createInterface> {

@@ -3,9 +3,14 @@ import { setupTestEnv } from "../../../utils/tests/test-env";
 setupTestEnv();
 
 import { afterAll, beforeAll, beforeEach, expect, it } from "bun:test";
-import { YggdrasilMapStore } from "../yggdrasil_store";
-import type { IYggdrasilStore, YggdrasilProfile, YggdrasilSeedUser } from "../yggdrasil_store";
-import { YggdrasilPostgresStore } from "../yggdrasil_postgres";
+import {
+  YggdrasilMapStore,
+  type IYggdrasilStore,
+  type YggdrasilProfile,
+  type YggdrasilSeedUser,
+} from "../yggdrasil_store";
+import { MemoryDb } from "../../../memory/memory-db";
+import { YggdrasilPostgresStore } from "../yggdrasil_postgres_store";
 import { generateUuid } from "../../../utils/uuid";
 import {
   cleanupTrackedUsers,
@@ -34,7 +39,7 @@ const mapContext = (): YggdrasilDriverContext => {
         ...spec,
       });
     }
-    store = new YggdrasilMapStore({ users: seeds });
+    store = new YggdrasilMapStore(new MemoryDb(), { users: seeds });
     return seeds;
   };
   return {
@@ -60,6 +65,7 @@ const postgresContext = (): YggdrasilDriverContext => {
         passwordHash: created.passwordHash,
         banned: created.banned,
         approved: created.approved,
+        passwordChangedAt: created.passwordChangedAt,
       });
     }
     return users;
@@ -214,5 +220,19 @@ contractDescribeEach("контракт IYggdrasilStore", (driver) => {
     expect(
       await ctx.store.findUserByUsername(`missing_${generateUuid().slice(0, 12)}`),
     ).toBeUndefined();
+  });
+
+  it("findUserByUsername отдаёт passwordChangedAt", async () => {
+    const changedAt = new Date(Date.now() - 3_600_000);
+    const [passchanged, untouched] = await ctx.makeUsers([
+      { approved: true, passwordChangedAt: changedAt },
+      { approved: true },
+    ]);
+
+    const found = await ctx.store.findUserByUsername(passchanged!.username);
+    expect(found?.passwordChangedAt?.getTime()).toBe(changedAt.getTime());
+    expect(
+      (await ctx.store.findUserByUsername(untouched!.username))?.passwordChangedAt ?? null,
+    ).toBe(null);
   });
 });

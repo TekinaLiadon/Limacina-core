@@ -1,8 +1,8 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { IsNotEmpty, IsString, Matches, MaxLength, MinLength } from "class-validator";
 import { validationMessages } from "../../common/validation-messages";
-
-export const USERNAME_PATTERN = /^[A-Za-z0-9_]+$/;
+import { USERNAME_PATTERN } from "../../common/username-policy";
+import { MIN_PASSWORD_LENGTH } from "../password-policy";
 
 export class RegisterDto {
   @ApiProperty({
@@ -19,10 +19,12 @@ export class RegisterDto {
   @Matches(USERNAME_PATTERN, { message: validationMessages.usernamePattern })
   username!: string;
 
-  @ApiProperty({ example: "secret123", minLength: 6, maxLength: 128 })
+  @ApiProperty({ example: "secret123", minLength: MIN_PASSWORD_LENGTH, maxLength: 128 })
   @IsString({ message: validationMessages.string("password") })
   @IsNotEmpty({ message: validationMessages.notEmpty("password") })
-  @MinLength(6, { message: validationMessages.minLength("password", 6) })
+  @MinLength(MIN_PASSWORD_LENGTH, {
+    message: validationMessages.minLength("password", MIN_PASSWORD_LENGTH),
+  })
   @MaxLength(128, { message: validationMessages.maxLength("password", 128) })
   password!: string;
 }
@@ -34,10 +36,10 @@ export class AuthDto {
   @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
   username!: string;
 
-  @ApiProperty({ example: "secret123", minLength: 6, maxLength: 128 })
+  @ApiProperty({ example: "secret123", minLength: 3, maxLength: 128 })
   @IsString({ message: validationMessages.string("password") })
   @IsNotEmpty({ message: validationMessages.notEmpty("password") })
-  @MinLength(6, { message: validationMessages.minLength("password", 6) })
+  @MinLength(3, { message: validationMessages.minLength("password", 3) })
   @MaxLength(128, { message: validationMessages.maxLength("password", 128) })
   password!: string;
 }
@@ -49,22 +51,26 @@ export class AuthRefreshDto {
 }
 
 export class ChangePasswordDto {
-  @ApiProperty({ example: "secret123", minLength: 6, maxLength: 128 })
+  @ApiProperty({ example: "secret123", minLength: MIN_PASSWORD_LENGTH, maxLength: 128 })
   @IsString({ message: validationMessages.string("old_password") })
   @IsNotEmpty({ message: validationMessages.notEmpty("old_password") })
-  @MinLength(6, { message: validationMessages.minLength("old_password", 6) })
+  @MinLength(MIN_PASSWORD_LENGTH, {
+    message: validationMessages.minLength("old_password", MIN_PASSWORD_LENGTH),
+  })
   @MaxLength(128, { message: validationMessages.maxLength("old_password", 128) })
   old_password!: string;
 
-  @ApiProperty({ example: "newsecret123", minLength: 6, maxLength: 128 })
+  @ApiProperty({ example: "newsecret123", minLength: MIN_PASSWORD_LENGTH, maxLength: 128 })
   @IsString({ message: validationMessages.string("new_password") })
   @IsNotEmpty({ message: validationMessages.notEmpty("new_password") })
-  @MinLength(6, { message: validationMessages.minLength("new_password", 6) })
+  @MinLength(MIN_PASSWORD_LENGTH, {
+    message: validationMessages.minLength("new_password", MIN_PASSWORD_LENGTH),
+  })
   @MaxLength(128, { message: validationMessages.maxLength("new_password", 128) })
   new_password!: string;
 }
 
-export class UserTokens {
+export class UserTokensDto {
   @ApiProperty()
   access_token!: string;
 
@@ -73,8 +79,8 @@ export class UserTokens {
 }
 
 export class AuthResponseDto {
-  @ApiProperty({ type: UserTokens })
-  tokens!: UserTokens;
+  @ApiProperty({ type: UserTokensDto })
+  tokens!: UserTokensDto;
 
   @ApiProperty({ example: "a1b2c3d4e5f6" })
   uuid!: string;

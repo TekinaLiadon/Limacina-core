@@ -5,6 +5,8 @@ process.env["LOG_LEVEL"] = "info";
 
 import pino from "pino";
 import { describe, expect, it } from "bun:test";
+import type { Writable } from "node:stream";
+import { join } from "node:path";
 import { buildPinoHttpOptions } from "../pino-options";
 
 const buildLogger = (lines: string[]) => {
@@ -65,6 +67,36 @@ describe("buildPinoHttpOptions", (): void => {
 
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("Подозрительная активность");
+  });
+
+  it("прод: строка лога уходит и в файл, и в stdout (TASK-75)", async (): Promise<void> => {
+    const originalStdoutWrite = process.stdout.write;
+    const stdoutChunks: string[] = [];
+    process.stdout.write = ((chunk: unknown): boolean => {
+      stdoutChunks.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+
+    try {
+      const options = buildPinoHttpOptions({
+        NODE_ENV: "production",
+        LOG_LEVEL: "info",
+      }) as Record<string, unknown>;
+      const stream = options["stream"] as Writable;
+      await new Promise<void>((resolve, reject) => {
+        stream.write("prod-stdout-line\n", "utf8", (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+    } finally {
+      process.stdout.write = originalStdoutWrite;
+    }
+
+    expect(stdoutChunks.join("")).toContain("prod-stdout-line");
+    const logDate = new Date().toISOString().slice(0, 10);
+    const fileLine = await Bun.file(join(process.cwd(), "logs", `${logDate}.log`)).text();
+    expect(fileLine).toContain("prod-stdout-line");
   });
 
   it("редактирует old_password и new_password на верхнем и вложенном уровне (TASK-58)", (): void => {

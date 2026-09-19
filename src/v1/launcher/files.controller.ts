@@ -8,7 +8,7 @@ import {
   FileListResponseDto,
   FilesListQueryDto,
 } from "../../files/dto/dto";
-import { FilesService } from "../../files/files.service";
+import { FilesService, type FilesPage } from "../../files/files.service";
 
 const TOTAL_COUNT_HEADER = {
   description: "Общее число записей по фильтру (для пагинации)",
@@ -17,7 +17,7 @@ const TOTAL_COUNT_HEADER = {
 
 @ApiTags("launcher_files")
 @Public()
-@Controller("v1/launcher/files")
+@Controller("launcher/files")
 export class V1LauncherFilesController {
   constructor(private readonly filesService: FilesService) {}
 
@@ -40,9 +40,7 @@ export class V1LauncherFilesController {
     @Query() query: FilesListQueryDto,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): FileListResponseDto {
-    const page = this.filesService.getList(query.offset, query.limit);
-    reply.header("X-Total-Count", page.total);
-    return page.files;
+    return this.respondWithFilesPage(this.filesService.getList(query.offset, query.limit), reply);
   }
 
   @Get("mods")
@@ -64,7 +62,13 @@ export class V1LauncherFilesController {
     @Query() query: FilesListQueryDto,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): FileListResponseDto {
-    const page = this.filesService.getExtraList("mods", query.offset, query.limit);
+    return this.respondWithFilesPage(
+      this.filesService.getExtraList("mods", query.offset, query.limit),
+      reply,
+    );
+  }
+
+  private respondWithFilesPage(page: FilesPage, reply: FastifyReply): FileListResponseDto {
     reply.header("X-Total-Count", page.total);
     return page.files;
   }

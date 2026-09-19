@@ -13,7 +13,6 @@ import { Roles } from "../../common/roles.decorator";
 import { UsernamePipe } from "../../common/username.pipe";
 import { CurrentUser, type RequestUser } from "../../common/current-user.decorator";
 import { SuccessResponseDto, UserSuccessResponseDto } from "../../common/dto/dto";
-import { AdminService } from "../../admin/admin.service";
 import { TechnicalService } from "../../technical/technical.service";
 import { InitOwnerDto, InitOwnerResponseDto } from "../../technical/dto/dto";
 import {
@@ -28,12 +27,13 @@ import {
   UsersSearchQueryDto,
   V1DeletedUsersQueryDto,
 } from "../../admin/dto/dto";
-import type { UsersFilter } from "../../admin/admin.store";
+import { AdminService } from "../../admin/admin.service";
+import type { UsersFilter } from "../../admin/admin_store";
 
 @ApiTags("panel_users")
 @ApiBearerAuth()
 @Roles("admin")
-@Controller("v1/panel/users")
+@Controller("panel/users")
 export class V1PanelUsersController {
   constructor(
     private readonly adminService: AdminService,

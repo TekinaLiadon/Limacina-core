@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { YggdrasilPostgresStore } from "../yggdrasil_postgres";
+import { YggdrasilPostgresStore } from "../yggdrasil_postgres_store";
 import { installFakeSqlClient, resetSqlClient } from "../../../utils/tests/sql-fake";
 import { setupTestEnv } from "../../../utils/tests/test-env";
 
@@ -120,33 +120,32 @@ describe("YggdrasilPostgresStore (мок SQL-клиента)", () => {
     expect(fake.sqlCalls.length).toBe(before);
   });
 
-  it("updateProfileTexture при отсутствии профиля вставляет строку", async () => {
-    fake.onSql(({ sql }) => (sql.includes("SELECT uuid FROM") ? [] : []));
+  it("updateProfileTexture при отсутствии профиля вставляет строку upsert-запросом", async () => {
+    fake.onSql(() => []);
 
     await store.updateProfileTexture("profile-uuid", {
       capeUrl: "http://localhost:3005/capes/c.png",
     });
 
-    const insert = lastCalls(2)[1];
-    expect(insert?.sql).toContain("INSERT INTO user_textures");
-    expect(insert?.sql).not.toContain("ON CONFLICT");
-    expect(insert?.values).toEqual(["profile-uuid", "http://localhost:3005/capes/c.png"]);
+    const [call] = lastCalls(1);
+    expect(call?.sql).toContain("INSERT INTO user_textures");
+    expect(call?.sql).toContain("ON CONFLICT (uuid) DO UPDATE SET");
+    expect(call?.values).toEqual(["profile-uuid", "http://localhost:3005/capes/c.png"]);
   });
 
-  it("updateProfileTexture при существующем профиле обновляет поля", async () => {
-    fake.onSql(({ sql }) => (sql.includes("SELECT uuid FROM") ? [{ uuid: "profile-uuid" }] : []));
+  it("updateProfileTexture не делает предварительный SELECT — один атомарный запрос", async () => {
+    fake.onSql(() => []);
+    const before = fake.sqlCalls.length;
 
     await store.updateProfileTexture("profile-uuid", {
       capeUrl: "http://localhost:3005/capes/c.png",
     });
 
-    const update = lastCalls(2)[1];
-    expect(update?.sql).toContain("UPDATE user_textures SET cape_url = $1");
-    expect(update?.values).toEqual(["http://localhost:3005/capes/c.png", "profile-uuid"]);
+    expect(fake.sqlCalls.length).toBe(before + 1);
   });
 
   it("updateProfileTexture пишет кожу с моделью и плащ", async () => {
-    fake.onSql(({ sql }) => (sql.includes("SELECT uuid FROM") ? [] : []));
+    fake.onSql(() => []);
 
     await store.updateProfileTexture("profile-uuid", {
       skinUrl: "http://localhost:3005/textures/skin.png",
@@ -154,9 +153,9 @@ describe("YggdrasilPostgresStore (мок SQL-клиента)", () => {
       capeUrl: null,
     });
 
-    const insert = lastCalls(2)[1];
-    expect(insert?.sql).toContain("INSERT INTO user_textures");
-    expect(insert?.values).toEqual([
+    const [call] = lastCalls(1);
+    expect(call?.sql).toContain("INSERT INTO user_textures");
+    expect(call?.values).toEqual([
       "profile-uuid",
       "http://localhost:3005/textures/skin.png",
       "classic",
@@ -164,14 +163,16 @@ describe("YggdrasilPostgresStore (мок SQL-клиента)", () => {
     ]);
   });
 
-  it("countProfilesByTextureUrl считает ссылки на файл", async () => {
+  it("countProfilesByTextureUrl джойнит пользователей и фильтрует удалённых", async () => {
     fake.onSql(() => [{ count: "3" }]);
 
     expect(await store.countProfilesByTextureUrl("http://localhost:3005/textures/skin.png")).toBe(
       3,
     );
     const [call] = lastCalls(1);
-    expect(call?.sql).toContain("skin_url = $1 OR cape_url = $1");
+    expect(call?.sql).toContain("INNER JOIN users u ON u.uuid = t.uuid");
+    expect(call?.sql).toContain("u.deleted = false");
+    expect(call?.sql).toContain("(t.skin_url = $1 OR t.cape_url = $1)");
   });
 
   it("countProfilesByTextureUrl без строк отвечает 0", async () => {
@@ -183,12 +184,14 @@ describe("YggdrasilPostgresStore (мок SQL-клиента)", () => {
   });
 
   it("findUserByUsername маппит креды", async () => {
+    const changedAt = new Date("2026-01-01T00:00:00Z");
     fake.onSql(() => [
       {
         uuid: "profile-uuid",
         password_hash: "hash",
         banned: true,
         approved: false,
+        password_changed_at: changedAt,
       },
     ]);
 
@@ -199,9 +202,11 @@ describe("YggdrasilPostgresStore (мок SQL-клиента)", () => {
       passwordHash: "hash",
       banned: true,
       approved: false,
+      passwordChangedAt: changedAt,
     });
     const [call] = lastCalls(1);
     expect(call?.sql).toContain("FROM users WHERE username = $1");
+    expect(call?.sql).toContain("password_changed_at");
   });
 
   it("findUserByUsername без строк отвечает undefined", async () => {

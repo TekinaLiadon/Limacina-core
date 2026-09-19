@@ -8,13 +8,14 @@ import {
   Optional,
 } from "@nestjs/common";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { copyFile, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { copyFile, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { AdminMapStoreToken, type IAdminStore } from "../admin/admin.store";
-import { AuthMapStoreToken, type IAuthStore } from "../auth/service/auth_store.service";
+import { AdminMapStoreToken, type IAdminStore } from "../admin/admin_store";
+import { AuthStoreToken, type IAuthStore } from "../auth/service/auth_store";
+import { createAuthUser } from "../auth/service/create-auth-user";
+import { writeFileAtomicSync } from "../utils/fs";
 import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
-import { generateUuid } from "../utils/uuid";
 import type { RequestUser } from "../common/current-user.decorator";
 import type { InitOwnerResponseDto, RebuildStatusDto } from "./dto/dto";
 
@@ -24,6 +25,7 @@ const GIT_PULL_TIMEOUT_MS = 120_000;
 const INSTALL_TIMEOUT_MS = 180_000;
 const MIGRATE_TIMEOUT_MS = 60_000;
 const BUILD_TIMEOUT_MS = 120_000;
+const REVISION_TIMEOUT_MS = 30_000;
 const KILL_GRACE_MS = 5_000;
 const BINARY_PATH = "dist/Limacina";
 const BINARY_BACKUP_PATH = "dist/Limacina.previous";
@@ -77,31 +79,26 @@ async function terminateProcessTree(proc: Bun.Subprocess, graceMs: number): Prom
   signalProcessGroup(proc, "SIGKILL");
 }
 
-export async function runStep(
-  logger: Logger,
-  step: string,
+interface CommandRun {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+}
+
+async function runCommand(
   command: string[],
+  cwd: string,
   timeoutMs: number,
   killGraceMs = KILL_GRACE_MS,
-): Promise<void> {
-  let proc: Bun.Subprocess<Bun.SpawnOptions.Writable, "pipe", "pipe">;
-  try {
-    proc = Bun.spawn(command, {
-      cwd: process.cwd(),
-      stdout: "pipe",
-      stderr: "pipe",
-      env: STEP_ENV,
-      detached: true,
-    });
-  } catch (error) {
-    logger.error(
-      { err: error, step, command: command.join(" ") },
-      `Шаг перезапуска не запущен: ${step}`,
-    );
-    throw new InternalServerErrorException(
-      `Пересборка не удалась на шаге ${step}: команда не запущена, перезапуск отменён`,
-    );
-  }
+): Promise<CommandRun> {
+  const proc = Bun.spawn(command, {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: STEP_ENV,
+    detached: true,
+  });
 
   let escalation: Promise<void> | undefined;
   const timeout = setTimeout(() => {
@@ -117,55 +114,77 @@ export async function runStep(
     if (escalation) {
       await escalation;
     }
-    if (exitCode !== 0) {
-      logger.error(
-        {
-          step,
-          exitCode,
-          command: command.join(" "),
-          stdout: truncateOutput(stdout),
-          stderr: truncateOutput(stderr),
-        },
-        `Шаг перезапуска не выполнен: ${step}`,
-      );
-      throw new InternalServerErrorException(
-        `Пересборка не удалась на шаге ${step}, перезапуск отменён`,
-      );
-    }
-    logger.log({ step }, "Шаг перезапуска выполнен");
+    return { exitCode, stdout, stderr, timedOut: escalation !== undefined };
   } finally {
     clearTimeout(timeout);
   }
 }
 
+export async function runStep(
+  logger: Logger,
+  step: string,
+  command: string[],
+  timeoutMs: number,
+  killGraceMs = KILL_GRACE_MS,
+): Promise<void> {
+  let run: CommandRun;
+  try {
+    run = await runCommand(command, process.cwd(), timeoutMs, killGraceMs);
+  } catch (error) {
+    logger.error(
+      { err: error, step, command: command.join(" ") },
+      `Шаг перезапуска не запущен: ${step}`,
+    );
+    throw new InternalServerErrorException(
+      `Пересборка не удалась на шаге ${step}: команда не запущена, перезапуск отменён`,
+    );
+  }
+
+  if (run.exitCode !== 0) {
+    logger.error(
+      {
+        step,
+        exitCode: run.exitCode,
+        command: command.join(" "),
+        stdout: truncateOutput(run.stdout),
+        stderr: truncateOutput(run.stderr),
+      },
+      `Шаг перезапуска не выполнен: ${step}`,
+    );
+    throw new InternalServerErrorException(
+      `Пересборка не удалась на шаге ${step}, перезапуск отменён`,
+    );
+  }
+  logger.log({ step }, "Шаг перезапуска выполнен");
+}
+
 export async function currentRevision(
   logger: Logger,
   cwd: string = process.cwd(),
+  timeoutMs: number = REVISION_TIMEOUT_MS,
 ): Promise<string> {
+  let run: CommandRun;
   try {
-    const proc = Bun.spawn(["git", "rev-parse", "HEAD"], {
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: STEP_ENV,
-    });
-    const [exitCode, stdout, stderr] = await Promise.all([
-      proc.exited,
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    if (exitCode !== 0) {
-      logger.error(
-        { cwd, exitCode, stderr: truncateOutput(stderr) },
-        "Не удалось определить ревизию git",
-      );
-      return "unknown";
-    }
-    return stdout.trim();
+    run = await runCommand(["git", "rev-parse", "HEAD"], cwd, timeoutMs);
   } catch (error) {
     logger.error({ err: error }, "Не удалось запустить git для определения ревизии");
     return "unknown";
   }
+
+  if (run.timedOut) {
+    logger.error({ cwd, timeoutMs }, "Превышен таймаут определения ревизии git");
+    throw new InternalServerErrorException(
+      "Пересборка не удалась: не удалось определить ревизию git, перезапуск отменён",
+    );
+  }
+  if (run.exitCode !== 0) {
+    logger.error(
+      { cwd, exitCode: run.exitCode, stderr: truncateOutput(run.stderr) },
+      "Не удалось определить ревизию git",
+    );
+    return "unknown";
+  }
+  return run.stdout.trim();
 }
 
 export function buildInstallCommand(frozenLockfile: boolean): string[] {
@@ -186,7 +205,7 @@ export class TechnicalService {
 
   constructor(
     @Inject(AdminMapStoreToken) private readonly adminStore: IAdminStore,
-    @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
+    @Inject(AuthStoreToken) private readonly authStore: IAuthStore,
     @Inject(AppConfigToken) private readonly appConfig: AppConfigType,
     @Optional() private readonly bootstrapTokenPath: string = join(
       process.cwd(),
@@ -215,7 +234,7 @@ export class TechnicalService {
       }
 
       const token = randomBytes(BOOTSTRAP_TOKEN_BYTES).toString("hex");
-      await this.writeBootstrapTokenFile(token);
+      this.writeBootstrapTokenFile(token);
       this.bootstrapToken = token;
       process.stdout.write(
         `Bootstrap-токен для создания владельца (${this.bootstrapTokenPath}):\n${token}\n`,
@@ -231,7 +250,7 @@ export class TechnicalService {
 
   async restartServer(actor: RequestUser): Promise<void> {
     if (!this.scheduleShutdown()) {
-      this.logger.warn(
+      this.logger.error(
         { actor: actor.username },
         "Повторный запрос перезапуска отклонён: остановка уже запланирована",
       );
@@ -448,14 +467,8 @@ export class TechnicalService {
     );
   }
 
-  private async writeBootstrapTokenFile(token: string): Promise<void> {
-    const tmpPath = `${this.bootstrapTokenPath}.tmp`;
-    try {
-      await writeFile(tmpPath, token, { mode: 0o600 });
-      await rename(tmpPath, this.bootstrapTokenPath);
-    } finally {
-      await unlink(tmpPath).catch(() => undefined);
-    }
+  private writeBootstrapTokenFile(token: string): void {
+    writeFileAtomicSync(this.bootstrapTokenPath, token, { mode: 0o600 });
   }
 
   private async removeBootstrapTokenFile(): Promise<void> {
@@ -472,38 +485,49 @@ export class TechnicalService {
   }
 
   private async saveOwner(username: string, password: string): Promise<InitOwnerResponseDto> {
-    if (await this.authStore.userExists(username)) {
-      throw new ConflictException("Юзернейм уже занят");
-    }
-
-    const uuid = generateUuid();
-    const passwordHash = await Bun.password.hash(password);
-
-    const saved = await this.authStore.saveUser({
-      uuid,
+    const user = await createAuthUser(this.authStore, {
       username,
-      passwordHash,
+      password,
       role: "owner",
       approved: true,
-      banned: false,
     });
-    if (!saved) {
-      throw new ConflictException("Юзернейм уже занят");
-    }
 
     try {
       await this.adminStore.saveUser({
-        uuid,
-        username,
-        role: "owner",
-        approved: true,
-        banned: false,
+        uuid: user.uuid,
+        username: user.username,
+        role: user.role,
+        approved: user.approved,
+        banned: user.banned,
       });
     } catch (error) {
-      await this.authStore.deleteUser(uuid).catch(() => undefined);
+      await this.rollbackAuthUserWithRetry(user.uuid);
       throw error;
     }
 
-    return { uuid, username };
+    return { uuid: user.uuid, username: user.username };
+  }
+
+  private async rollbackAuthUserWithRetry(uuid: string): Promise<void> {
+    this.logger.error(
+      { uuid },
+      "Сбой сохранения владельца в admin-сторе, откатывается auth-запись",
+    );
+    const attempts = 3;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        await this.authStore.deleteUser(uuid);
+        return;
+      } catch (error) {
+        this.logger.error(
+          { err: error, uuid, attempt },
+          "Не удалось откатить auth-запись владельца",
+        );
+        if (attempt < attempts) await Bun.sleep(50 * attempt);
+      }
+    }
+    throw new InternalServerErrorException(
+      "Владелец не создан: сбой admin-стора, а откат auth-записи не удался — возможна рассинхронизация auth/admin, требуется ручная проверка",
+    );
   }
 }

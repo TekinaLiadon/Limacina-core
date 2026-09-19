@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { MAX_PNG_DIMENSION, PngStructureError, validatePngStructure } from "../png";
+import { inflateSync } from "node:zlib";
+import {
+  MAX_PNG_DIMENSION,
+  PngStructureError,
+  readPngDimensions,
+  sanitizePng,
+  validatePngStructure,
+} from "../png";
 import { buildTestPng, pngChunk, TEST_PNG_SIGNATURE } from "./test-png";
 
 describe("validatePngStructure (TASK-24)", (): void => {
@@ -182,4 +189,166 @@ describe("validatePngStructure — поля IHDR и порядок чанков"
     const file = buildFromChunks([pngChunk("IHDR", ihdrData()), pngChunk("IDAT", Buffer.alloc(4))]);
     expectRejects(file, "IEND chunk not found");
   });
+
+  it("отклоняет пустой IDAT-чанк", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData()),
+      pngChunk("IDAT", Buffer.alloc(0)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, "empty IDAT chunk");
+  });
+
+  const expectIhdrPairRejects = (bitDepth: number, colorType: number, message: string): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ bitDepth, colorType })),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, message);
+  };
+
+  it("отклоняет недопустимую пару bitDepth/colorType", (): void => {
+    expectIhdrPairRejects(16, 3, "invalid bit depth 16 for color type 3");
+    expectIhdrPairRejects(1, 6, "invalid bit depth 1 for color type 6");
+    expectIhdrPairRejects(4, 2, "invalid bit depth 4 for color type 2");
+    expectIhdrPairRejects(1, 4, "invalid bit depth 1 for color type 4");
+    expectIhdrPairRejects(32, 6, "invalid bit depth 32 for color type 6");
+  });
+
+  it("пропускает допустимые пары bitDepth/colorType", (): void => {
+    for (const [bitDepth, colorType] of [
+      [1, 0],
+      [2, 0],
+      [4, 0],
+      [8, 0],
+      [16, 0],
+      [8, 2],
+      [16, 2],
+      [1, 3],
+      [2, 3],
+      [4, 3],
+      [8, 3],
+      [8, 4],
+      [16, 4],
+      [8, 6],
+      [16, 6],
+    ] as const) {
+      const chunks = [pngChunk("IHDR", ihdrData({ bitDepth, colorType }))];
+      if (colorType === 3) chunks.push(pngChunk("PLTE", Buffer.alloc(3)));
+      chunks.push(pngChunk("IDAT", Buffer.alloc(4)));
+      chunks.push(pngChunk("IEND", Buffer.alloc(0)));
+      expect(() => validatePngStructure(buildFromChunks(chunks))).not.toThrow();
+    }
+  });
+
+  it("отклоняет indexed (colorType 3) без PLTE перед IDAT", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ bitDepth: 8, colorType: 3 })),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, "missing PLTE for indexed color");
+  });
+
+  it("пропускает indexed с PLTE перед IDAT", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ bitDepth: 8, colorType: 3 })),
+      pngChunk("PLTE", Buffer.alloc(3)),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expect(() => validatePngStructure(file)).not.toThrow();
+  });
+
+  it("отклоняет повторный PLTE и PLTE в grayscale", (): void => {
+    const duplicated = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ bitDepth: 8, colorType: 3 })),
+      pngChunk("PLTE", Buffer.alloc(3)),
+      pngChunk("PLTE", Buffer.alloc(3)),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(duplicated, "duplicate PLTE");
+
+    const grayscale = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ bitDepth: 8, colorType: 0 })),
+      pngChunk("PLTE", Buffer.alloc(3)),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(grayscale, "PLTE not allowed for color type 0");
+  });
+
+  it("readPngDimensions читает размеры валидного PNG", (): void => {
+    const file = buildTestPng({ width: 64, height: 32 });
+    expect(readPngDimensions(file)).toEqual({ width: 64, height: 32 });
+  });
 });
+
+describe("sanitizePng (TASK-269.21)", (): void => {
+  const buildWithMetadata = (): Buffer => {
+    const source = buildTestPng({ variant: 7 });
+    const idat = idatPayload(source);
+    return Buffer.concat([
+      TEST_PNG_SIGNATURE,
+      pngChunk("IHDR", source.subarray(16, 29)),
+      pngChunk("gAMA", Buffer.alloc(4, 1)),
+      pngChunk("tEXt", Buffer.from("Comment\x00junk-metadata")),
+      pngChunk("IDAT", idat),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+  };
+
+  it("пересохраняет PNG без посторонних чанков", (): void => {
+    const sanitized = sanitizePng(buildWithMetadata());
+
+    expect(() => validatePngStructure(sanitized)).not.toThrow();
+    const text = sanitized.toString("latin1");
+    expect(text).not.toContain("tEXt");
+    expect(text).not.toContain("gAMA");
+    expect(text).not.toContain("junk-metadata");
+  });
+
+  it("сохраняет пиксельные данные без изменений", (): void => {
+    const source = buildWithMetadata();
+    const sanitized = sanitizePng(source);
+
+    expect(inflateSync(idatPayload(sanitized)).equals(inflateSync(idatPayload(source)))).toBe(true);
+  });
+
+  it("отклоняет битый zlib-поток в IDAT", (): void => {
+    const file = Buffer.concat([
+      TEST_PNG_SIGNATURE,
+      pngChunk("IHDR", buildTestPng().subarray(16, 29)),
+      pngChunk("tEXt", Buffer.from("Comment\x00junk")),
+      pngChunk("IDAT", Buffer.from([1, 2, 3, 4, 5, 6, 7, 8])),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expect(() => sanitizePng(file)).toThrow(PngStructureError);
+  });
+
+  it("уже чистый файл с одним IDAT сохраняется байт-в-байт", (): void => {
+    const clean = buildTestPng({ variant: 3 });
+    expect(sanitizePng(clean).equals(clean)).toBe(true);
+  });
+
+  it("структурно битый файл отклоняется", (): void => {
+    expect(() => sanitizePng(Buffer.from("not a png at all"))).toThrow(PngStructureError);
+  });
+});
+
+function idatPayload(file: Buffer): Buffer {
+  let offset = 8;
+  const chunks: Buffer[] = [];
+  while (offset < file.length) {
+    const chunkLength = file.readUInt32BE(offset);
+    const type = file.toString("ascii", offset + 4, offset + 8);
+    if (type === "IDAT") {
+      chunks.push(file.subarray(offset + 8, offset + 8 + chunkLength));
+    }
+    offset += 12 + chunkLength;
+    if (type === "IEND") break;
+  }
+  return Buffer.concat(chunks);
+}

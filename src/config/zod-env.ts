@@ -40,7 +40,7 @@ export class ZodEnvConfig<T extends z.ZodType<Record<string, unknown>>> {
       };
     }
 
-    const mergedEnv = { ...secrets.value, ...env };
+    const mergedEnv = mergeSecretsIntoEnv(env);
     const result = this.schema.safeParse(mergedEnv);
     if (result.success) {
       return { success: true as const, data: result.data };
@@ -63,6 +63,12 @@ export class ZodEnvConfig<T extends z.ZodType<Record<string, unknown>>> {
     Logger.flush();
     process.exit(1);
   }
+}
+
+export function mergeSecretsIntoEnv(env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
+  const secrets = parseSecrets(env["SECRETS"]);
+  if (!secrets.ok) return { ...env };
+  return { ...secrets.value, ...env };
 }
 
 function parseSecrets(

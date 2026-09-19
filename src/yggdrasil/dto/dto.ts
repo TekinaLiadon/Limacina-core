@@ -22,21 +22,21 @@ export class AgentDto {
 
 export class ProfilePropertyDto {
   @ApiProperty({ example: "textures" })
-  @IsString()
+  @IsString({ message: validationMessages.string("profile.properties.name") })
   name!: string;
 
   @ApiProperty()
-  @IsString()
+  @IsString({ message: validationMessages.string("profile.properties.value") })
   value!: string;
 }
 
 export class GameProfileDto {
   @ApiProperty({ example: "a1b2c3d4e5f67890abcdef1234567890" })
-  @IsString()
+  @IsString({ message: validationMessages.string("profile.id") })
   id!: string;
 
   @ApiProperty({ example: "player1" })
-  @IsString()
+  @IsString({ message: validationMessages.string("profile.name") })
   name!: string;
 
   @ApiProperty({ type: [ProfilePropertyDto] })
@@ -260,21 +260,4 @@ export class ApiMetadataResponseDto {
 
   @ApiProperty()
   signaturePublickey!: string;
-}
-
-export class UploadTextureDto {
-  @ApiPropertyOptional({
-    example: "slim",
-    description: "Модель скина (slim/classic)",
-    maxLength: 16,
-  })
-  @IsOptional()
-  @IsString({ message: validationMessages.string("model") })
-  @MaxLength(16, { message: validationMessages.maxLength("model", 16) })
-  model?: string;
-
-  @ApiProperty({ description: "PNG в base64", maxLength: 700000 })
-  @IsString({ message: validationMessages.string("file") })
-  @MaxLength(700000, { message: validationMessages.maxLength("file", 700000) })
-  file!: string;
 }

@@ -8,23 +8,30 @@ import {
   Optional,
 } from "@nestjs/common";
 import {
-  UserContentMapStoreToken,
+  UserContentStoreToken,
   isUserContentLimitExceededError,
   type ContentType,
   type IUserContentStore,
-} from "./user-content.store";
+} from "./user_content_store";
 import type { UserContentUploadResponseDto } from "./dto/dto";
 import { unlinkSync } from "node:fs";
 import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 import { YggdrasilStoreToken, type IYggdrasilStore } from "../yggdrasil/service/yggdrasil_store";
 import { sanitizeFilePrefix } from "../utils/file-prefix";
-import { PngStructureError, validatePngStructure } from "../utils/png";
+import { sanitizePng } from "../utils/png";
+import {
+  DEFAULT_SKIN_PATH,
+  MAX_TEXTURE_BYTES,
+  type SkinModel,
+  buildDefaultSkinUrl,
+  pngStructureErrorMessage,
+  sha256Hex,
+  textureDimensionsErrorMessage,
+} from "../utils/texture";
+import { lastById } from "../utils/collection";
 
-export const MAX_SKIN_BYTES = 512 * 1024;
 export const MAX_MODEL_BYTES = 256 * 1024;
-const SKIN_MODELS = ["classic", "slim"] as const;
-export type SkinModel = (typeof SKIN_MODELS)[number];
 
 const hasBinaryBytes = (file: Uint8Array): boolean =>
   file.some((byte) => byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d);
@@ -33,13 +40,14 @@ const hasBinaryBytes = (file: Uint8Array): boolean =>
 export class UserContentService {
   private readonly logger = new Logger(UserContentService.name);
   private readonly defaultSkinUrl: string;
+  private readonly pathLocks = new Map<string, Promise<unknown>>();
 
   constructor(
-    @Inject(UserContentMapStoreToken) private readonly store: IUserContentStore,
+    @Inject(UserContentStoreToken) private readonly store: IUserContentStore,
     @Inject(AppConfigToken) private readonly config: AppConfigType,
     @Optional() @Inject(YggdrasilStoreToken) private readonly profileStore?: IYggdrasilStore,
   ) {
-    this.defaultSkinUrl = `${config.BASE_URL}/textures/default.png`;
+    this.defaultSkinUrl = buildDefaultSkinUrl(config.BASE_URL);
   }
 
   async uploadSkin(
@@ -108,33 +116,88 @@ export class UserContentService {
       this.validatePngFile(file, type);
     }
 
-    const hasher = new Bun.CryptoHasher("sha256");
-    hasher.update(new Uint8Array(file));
-    const hash = hasher.digest("hex");
+    const stored = type === "model" ? file : sanitizePng(file);
+    const hash = sha256Hex(stored);
     const prefix = sanitizeFilePrefix(username, userUuid);
     const filename = `${prefix}-${hash}.${extension}`;
     const url = `${this.config.BASE_URL}/${directory}/${filename}`;
     const filePath = `public/${directory}/${filename}`;
 
-    let item: Awaited<ReturnType<IUserContentStore["saveWithinLimit"]>>;
+    return this.withPathLock(url, async () => {
+      let item: Awaited<ReturnType<IUserContentStore["saveWithinLimit"]>>;
+      try {
+        item = await this.store.saveWithinLimit(userUuid, url, type, maxPerUser, skinModel);
+      } catch (error) {
+        if (!isUserContentLimitExceededError(error)) throw error;
+        this.logger.warn({ userUuid, type, maxPerUser }, "Upload limit reached");
+        throw new BadRequestException(
+          `Достигнут лимит загрузки ${this.contentTypeName(type)}: ${maxPerUser}`,
+        );
+      }
+
+      try {
+        await Bun.write(filePath, new Uint8Array(stored));
+      } catch (error) {
+        await this.rollbackUpload(item.id, type, filePath, url);
+        throw error;
+      }
+
+      if (type === "cape") {
+        try {
+          await this.syncProfileTexture(userUuid, { capeUrl: url });
+        } catch (error) {
+          await this.rollbackUpload(item.id, type, filePath, url);
+          throw error;
+        }
+      }
+
+      this.logger.debug({ userUuid, type, id: item.id }, "Uploaded");
+      return { id: item.id, url };
+    });
+  }
+
+  private async withPathLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.pathLocks.get(filePath) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chain = previous.then(() => current);
+    this.pathLocks.set(filePath, chain);
+
+    await previous;
     try {
-      item = await this.store.saveWithinLimit(userUuid, url, type, maxPerUser, skinModel);
+      return await fn();
+    } finally {
+      release();
+      if (this.pathLocks.get(filePath) === chain) this.pathLocks.delete(filePath);
+    }
+  }
+
+  private async rollbackUpload(
+    id: number,
+    type: ContentType,
+    localPath: string,
+    url: string,
+  ): Promise<void> {
+    try {
+      const removed = await this.store.deleteByIdAndCountRemaining(id, type);
+      if (!removed || removed.remainingCount > 0) return;
+      if (this.profileStore && (await this.profileStore.countProfilesByTextureUrl(url)) > 0) {
+        return;
+      }
+      this.unlinkLocalFile(localPath);
     } catch (error) {
-      if (!isUserContentLimitExceededError(error)) throw error;
-      this.logger.warn({ userUuid, type, maxPerUser }, "Upload limit reached");
-      throw new BadRequestException(
-        `Достигнут лимит загрузки ${this.contentTypeName(type)}: ${maxPerUser}`,
-      );
+      this.logger.error({ err: error, id, type, localPath }, "Не удалось откатить загрузку");
     }
+  }
 
-    await Bun.write(filePath, new Uint8Array(file));
-
-    if (type === "cape") {
-      await this.syncProfileTexture(userUuid, { capeUrl: url });
+  private unlinkLocalFile(localPath: string): void {
+    try {
+      unlinkSync(localPath);
+    } catch (error) {
+      this.logger.error({ err: error, path: localPath }, "Не удалось удалить файл контента");
     }
-
-    this.logger.debug({ userUuid, type, id: item.id }, "Uploaded");
-    return { id: item.id, url };
   }
 
   async setActiveSkin(ownerUuid: string, skinId: number): Promise<void> {
@@ -150,19 +213,57 @@ export class UserContentService {
       throw new BadRequestException("Нельзя выбрать дефолтный скин как активный");
     }
 
+    const previousActiveId = await this.findActiveSkinId(ownerUuid);
+
     await this.store.updateActiveSkin(ownerUuid, skinId);
-    await this.syncProfileTexture(ownerUuid, {
-      skinUrl: item.filePath,
-      skinModel: item.skinModel ?? null,
-    });
+    try {
+      await this.syncProfileTexture(ownerUuid, {
+        skinUrl: item.filePath,
+        skinModel: item.skinModel ?? null,
+      });
+    } catch (error) {
+      await this.restoreActiveSkin(ownerUuid, skinId, previousActiveId);
+      throw error;
+    }
 
     this.logger.debug({ ownerUuid, skinId }, "Active skin changed");
   }
 
-  private async syncProfileAfterDelete(userUuid: string, type: ContentType): Promise<void> {
+  private async findActiveSkinId(ownerUuid: string): Promise<number | undefined> {
+    return (await this.store.findByUserUuid(ownerUuid, "skin")).find((skin) => skin.active)?.id;
+  }
+
+  private async restoreActiveSkin(
+    ownerUuid: string,
+    expectedActiveId: number,
+    previousActiveId: number | undefined,
+  ): Promise<void> {
+    try {
+      if ((await this.findActiveSkinId(ownerUuid)) !== expectedActiveId) return;
+
+      if (previousActiveId === undefined) {
+        await this.store.deactivateAllSkins(ownerUuid);
+        return;
+      }
+      await this.store.updateActiveSkin(ownerUuid, previousActiveId);
+    } catch (error) {
+      this.logger.error(
+        { err: error, ownerUuid, previousActiveId },
+        "Не удалось откатить активный скин после сбоя синхронизации профиля",
+      );
+    }
+  }
+
+  private async syncProfileAfterDelete(
+    userUuid: string,
+    type: ContentType,
+    deletedWasActive: boolean,
+  ): Promise<void> {
     if (type === "skin") {
+      if (!deletedWasActive) return;
+
       const remaining = await this.store.findByUserUuid(userUuid, "skin");
-      const latest = remaining.toSorted((a, b) => a.id - b.id).at(-1);
+      const latest = lastById(remaining);
       if (latest) {
         await this.store.updateActiveSkin(userUuid, latest.id);
         await this.syncProfileTexture(userUuid, {
@@ -175,10 +276,8 @@ export class UserContentService {
     }
 
     if (type === "cape") {
-      const remaining = (await this.store.findByUserUuid(userUuid, "cape")).toSorted(
-        (a, b) => a.id - b.id,
-      );
-      const latest = remaining.at(-1);
+      const remaining = await this.store.findByUserUuid(userUuid, "cape");
+      const latest = lastById(remaining);
       if (latest) {
         await this.syncProfileTexture(userUuid, { capeUrl: latest.filePath });
         return;
@@ -208,7 +307,7 @@ export class UserContentService {
 
   private isDefaultSkin(type: ContentType, filePath: string): boolean {
     if (type !== "skin") return false;
-    return filePath === this.defaultSkinUrl || filePath === "/textures/default.png";
+    return filePath === this.defaultSkinUrl || filePath === DEFAULT_SKIN_PATH;
   }
 
   private validatePngFile(file: Uint8Array, type: ContentType): void {
@@ -216,17 +315,24 @@ export class UserContentService {
     if (file.length === 0) {
       throw new BadRequestException(`Файл ${contentName} пустой`);
     }
-    if (file.length > MAX_SKIN_BYTES) {
+    if (file.length > MAX_TEXTURE_BYTES) {
       throw new BadRequestException(
-        `Файл ${contentName} слишком большой: ${file.length} байт (максимум ${MAX_SKIN_BYTES})`,
+        `Файл ${contentName} слишком большой: ${file.length} байт (максимум ${MAX_TEXTURE_BYTES})`,
       );
     }
 
-    try {
-      validatePngStructure(file);
-    } catch (error) {
-      if (!(error instanceof PngStructureError)) throw error;
-      throw new BadRequestException(`Невалидный файл ${contentName}: ${error.message}`);
+    const invalidMessage = pngStructureErrorMessage(file);
+    if (invalidMessage) {
+      throw new BadRequestException(`Невалидный файл ${contentName}: ${invalidMessage}`);
+    }
+
+    if (type === "skin" || type === "cape") {
+      const dimensionMessage = textureDimensionsErrorMessage(file, type);
+      if (dimensionMessage) {
+        throw new BadRequestException(
+          `Недопустимый размер файла ${contentName}: ${dimensionMessage}`,
+        );
+      }
     }
   }
 
@@ -293,38 +399,35 @@ export class UserContentService {
       throw new BadRequestException("Нельзя удалить дефолтный скин");
     }
 
-    const removed = await this.store.deleteByIdAndCountRemaining(id, type);
-    if (!removed) return;
+    return this.withPathLock(item.filePath, async () => {
+      const removed = await this.store.deleteByIdAndCountRemaining(id, type);
+      if (!removed) return;
 
-    const profileRefs = this.profileStore
-      ? await this.profileStore.countProfilesByTextureUrl(item.filePath)
-      : 0;
+      const profileRefs = this.profileStore
+        ? await this.profileStore.countProfilesByTextureUrl(item.filePath)
+        : 0;
 
-    await this.syncProfileAfterDelete(ownerUuid, type);
+      await this.syncProfileAfterDelete(ownerUuid, type, item.active);
 
-    if (removed.remainingCount > 0) {
-      this.logger.debug(
-        { id, type, remainingCount: removed.remainingCount },
-        "Файл контента ещё используется другими записями",
-      );
-      return;
-    }
+      if (removed.remainingCount > 0) {
+        this.logger.debug(
+          { id, type, remainingCount: removed.remainingCount },
+          "Файл контента ещё используется другими записями",
+        );
+        return;
+      }
 
-    if (profileRefs > 0) {
-      this.logger.debug(
-        { id, type, profileRefs },
-        "Файл контента ещё используется профилями Yggdrasil",
-      );
-      return;
-    }
+      if (profileRefs > 0) {
+        this.logger.debug(
+          { id, type, profileRefs },
+          "Файл контента ещё используется профилями Yggdrasil",
+        );
+        return;
+      }
 
-    const localPath = `public/${item.filePath.replace(`${this.config.BASE_URL}/`, "")}`;
-    try {
-      unlinkSync(localPath);
-    } catch (error) {
-      this.logger.error({ err: error, path: localPath }, "Не удалось удалить файл контента");
-    }
+      this.unlinkLocalFile(`public/${item.filePath.replace(`${this.config.BASE_URL}/`, "")}`);
 
-    this.logger.debug({ ownerUuid, type, id }, "Deleted");
+      this.logger.debug({ ownerUuid, type, id }, "Deleted");
+    });
   }
 }

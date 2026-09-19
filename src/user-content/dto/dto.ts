@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { IsInt } from "class-validator";
 import { validationMessages } from "../../common/validation-messages";
+import { SKIN_MODELS } from "../../utils/texture";
 
 export class UserContentItemDto {
   @ApiPropertyOptional({ example: 1, description: "null для скина по умолчанию" })
@@ -11,7 +12,7 @@ export class UserContentItemDto {
 
   @ApiPropertyOptional({
     example: "slim",
-    enum: ["classic", "slim"],
+    enum: SKIN_MODELS,
     description: "Модель рук скина (только для скинов)",
   })
   model?: string | null;

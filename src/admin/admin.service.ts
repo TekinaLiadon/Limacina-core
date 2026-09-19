@@ -15,10 +15,12 @@ import {
   type UsersFilter,
   type UsersPage,
   type DeletedUsersPage,
-} from "./admin.store";
-import { AuthMapStoreToken, type IAuthStore } from "../auth/service/auth_store.service";
+} from "./admin_store";
+import { AuthStoreToken, type IAuthStore } from "../auth/service/auth_store";
+import { validatePasswordPolicy } from "../auth/password-policy";
 import { CronService } from "../cron/cron.service";
 import { ROLE_WEIGHTS, isKnownRole } from "../common/roles";
+import { isUniqueViolation } from "../utils/sql";
 import type { RequestUser } from "../common/current-user.decorator";
 
 interface MutationStep {
@@ -32,7 +34,7 @@ export class AdminService implements OnModuleInit {
 
   constructor(
     @Inject(AdminMapStoreToken) private readonly adminStore: IAdminStore,
-    @Inject(AuthMapStoreToken) private readonly authStore: IAuthStore,
+    @Inject(AuthStoreToken) private readonly authStore: IAuthStore,
     private readonly cron: CronService,
   ) {}
 
@@ -59,33 +61,33 @@ export class AdminService implements OnModuleInit {
   }
 
   async setApproved(username: string, approved: boolean, actor: RequestUser): Promise<void> {
-    const user = await this.findMutableUser(username, actor, "approve");
-    await this.applyWithRollback([
-      {
-        run: () => this.adminStore.setApproved(username, approved),
-        undo: () => this.adminStore.setApproved(username, user.approved),
-      },
-      {
-        run: () => this.authStore.setApproved(user.uuid, approved),
-        undo: () => this.authStore.setApproved(user.uuid, user.approved),
-      },
-    ]);
-    this.logger.log(this.audit(actor, username, "approve"), "Статус одобрения изменён");
+    await this.applyUserMutation(username, actor, "approve", "Статус одобрения изменён", (user) =>
+      this.buildStorePairSteps(
+        {
+          run: () => this.adminStore.setApproved(username, approved),
+          undo: () => this.adminStore.setApproved(username, user.approved),
+        },
+        {
+          run: () => this.authStore.setApproved(user.uuid, approved),
+          undo: () => this.authStore.setApproved(user.uuid, user.approved),
+        },
+      ),
+    );
   }
 
   async setBanned(username: string, banned: boolean, actor: RequestUser): Promise<void> {
-    const user = await this.findMutableUser(username, actor, "ban");
-    await this.applyWithRollback([
-      {
-        run: () => this.adminStore.setBanned(username, banned),
-        undo: () => this.adminStore.setBanned(username, user.banned),
-      },
-      {
-        run: () => this.authStore.setBanned(user.uuid, banned),
-        undo: () => this.authStore.setBanned(user.uuid, user.banned),
-      },
-    ]);
-    this.logger.log(this.audit(actor, username, "ban"), "Статус бана изменён");
+    await this.applyUserMutation(username, actor, "ban", "Статус бана изменён", (user) =>
+      this.buildStorePairSteps(
+        {
+          run: () => this.adminStore.setBanned(username, banned),
+          undo: () => this.adminStore.setBanned(username, user.banned),
+        },
+        {
+          run: () => this.authStore.setBanned(user.uuid, banned),
+          undo: () => this.authStore.setBanned(user.uuid, user.banned),
+        },
+      ),
+    );
   }
 
   async setRole(username: string, role: string, actor: RequestUser): Promise<void> {
@@ -97,18 +99,18 @@ export class AdminService implements OnModuleInit {
       throw new ForbiddenException("Невозможно выдать роль, равную или выше собственной");
     }
 
-    const user = await this.findMutableUser(username, actor, "setRole");
-    await this.applyWithRollback([
-      {
-        run: () => this.adminStore.setRole(username, role),
-        undo: () => this.adminStore.setRole(username, user.role),
-      },
-      {
-        run: () => this.authStore.updateRole(user.uuid, role),
-        undo: () => this.authStore.updateRole(user.uuid, user.role),
-      },
-    ]);
-    this.logger.log(this.audit(actor, username, "setRole"), "Роль пользователя изменена");
+    await this.applyUserMutation(username, actor, "setRole", "Роль пользователя изменена", (user) =>
+      this.buildStorePairSteps(
+        {
+          run: () => this.adminStore.setRole(username, role),
+          undo: () => this.adminStore.setRole(username, user.role),
+        },
+        {
+          run: () => this.authStore.updateRole(user.uuid, role),
+          undo: () => this.authStore.updateRole(user.uuid, user.role),
+        },
+      ),
+    );
   }
 
   async setOwnerRole(username: string, actor: RequestUser): Promise<void> {
@@ -126,20 +128,24 @@ export class AdminService implements OnModuleInit {
       throw new NotFoundException(`Пользователь ${username} не найден`);
     }
 
-    await this.applyWithRollback([
-      {
-        run: () => this.adminStore.setRole(username, "owner"),
-        undo: () => this.adminStore.setRole(username, user.role),
-      },
-      {
-        run: () => this.authStore.updateRole(user.uuid, "owner"),
-        undo: () => this.authStore.updateRole(user.uuid, user.role),
-      },
-    ]);
+    await this.applyWithRollback(
+      this.buildStorePairSteps(
+        {
+          run: () => this.adminStore.setRole(username, "owner"),
+          undo: () => this.adminStore.setRole(username, user.role),
+        },
+        {
+          run: () => this.authStore.updateRole(user.uuid, "owner"),
+          undo: () => this.authStore.updateRole(user.uuid, user.role),
+        },
+      ),
+    );
     this.logger.log(this.audit(actor, username, "setOwner"), "Пользователь назначен владельцем");
   }
 
   async setUserPassword(username: string, password: string, actor: RequestUser): Promise<void> {
+    validatePasswordPolicy(password);
+
     const user = await this.findMutableUser(username, actor, "setPassword");
     const passwordHash = await Bun.password.hash(password);
     await this.authStore.replacePassword(user.uuid, passwordHash, new Date());
@@ -221,12 +227,60 @@ export class AdminService implements OnModuleInit {
         run: () => this.authStore.restoreUser(deleted.uuid),
         undo: () => this.authStore.deleteUser(deleted.uuid),
       },
-    ]);
+    ]).catch((error: unknown) => {
+      if (!isUniqueViolation(error)) throw error;
+      this.logger.error(
+        this.audit(actor, username, "restore"),
+        "Отказ: юзернейм занят живым пользователем (гонка с регистрацией)",
+      );
+      throw new ConflictException(`Юзернейм ${username} уже занят живым пользователем`);
+    });
+
+    await this.removeDeletedDuplicatesQuietly(username);
     this.logger.log(this.audit(actor, username, "restore"), "Пользователь восстановлен");
+  }
+
+  private async removeDeletedDuplicatesQuietly(username: string): Promise<void> {
+    try {
+      const removed = await this.adminStore.removeDeletedDuplicates(username);
+      if (removed > 0) {
+        this.logger.log(
+          { username, removed },
+          "Устаревшие дубликаты удалённого пользователя подчищены",
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        { err: error, username },
+        "Не удалось подчистить дубликаты удалённого пользователя",
+      );
+    }
   }
 
   private audit(actor: RequestUser, target: string, action: string): Record<string, string> {
     return { actor: actor.username, actorRole: actor.role, target, action };
+  }
+
+  private async applyUserMutation(
+    username: string,
+    actor: RequestUser,
+    action: string,
+    successMessage: string,
+    buildSteps: (user: AdminUser) => MutationStep[],
+  ): Promise<void> {
+    const user = await this.findMutableUser(username, actor, action);
+    await this.applyWithRollback(buildSteps(user));
+    this.logger.log(this.audit(actor, username, action), successMessage);
+  }
+
+  private buildStorePairSteps(
+    admin: { run: () => Promise<void>; undo: () => Promise<void> },
+    auth: { run: () => Promise<void>; undo: () => Promise<void> },
+  ): MutationStep[] {
+    return [
+      { run: admin.run, undo: admin.undo },
+      { run: auth.run, undo: auth.undo },
+    ];
   }
 
   private async applyWithRollback(steps: MutationStep[]): Promise<void> {

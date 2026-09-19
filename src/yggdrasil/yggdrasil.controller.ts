@@ -1,3 +1,4 @@
+import { enumPipeExceptionFactory } from "../common/validation-pipes";
 import {
   Body,
   Controller,
@@ -12,9 +13,10 @@ import {
   Post,
   Put,
   Query,
+  Req,
   Res,
 } from "@nestjs/common";
-import type { FastifyReply } from "fastify";
+import type { FastifyReply, FastifyRequest } from "fastify";
 import {
   ApiBody,
   ApiOperation,
@@ -26,6 +28,7 @@ import {
 } from "@nestjs/swagger";
 import { Public } from "../common/public.decorator";
 import { BatchProfilesPipe } from "./batch-profiles.pipe";
+import { parseTextureUpload } from "./texture-upload.parser";
 import { YggdrasilService } from "./service/yggdrasil.service";
 import {
   AuthenticateDto,
@@ -41,7 +44,6 @@ import {
   SessionProfileDto,
   ApiMetadataResponseDto,
   GameProfileDto,
-  UploadTextureDto,
 } from "./dto/dto";
 
 @ApiTags("yggdrasil")
@@ -148,7 +150,13 @@ export class YggdrasilController {
   @ApiResponse({ status: 204, description: "Profile not found" })
   async getProfile(
     @Param("uuid") uuid: string,
-    @Query("unsigned", new DefaultValuePipe("true"), new ParseEnumPipe(["true", "false"]))
+    @Query(
+      "unsigned",
+      new DefaultValuePipe("true"),
+      new ParseEnumPipe(["true", "false"], {
+        exceptionFactory: enumPipeExceptionFactory("unsigned", ["true", "false"]),
+      }),
+    )
     unsigned: "true" | "false",
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<SessionProfileDto | undefined> {
@@ -174,21 +182,38 @@ export class YggdrasilController {
   @Put("api/user/profile/:uuid/:textureType")
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiSecurity("bearer")
-  @ApiOperation({ summary: "Upload texture (base64-encoded PNG in body)" })
+  @ApiOperation({
+    summary: "Upload texture (authlib-injector Texture Upload)",
+    description:
+      "Multipart/form-data по спеке authlib-injector: file — PNG (обязателен), " +
+      "model — модель скина slim/classic или пустая строка (только для скинов). " +
+      "Аутентификация: Authorization: Bearer <accessToken>.",
+  })
   @ApiParam({ name: "uuid" })
   @ApiParam({ name: "textureType", enum: ["skin", "cape"] })
-  @ApiBody({ type: UploadTextureDto })
   @ApiResponse({ status: 204, description: "Texture uploaded" })
   @ApiResponse({ status: 401, description: "Missing or invalid access token" })
   @ApiResponse({ status: 403, type: YggdrasilErrorDto })
   async putTexture(
     @Param("uuid") uuid: string,
-    @Param("textureType", new ParseEnumPipe(["skin", "cape"])) textureType: "skin" | "cape",
-    @Body() body: UploadTextureDto,
+    @Param(
+      "textureType",
+      new ParseEnumPipe(["skin", "cape"], {
+        exceptionFactory: enumPipeExceptionFactory("textureType", ["skin", "cape"]),
+      }),
+    )
+    textureType: "skin" | "cape",
+    @Req() request: FastifyRequest,
     @Headers("authorization") authorization?: string,
   ): Promise<void> {
-    const buffer = Buffer.from(body.file, "base64");
-    await this.yggdrasilService.uploadTexture(uuid, textureType, buffer, body.model, authorization);
+    const { model, file } = await parseTextureUpload(request);
+    await this.yggdrasilService.uploadTexture(
+      uuid,
+      textureType,
+      Buffer.from(file),
+      model,
+      authorization,
+    );
   }
 
   @Delete("api/user/profile/:uuid/:textureType")
@@ -202,7 +227,13 @@ export class YggdrasilController {
   @ApiResponse({ status: 403, type: YggdrasilErrorDto })
   async deleteTexture(
     @Param("uuid") uuid: string,
-    @Param("textureType", new ParseEnumPipe(["skin", "cape"])) textureType: "skin" | "cape",
+    @Param(
+      "textureType",
+      new ParseEnumPipe(["skin", "cape"], {
+        exceptionFactory: enumPipeExceptionFactory("textureType", ["skin", "cape"]),
+      }),
+    )
+    textureType: "skin" | "cape",
     @Headers("authorization") authorization?: string,
   ): Promise<void> {
     await this.yggdrasilService.deleteTexture(uuid, textureType, authorization);

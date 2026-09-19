@@ -1,4 +1,4 @@
-import { setupTestEnv } from "../../utils/tests/test-env";
+import { baseRequiredEnv, setupTestEnv } from "../../utils/tests/test-env";
 
 setupTestEnv();
 
@@ -8,14 +8,7 @@ import GlobalConfig, { type AppConfigType } from "../global-config";
 import { buildPinoHttpOptions } from "../pino-options";
 
 function parseWith(overrides: Record<string, string | undefined>): AppConfigType {
-  const env: Record<string, string | undefined> = {
-    JWT_ACCESS: "test-access-secret-0123456789abcdef0123",
-    JWT_REFRESH: "test-refresh-secret-0123456789abcdef0123",
-    NODE_ENV: "test",
-    BASE_URL: "http://localhost:3005",
-    DB_DRIVER: "map",
-    ...overrides,
-  };
+  const env: Record<string, string | undefined> = { ...baseRequiredEnv(), ...overrides };
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) delete env[key];
   }

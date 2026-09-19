@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import type { AdminUser } from "../admin.store";
-import { AdminPostgresStore } from "../admin_postgres.store";
-import { AuthPostgresStore } from "../../auth/service/auth_postgres.service";
-import type { StoredUser } from "../../auth/service/auth_store.service";
+import type { AdminUser } from "../admin_store";
+import { AdminPostgresStore } from "../admin_postgres_store";
+import { AuthPostgresStore } from "../../auth/service/auth_postgres_store";
+import type { StoredUser } from "../../auth/service/auth_store";
 import {
   cleanupTrackedUsers,
   createPostgresUser,
@@ -267,6 +267,38 @@ postgresDescribe("AdminPostgresStore (postgres)", () => {
     expect(await authStore.saveUser(reissued)).toBe(true);
 
     await expect(store.restoreUser(user.username)).rejects.toThrow();
+  });
+
+  it("removeDeletedDuplicates удаляет только удалённых с тем же ником", async () => {
+    const dupPrefix = `${prefix}_dup_${generateUuid().slice(0, 8)}`;
+    const makeSeeded = async (username: string): Promise<string> => {
+      const uuid = generateUuid();
+      trackPostgresUser({ uuid });
+      expect(
+        await authStore.saveUser({
+          uuid,
+          username,
+          passwordHash: "dup-test-hash",
+          role: "user",
+          approved: true,
+          banned: false,
+        }),
+      ).toBe(true);
+      return uuid;
+    };
+
+    const firstUuid = await makeSeeded(`${dupPrefix}_a`);
+    await store.deleteUser(`${dupPrefix}_a`);
+    const secondUuid = await makeSeeded(`${dupPrefix}_a`);
+    await store.deleteUser(`${dupPrefix}_a`);
+    const otherUuid = await makeSeeded(`${dupPrefix}_b`);
+    await store.deleteUser(`${dupPrefix}_b`);
+
+    expect(await store.removeDeletedDuplicates(`${dupPrefix}_a`)).toBe(2);
+
+    expect(await findRawUser(firstUuid)).toBeUndefined();
+    expect(await findRawUser(secondUuid)).toBeUndefined();
+    expect(await findRawUser(otherUuid)).toBeDefined();
   });
 
   it("purgeOldDeletedUsers удаляет только просроченных удалённых", async () => {

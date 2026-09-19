@@ -15,11 +15,7 @@ import { Jwt_authGuard } from "../jwt_auth.guard";
 import { RolesGuard } from "../roles.guard";
 import { Roles } from "../roles.decorator";
 import { CurrentUser, type RequestUser } from "../current-user.decorator";
-import {
-  AuthMapStore,
-  AuthMapStoreToken,
-  type StoredUser,
-} from "../../auth/service/auth_store.service";
+import { AuthMapStore, AuthStoreToken, type StoredUser } from "../../auth/service/auth_store";
 import GlobalConfig from "../../config/global-config";
 import { AppConfigToken } from "../../config/app-config.provider";
 
@@ -81,7 +77,7 @@ describe("Jwt_authGuard — проверки статуса пользовате
       providers: [
         JwtStrategy,
         { provide: AppConfigToken, useFactory: () => config },
-        { provide: AuthMapStoreToken, useClass: AuthMapStore },
+        { provide: AuthStoreToken, useClass: AuthMapStore },
       ],
     }).compile();
 
@@ -89,7 +85,7 @@ describe("Jwt_authGuard — проверки статуса пользовате
     const reflector = app.get(Reflector);
     app.useGlobalGuards(new Jwt_authGuard(reflector), new RolesGuard(reflector));
     jwtService = moduleFixture.get(JwtService);
-    authStore = moduleFixture.get(AuthMapStoreToken);
+    authStore = moduleFixture.get(AuthStoreToken);
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
   });

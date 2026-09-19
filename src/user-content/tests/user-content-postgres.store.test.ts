@@ -5,7 +5,7 @@ import {
   ensurePostgresSchema,
   postgresDescribe,
 } from "../../utils/tests/postgres-suite";
-import { UserContentPostgresStore, isUserContentLimitExceededError } from "../user-content.store";
+import { UserContentPostgresStore, isUserContentLimitExceededError } from "../user_content_store";
 
 const store = new UserContentPostgresStore();
 
@@ -43,9 +43,6 @@ postgresDescribe("UserContentPostgresStore (postgres)", () => {
     expect(skins.map((item) => item.id)).toEqual([skin.id]);
     expect(capes.map((item) => item.id)).toEqual([cape.id]);
     expect(models.map((item) => item.id)).toEqual([model.id]);
-    expect(await store.countByUserUuid(user.uuid, "skin")).toBe(1);
-    expect(await store.countByUserUuid(user.uuid, "cape")).toBe(1);
-    expect(await store.countByUserUuid(user.uuid, "model")).toBe(1);
   });
 
   it("findById находит запись в своей таблице", async () => {
@@ -135,7 +132,7 @@ postgresDescribe("UserContentPostgresStore (postgres)", () => {
     const second = await store.saveWithinLimit(user.uuid, "capes/lim-2.png", "cape", 2);
     expect(second.filePath).toBe("capes/lim-2.png");
     expect(second.id).toBeGreaterThan(0);
-    expect(await store.countByUserUuid(user.uuid, "cape")).toBe(2);
+    expect((await store.findByUserUuid(user.uuid, "cape")).length).toBe(2);
 
     const skin = await store.saveWithinLimit(user.uuid, "skins/lim-skin.png", "skin", 2, "slim");
     expect(skin.skinModel).toBe("slim");
@@ -153,8 +150,36 @@ postgresDescribe("UserContentPostgresStore (postgres)", () => {
     );
     expect(isUserContentLimitExceededError(exceedSkin)).toBe(true);
 
-    expect(await store.countByUserUuid(user.uuid, "cape")).toBe(2);
-    expect(await store.countByUserUuid(user.uuid, "skin")).toBe(1);
+    expect((await store.findByUserUuid(user.uuid, "cape")).length).toBe(2);
+    expect((await store.findByUserUuid(user.uuid, "skin")).length).toBe(1);
+  });
+
+  it("параллельные удаления дублей атомарно считают остаток ссылок (TASK-269.10)", async () => {
+    const user = await createPostgresUser({ usernamePrefix: "pgcnt" });
+    const first = await store.save(user.uuid, "skins/race-dup.png", "skin");
+    const second = await store.save(user.uuid, "skins/race-dup.png", "skin");
+
+    const results = await Promise.all([
+      store.deleteByIdAndCountRemaining(first.id, "skin"),
+      store.deleteByIdAndCountRemaining(second.id, "skin"),
+    ]);
+
+    expect(results.map((result) => result?.remainingCount ?? 0).sort()).toEqual([0, 1]);
+    expect(await store.countByFilePath("skins/race-dup.png", "skin")).toBe(0);
+  });
+
+  it("параллельные upload и delete одного пути оставляют согласованное состояние (TASK-269.10)", async () => {
+    const user = await createPostgresUser({ usernamePrefix: "pgcnt" });
+    const existing = await store.save(user.uuid, "skins/race-upd.png", "skin");
+
+    const [deleted, uploaded] = await Promise.all([
+      store.deleteByIdAndCountRemaining(existing.id, "skin"),
+      store.saveWithinLimit(user.uuid, "skins/race-upd.png", "skin", 5),
+    ]);
+
+    expect(uploaded.id).toBeGreaterThan(0);
+    expect([0, 1]).toContain(deleted?.remainingCount ?? 0);
+    expect(await store.countByFilePath("skins/race-upd.png", "skin")).toBe(1);
   });
 
   it("saveWithinLimit отклоняет параллельные вставки сверх лимита", async () => {

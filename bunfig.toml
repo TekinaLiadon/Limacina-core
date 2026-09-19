@@ -4,4 +4,4 @@ coverage = true
 coverageSkipTestFiles = true
 coverageReporter = ["text", "lcov"]
 coverageDir = "coverage"
-coveragePathIgnorePatterns = ["src/auth/service/auth_proxy.service.ts", "src/config/log-stream.ts"]
+coveragePathIgnorePatterns = ["src/auth/service/auth_proxy_store.ts", "src/config/log-stream.ts"]

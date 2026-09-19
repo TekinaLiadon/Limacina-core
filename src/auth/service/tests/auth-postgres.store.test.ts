@@ -7,7 +7,7 @@ import {
   postgresDescribe,
 } from "../../../utils/tests/postgres-suite";
 import { generateUuid } from "../../../utils/uuid";
-import { AuthPostgresStore } from "../auth_postgres.service";
+import { AuthPostgresStore } from "../auth_postgres_store";
 import { execute, TABLES } from "../../../utils/sql";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../../token.constants";
 

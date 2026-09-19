@@ -1,4 +1,5 @@
 import { setupTestEnv } from "../../../../utils/tests/test-env";
+import { applyV1ApiPrefix } from "../../../../utils/tests/v1-prefix";
 
 setupTestEnv();
 
@@ -17,8 +18,8 @@ import { V1ContentController } from "../content.controller";
 import { UserContentService } from "../../../../user-content/user-content.service";
 import {
   UserContentMapStore,
-  UserContentMapStoreToken,
-} from "../../../../user-content/user-content.store";
+  UserContentStoreToken,
+} from "../../../../user-content/user_content_store";
 import {
   YggdrasilMapStore,
   YggdrasilStoreToken,
@@ -32,6 +33,7 @@ import { buildTestPng } from "../../../../utils/tests/test-png";
 const TEST_UUID = "v1user-uuid-0001";
 
 const pngBuffer = (variant = 16): Buffer => buildTestPng({ variant });
+const capeBuffer = (variant: number): Buffer => buildTestPng({ width: 64, height: 32, variant });
 
 @Injectable()
 class TestJwtStrategy extends PassportStrategy(Strategy) {
@@ -75,7 +77,7 @@ describe("V1 common/content эндпоинты", (): void => {
         },
         TestJwtStrategy,
         {
-          provide: UserContentMapStoreToken,
+          provide: UserContentStoreToken,
           useClass: UserContentMapStore,
         },
         {
@@ -91,11 +93,22 @@ describe("V1 common/content эндпоинты", (): void => {
     const reflector = app.get(Reflector);
     app.useGlobalGuards(new Jwt_authGuard(reflector), new RolesGuard(reflector));
     jwtService = moduleFixture.get(JwtService);
+    applyV1ApiPrefix(app);
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
 
-    userToken = jwtService.sign({ sub: TEST_UUID, username: "v1user", role: "user" });
-    otherUserToken = jwtService.sign({ sub: "other-uuid-0002", username: "other", role: "user" });
+    userToken = jwtService.sign({
+      typ: "access",
+      sub: TEST_UUID,
+      username: "v1user",
+      role: "user",
+    });
+    otherUserToken = jwtService.sign({
+      typ: "access",
+      sub: "other-uuid-0002",
+      username: "other",
+      role: "user",
+    });
 
     const uploadRes = await supertest(app.getHttpServer())
       .post("/v1/common/content/skins")
@@ -129,7 +142,7 @@ describe("V1 common/content эндпоинты", (): void => {
   };
 
   const deleteUserSkin = async (): Promise<void> => {
-    const store = app.get(UserContentMapStoreToken);
+    const store = app.get(UserContentStoreToken);
     const items = await store.findByUserUuid(TEST_UUID, "skin");
     for (const item of items) {
       await supertest(app.getHttpServer())
@@ -223,7 +236,7 @@ describe("V1 common/content эндпоинты", (): void => {
     });
 
     it("отдаёт дефолтный скин с active=true, когда своих скинов нет", async () => {
-      const store = app.get(UserContentMapStoreToken);
+      const store = app.get(UserContentStoreToken);
       const ownSkins = await store.findByUserUuid(TEST_UUID, "skin");
       for (const skin of ownSkins) {
         await supertest(app.getHttpServer())
@@ -258,7 +271,7 @@ describe("V1 common/content эндпоинты", (): void => {
         .set("Authorization", `Bearer ${userToken}`)
         .expect(200);
 
-      const store = app.get(UserContentMapStoreToken);
+      const store = app.get(UserContentStoreToken);
       const remaining = await store.findByUserUuid(TEST_UUID, "skin");
       const activeItems = remaining.filter((s: { active: boolean }) => s.active);
       expect(activeItems.length).toBe(1);
@@ -272,8 +285,46 @@ describe("V1 common/content эндпоинты", (): void => {
       }
     });
 
+    it("при удалении неактивного скина активный и профиль не меняются", async () => {
+      const first = await uploadOwnSkin();
+      const second = await uploadOwnSkin();
+      const third = await uploadOwnSkin();
+
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/content/skins/active")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ id: first.id })
+        .expect(200);
+
+      const profileStore = app.get(YggdrasilStoreToken);
+      await profileStore.saveProfile({
+        uuid: TEST_UUID,
+        userId: TEST_UUID,
+        username: "v1user",
+        skinUrl: first.url,
+      });
+
+      await supertest(app.getHttpServer())
+        .delete(`/v1/common/content/skins/${second.id}`)
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(200);
+
+      const store = app.get(UserContentStoreToken);
+      const remaining = await store.findByUserUuid(TEST_UUID, "skin");
+      const activeItems = remaining.filter((s: { active: boolean }) => s.active);
+      expect(activeItems.map((s: { id: number }) => s.id)).toEqual([first.id]);
+      expect((await profileStore.findProfileByUuid(TEST_UUID))?.skinUrl).toBe(first.url);
+
+      for (const skin of [first, third]) {
+        await supertest(app.getHttpServer())
+          .delete(`/v1/common/content/skins/${skin.id}`)
+          .set("Authorization", `Bearer ${userToken}`)
+          .expect(200);
+      }
+    });
+
     it("возвращает model каждого скина (slim/classic/null)", async () => {
-      const store = app.get(UserContentMapStoreToken);
+      const store = app.get(UserContentStoreToken);
       for (const skin of await store.findByUserUuid(TEST_UUID, "skin")) {
         await supertest(app.getHttpServer())
           .delete(`/v1/common/content/skins/${skin.id}`)
@@ -334,7 +385,7 @@ describe("V1 common/content эндпоинты", (): void => {
     });
 
     it("удаляет свой скин и восстанавливает его для остальных тестов", async () => {
-      const store = app.get(UserContentMapStoreToken);
+      const store = app.get(UserContentStoreToken);
       let ownSkins = await store.findByUserUuid(TEST_UUID, "skin");
       if (ownSkins.length === 0) {
         const uploadRes = await supertest(app.getHttpServer())
@@ -380,7 +431,7 @@ describe("V1 common/content эндпоинты", (): void => {
     });
 
     it("запрещает удалять дефолтный скин (файл и запись)", async () => {
-      const store = app.get(UserContentMapStoreToken);
+      const store = app.get(UserContentStoreToken);
       const seededIds: number[] = [];
       try {
         const seeded = await store.save(
@@ -512,7 +563,7 @@ describe("V1 common/content эндпоинты", (): void => {
     });
 
     it("возвращает 400 при выборе дефолтного скина", async () => {
-      const store = app.get(UserContentMapStoreToken);
+      const store = app.get(UserContentStoreToken);
       const seeded = await store.save(
         TEST_UUID,
         "http://localhost:3005/textures/default.png",
@@ -556,7 +607,7 @@ describe("V1 common/content эндпоинты", (): void => {
 
   describe("Модель рук скина (?model=)", () => {
     const uploadSkinWithModel = async (model?: string): Promise<{ id: number; url: string }> => {
-      const store = app.get(UserContentMapStoreToken);
+      const store = app.get(UserContentStoreToken);
       const ownSkins = await store.findByUserUuid(TEST_UUID, "skin");
       for (const skin of ownSkins) {
         await supertest(app.getHttpServer())
@@ -577,7 +628,7 @@ describe("V1 common/content эндпоинты", (): void => {
     it("сохраняет slim-модель в записи скина", async () => {
       const uploaded = await uploadSkinWithModel("slim");
 
-      const store = app.get(UserContentMapStoreToken);
+      const store = app.get(UserContentStoreToken);
       const item = await store.findById(uploaded.id, "skin");
       expect(item?.skinModel).toBe("slim");
       uploadedSkinId = uploaded.id;
@@ -597,7 +648,7 @@ describe("V1 common/content эндпоинты", (): void => {
       const uploadRes = await supertest(app.getHttpServer())
         .post("/v1/common/content/capes")
         .set("Authorization", `Bearer ${userToken}`)
-        .attach("file", pngBuffer(64), "cape.png")
+        .attach("file", capeBuffer(64), "cape.png")
         .expect(201);
 
       trackUploadedFile(uploadRes.body.url);
@@ -628,7 +679,7 @@ describe("V1 common/content эндпоинты", (): void => {
       const uploadRes = await supertest(app.getHttpServer())
         .post("/v1/common/content/capes")
         .set("Authorization", `Bearer ${userToken}`)
-        .attach("file", pngBuffer(65), "cape.png")
+        .attach("file", capeBuffer(65), "cape.png")
         .expect(201);
 
       trackUploadedFile(uploadRes.body.url);
@@ -733,7 +784,7 @@ describe("V1 common/content эндпоинты", (): void => {
       const uploadRes = await supertest(app.getHttpServer())
         .post("/v1/common/content/capes")
         .set("Authorization", `Bearer ${userToken}`)
-        .attach("file", pngBuffer(96), "cape.png")
+        .attach("file", capeBuffer(96), "cape.png")
         .expect(201);
 
       trackUploadedFile(uploadRes.body.url);
@@ -754,7 +805,7 @@ describe("V1 common/content эндпоинты", (): void => {
       const uploadRes = await supertest(app.getHttpServer())
         .post("/v1/common/content/capes")
         .set("Authorization", `Bearer ${otherUserToken}`)
-        .attach("file", pngBuffer(97), "cape.png")
+        .attach("file", capeBuffer(97), "cape.png")
         .expect(201);
 
       trackUploadedFile(uploadRes.body.url);
