@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { BadRequestException } from "@nestjs/common";
 import {
   chmodSync,
   existsSync,
@@ -347,14 +348,67 @@ describe("LauncherUpdateService — порядок мутаций и атома�
     expect(leftovers).toEqual([]);
   });
 
-  it("getCurrentVersion читает version.json или отдаёт 0.0.0", () => {
-    const version = service.getCurrentVersion();
+  it("битый version.json + update без версии даёт понятную ошибку и ничего не публикует (TASK-267.11)", () => {
+    seedBaseline();
+    writeFileSync(VERSION_FILE, "{broken");
 
-    if (existsSync(VERSION_FILE)) {
-      expect(version).toMatch(/^\d+\.\d+\.\d+$/);
-    } else {
-      expect(version).toBe("0.0.0");
-    }
+    expect(() => service.update("", [stageZip("windows", "x86_64", "v2")])).toThrow(
+      BadRequestException,
+    );
+
+    expect(readFileSync(VERSION_FILE, "utf-8")).toBe("{broken");
+    expect(zipsInDir(sandboxDir)).toEqual(["Limacina-1.0.0-windows-x86_64.zip"]);
+    expect(existsSync(UPLOAD_TMP_DIR) ? readdirSync(UPLOAD_TMP_DIR) : []).toEqual([]);
+  });
+
+  it("отсутствующий version.json + update без версии даёт ошибку и не создаёт файл", () => {
+    seedBaseline();
+    unlinkSync(VERSION_FILE);
+
+    expect(() => service.update("", [stageZip("windows", "x86_64", "v2")])).toThrow(
+      BadRequestException,
+    );
+
+    expect(existsSync(VERSION_FILE)).toBe(false);
+    expect(zipsInDir(sandboxDir)).toEqual(["Limacina-1.0.0-windows-x86_64.zip"]);
+  });
+
+  it("version.json без строковой версии в форме x.x.x не публикует 0.0.0", () => {
+    seedBaseline();
+    writeFileSync(VERSION_FILE, JSON.stringify({ version: 123 }));
+
+    expect(() => service.update("", [stageZip("windows", "x86_64", "v2")])).toThrow(
+      BadRequestException,
+    );
+
+    expect(JSON.parse(readFileSync(VERSION_FILE, "utf-8"))).toEqual({ version: 123 });
+    expect(zipsInDir(sandboxDir)).toEqual(["Limacina-1.0.0-windows-x86_64.zip"]);
+  });
+
+  it("явная версия публикуется и при битом version.json", () => {
+    seedBaseline();
+    writeFileSync(VERSION_FILE, "{broken");
+
+    const result = service.update("5.0.0", [stageZip("windows", "x86_64", "content-5.0.0")]);
+
+    expect(result.version).toBe("5.0.0");
+    expect(readVersionFile()).toBe("5.0.0");
+    expect(readFileSync(sandboxZipPath("5.0.0"), "utf-8")).toBe("content-5.0.0");
+  });
+
+  it("версия 0.0.0 зарезервирована: не публикуется явно и не подставляется из version.json", () => {
+    seedBaseline();
+
+    expect(() => service.update("0.0.0", [stageZip("windows", "x86_64", "v2")])).toThrow(
+      /зарезервирована/,
+    );
+    expect(readVersionFile()).toBe("1.0.0");
+
+    writeFileSync(VERSION_FILE, JSON.stringify({ version: "0.0.0" }));
+    expect(() => service.update("", [stageZip("windows", "x86_64", "v2")])).toThrow(
+      BadRequestException,
+    );
+    expect(zipsInDir(sandboxDir)).toEqual(["Limacina-1.0.0-windows-x86_64.zip"]);
   });
 
   it("откатывает zip-файлы при сбое записи version.json", () => {
@@ -394,6 +448,60 @@ describe("LauncherUpdateService — порядок мутаций и атома�
     expect(zipsInDir(sandboxDir)).toEqual(["Limacina-1.0.0-windows-x86_64.zip"]);
     expect(zipsInDir(sandboxOldDir)).toEqual([]);
     expect(existsSync(UPLOAD_TMP_DIR) ? readdirSync(UPLOAD_TMP_DIR) : []).toEqual([]);
+  });
+
+  it("сбой архивации посередине возвращает перенесённые в old/ файлы на место", () => {
+    seedBaseline();
+    writeFileSync(sandboxZipPath("0.9.0"), "content-0.9.0");
+
+    const internals = service as unknown as {
+      moveZipToArchive: (dir: string, file: string) => void;
+    };
+    const originalMove = internals.moveZipToArchive;
+    let moves = 0;
+    internals.moveZipToArchive = (dir: string, file: string): void => {
+      moves += 1;
+      if (moves === 2) throw new Error("сбой посреди архивации");
+      originalMove.call(service, dir, file);
+    };
+
+    try {
+      expect(() =>
+        service.update("2.0.0", [stageZip("windows", "x86_64", "content-2.0.0")]),
+      ).toThrow("сбой посреди архивации");
+    } finally {
+      internals.moveZipToArchive = originalMove;
+    }
+
+    expect(readVersionFile()).toBe("1.0.0");
+    expect(zipsInDir(sandboxDir)).toEqual([
+      "Limacina-0.9.0-windows-x86_64.zip",
+      "Limacina-1.0.0-windows-x86_64.zip",
+    ]);
+    expect(zipsInDir(sandboxOldDir)).toEqual([]);
+  });
+
+  it("сбой перезаливки zip после архивации откатывает перенесённые в old/ файлы", () => {
+    seedBaseline();
+
+    const internals = service as unknown as {
+      replaceExistingZip?: (dir: string, filename: string) => string | undefined;
+    };
+    internals.replaceExistingZip = (): never => {
+      throw new Error("сбой перезаливки");
+    };
+
+    try {
+      expect(() =>
+        service.update("2.0.0", [stageZip("windows", "x86_64", "content-2.0.0")]),
+      ).toThrow("сбой перезаливки");
+    } finally {
+      delete internals.replaceExistingZip;
+    }
+
+    expect(readVersionFile()).toBe("1.0.0");
+    expect(zipsInDir(sandboxDir)).toEqual(["Limacina-1.0.0-windows-x86_64.zip"]);
+    expect(zipsInDir(sandboxOldDir)).toEqual([]);
   });
 
   it("сбой переименования temp-файла откатывает архивацию old/ — текущий zip на месте", () => {

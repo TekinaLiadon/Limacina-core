@@ -5,6 +5,7 @@ setupTestEnv();
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -18,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { LauncherReleaseService, type UpdaterArtifactUpload } from "../launcher-release.service";
+import { isReleaseBackupEntry, isReleaseStagingEntry } from "../../launcher/release-service-dirs";
 
 const RELEASES_ROOT = join("public", "releases");
 const RELEASES_BACKUP = join("public", "releases.bak");
@@ -121,7 +123,7 @@ describe("LauncherReleaseService — публикация релиза", (): voi
     ).toBe(false);
     expect(
       readdirSync(RELEASES_ROOT).some(
-        (entry) => entry.startsWith(".staging-") || entry.includes(".old-"),
+        (entry) => isReleaseStagingEntry(entry) || isReleaseBackupEntry(entry),
       ),
     ).toBe(false);
   });
@@ -160,7 +162,7 @@ describe("LauncherReleaseService — публикация релиза", (): voi
     expect(existsSync(join(RELEASES_ROOT, "4.4.3"))).toBe(false);
     expect(
       readdirSync(RELEASES_ROOT).some(
-        (entry) => entry.startsWith(".staging-") || entry.includes(".old-"),
+        (entry) => isReleaseStagingEntry(entry) || isReleaseBackupEntry(entry),
       ),
     ).toBe(false);
   });
@@ -182,7 +184,7 @@ describe("LauncherReleaseService — публикация релиза", (): voi
     expect(readFileSync(windows.sig, "utf-8")).toBe("sig-original");
     expect(
       readdirSync(RELEASES_ROOT).some(
-        (entry) => entry.startsWith(".staging-") || entry.includes(".old-"),
+        (entry) => isReleaseStagingEntry(entry) || isReleaseBackupEntry(entry),
       ),
     ).toBe(false);
   });
@@ -195,6 +197,32 @@ describe("LauncherReleaseService — публикация релиза", (): voi
       impatient.publish("4.4.5", [stageUpload("windows-x86_64", ".exe", "a", "s")]),
     ).rejects.toThrow(ConflictException);
     expect(existsSync(join(RELEASES_ROOT, ".lock-4.4.5"))).toBe(true);
+  });
+
+  it("неудачное снятие stale-лока завершается 409 по deadline, а не вечным циклом", async () => {
+    const lockDir = join(RELEASES_ROOT, ".lock-4.4.11");
+    mkdirSync(lockDir, { recursive: true });
+    ageDirectory(lockDir);
+    chmodSync(RELEASES_ROOT, 0o555);
+    const impatient = new LauncherReleaseService(150);
+
+    try {
+      await expect(
+        impatient.publish("4.4.11", [stageUpload("windows-x86_64", ".exe", "a", "s")]),
+      ).rejects.toThrow(ConflictException);
+    } finally {
+      chmodSync(RELEASES_ROOT, 0o755);
+    }
+
+    expect(existsSync(lockDir)).toBe(true);
+  });
+
+  it("публикация с пустой или пробельной подписью отклоняется", async () => {
+    await expect(
+      service.publish("4.4.13", [stageUpload("windows-x86_64", ".exe", "a", "   \n")]),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(existsSync(join(RELEASES_ROOT, "4.4.13"))).toBe(false);
   });
 
   it("протухший лок захватывается", async () => {
@@ -212,19 +240,80 @@ describe("LauncherReleaseService — публикация релиза", (): voi
   it("протухшие служебные каталоги павших публикаций подчищаются", async () => {
     mkdirSync(join(RELEASES_ROOT, ".staging-stale"), { recursive: true });
     ageDirectory(join(RELEASES_ROOT, ".staging-stale"));
-    mkdirSync(join(RELEASES_ROOT, "4.4.9.old-stale"), { recursive: true });
-    ageDirectory(join(RELEASES_ROOT, "4.4.9.old-stale"));
+    mkdirSync(join(RELEASES_ROOT, "4.4.12"), { recursive: true });
+    const redundantBackup = `.old-4.4.12-${randomUUID()}`;
+    mkdirSync(join(RELEASES_ROOT, redundantBackup), { recursive: true });
+    ageDirectory(join(RELEASES_ROOT, redundantBackup));
     mkdirSync(join(RELEASES_ROOT, ".staging-fresh"), { recursive: true });
 
     try {
       await service.publish("4.4.10", [stageUpload("windows-x86_64", ".exe", "a", "s")]);
 
       expect(existsSync(join(RELEASES_ROOT, ".staging-stale"))).toBe(false);
-      expect(existsSync(join(RELEASES_ROOT, "4.4.9.old-stale"))).toBe(false);
+      expect(existsSync(join(RELEASES_ROOT, redundantBackup))).toBe(false);
       expect(existsSync(join(RELEASES_ROOT, ".staging-fresh"))).toBe(true);
     } finally {
       rmSync(join(RELEASES_ROOT, ".staging-fresh"), { recursive: true, force: true });
+      rmSync(join(RELEASES_ROOT, "4.4.12"), { recursive: true, force: true });
     }
+  });
+
+  it("бэкап без каталога версии восстанавливается до чистки (crash-окно swapReleaseDir)", async () => {
+    const backupName = `.old-4.4.13-${randomUUID()}`;
+    mkdirSync(join(RELEASES_ROOT, backupName), { recursive: true });
+    writeFileSync(
+      join(RELEASES_ROOT, backupName, "Limacina-4.4.13-windows-x86_64.exe"),
+      "backup-payload",
+    );
+    ageDirectory(join(RELEASES_ROOT, backupName));
+
+    try {
+      await service.publish("4.4.10", [stageUpload("windows-x86_64", ".exe", "a", "s")]);
+
+      expect(
+        readFileSync(join(RELEASES_ROOT, "4.4.13", "Limacina-4.4.13-windows-x86_64.exe"), "utf-8"),
+      ).toBe("backup-payload");
+      expect(existsSync(join(RELEASES_ROOT, backupName))).toBe(false);
+    } finally {
+      rmSync(join(RELEASES_ROOT, "4.4.13"), { recursive: true, force: true });
+    }
+  });
+
+  it("публикация версии после crash-окна подхватывает восстановленные файлы", async () => {
+    const backupName = `.old-4.4.15-${randomUUID()}`;
+    mkdirSync(join(RELEASES_ROOT, backupName), { recursive: true });
+    writeFileSync(
+      join(RELEASES_ROOT, backupName, "Limacina-4.4.15-darwin-aarch64.app.tar.gz"),
+      "old-macos",
+    );
+
+    const result = await service.publish("4.4.15", [
+      stageUpload("windows-x86_64", ".exe", "new-windows", "sig-new"),
+    ]);
+
+    expect(result.version).toBe("4.4.15");
+    expect(
+      readFileSync(
+        join(RELEASES_ROOT, "4.4.15", "Limacina-4.4.15-darwin-aarch64.app.tar.gz"),
+        "utf-8",
+      ),
+    ).toBe("old-macos");
+    expect(readFileSync(artifactPaths("4.4.15", "windows-x86_64", ".exe").artifact, "utf-8")).toBe(
+      "new-windows",
+    );
+    expect(
+      readdirSync(RELEASES_ROOT).some(
+        (entry) => isReleaseStagingEntry(entry) || isReleaseBackupEntry(entry),
+      ),
+    ).toBe(false);
+  });
+
+  it("отклоняет публикацию зарезервированной версии 0.0.0", async () => {
+    await expect(
+      service.publish("0.0.0", [stageUpload("windows-x86_64", ".exe", "a", "s")]),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(existsSync(join(RELEASES_ROOT, "0.0.0"))).toBe(false);
   });
 
   it("отклоняет пустую версию", async () => {

@@ -2,16 +2,22 @@ import { Injectable } from "@nestjs/common";
 import {
   selectQuery,
   updateQuery,
+  updateColumnQuery,
+  setSoftDeletedQuery,
   insertQuery,
-  deleteQuery,
   execute,
-  executeInTransaction,
   toBoolean,
   TABLES,
   type SelectBuilder,
 } from "../utils/sql";
-import type { IAdminStore, AdminUser, DeletedUser } from "./admin_store";
-import type { UsersFilter, UsersPage, DeletedUsersPage } from "./admin.service";
+import type {
+  IAdminStore,
+  AdminUser,
+  DeletedUser,
+  UsersFilter,
+  UsersPage,
+  DeletedUsersPage,
+} from "./admin_store";
 
 interface UserRow extends Record<string, unknown> {
   uuid: string;
@@ -120,38 +126,34 @@ export class AdminPostgresStore implements IAdminStore {
   }
 
   async searchUsers(filter: UsersFilter): Promise<UsersPage> {
-    const itemsQuery = withUsersFilter(
-      selectQuery("uuid", "username", "role", "approved", "banned")
-        .from(TABLES.users)
-        .where("deleted = false"),
+    return this.searchUsersPage(
       filter,
-    )
-      .orderBy("lower(username)")
-      .orderBy("username")
-      .limit(filter.limit)
-      .offset(filter.offset)
-      .build();
-    const { rows } = await execute<UserRow>(itemsQuery.sql, itemsQuery.values);
-
-    const countQuery = withUsersFilter(
-      selectQuery("count(*) AS total").from(TABLES.users).where("deleted = false"),
-      filter,
-    ).build();
-    const { rows: countRows } = await execute<CountRow>(countQuery.sql, countQuery.values);
-    const [countRow] = countRows;
-    const total = countRow ? Number(countRow.total) : 0;
-
-    return {
-      items: rows.map(toAdminUser),
-      total,
-    };
+      false,
+      ["uuid", "username", "role", "approved", "banned"],
+      toAdminUser,
+    );
   }
 
   async searchDeletedUsers(filter: UsersFilter): Promise<DeletedUsersPage> {
+    return this.searchUsersPage(
+      filter,
+      true,
+      ["uuid", "username", "role", "approved", "banned", "deleted_at"],
+      toDeletedUser,
+    );
+  }
+
+  private async searchUsersPage<Row extends Record<string, unknown>, View>(
+    filter: UsersFilter,
+    deleted: boolean,
+    columns: string[],
+    mapRow: (row: Row) => View,
+  ): Promise<{ items: View[]; total: number }> {
+    const deletedClause = deleted ? "deleted = true" : "deleted = false";
     const itemsQuery = withUsersFilter(
-      selectQuery("uuid", "username", "role", "approved", "banned", "deleted_at")
+      selectQuery(...columns)
         .from(TABLES.users)
-        .where("deleted = true"),
+        .where(deletedClause),
       filter,
     )
       .orderBy("lower(username)")
@@ -159,10 +161,10 @@ export class AdminPostgresStore implements IAdminStore {
       .limit(filter.limit)
       .offset(filter.offset)
       .build();
-    const { rows } = await execute<DeletedUserRow>(itemsQuery.sql, itemsQuery.values);
+    const { rows } = await execute<Row>(itemsQuery.sql, itemsQuery.values);
 
     const countQuery = withUsersFilter(
-      selectQuery("count(*) AS total").from(TABLES.users).where("deleted = true"),
+      selectQuery("count(*) AS total").from(TABLES.users).where(deletedClause),
       filter,
     ).build();
     const { rows: countRows } = await execute<CountRow>(countQuery.sql, countQuery.values);
@@ -170,38 +172,41 @@ export class AdminPostgresStore implements IAdminStore {
     const total = countRow ? Number(countRow.total) : 0;
 
     return {
-      items: rows.map(toDeletedUser),
+      items: rows.map(mapRow),
       total,
     };
   }
 
   async setApproved(username: string, approved: boolean): Promise<void> {
-    const query = updateQuery()
-      .from(TABLES.users)
-      .set("approved", approved)
-      .where("username = $1 AND deleted = false", username)
-      .build();
-
+    const query = updateColumnQuery(
+      TABLES.users,
+      "approved",
+      approved,
+      "username = $1 AND deleted = false",
+      username,
+    );
     await execute(query.sql, query.values);
   }
 
   async setBanned(username: string, banned: boolean): Promise<void> {
-    const query = updateQuery()
-      .from(TABLES.users)
-      .set("banned", banned)
-      .where("username = $1 AND deleted = false", username)
-      .build();
-
+    const query = updateColumnQuery(
+      TABLES.users,
+      "banned",
+      banned,
+      "username = $1 AND deleted = false",
+      username,
+    );
     await execute(query.sql, query.values);
   }
 
   async setRole(username: string, role: string): Promise<void> {
-    const query = updateQuery()
-      .from(TABLES.users)
-      .set("role", role)
-      .where("username = $1 AND deleted = false", username)
-      .build();
-
+    const query = updateColumnQuery(
+      TABLES.users,
+      "role",
+      role,
+      "username = $1 AND deleted = false",
+      username,
+    );
     await execute(query.sql, query.values);
   }
 
@@ -209,13 +214,7 @@ export class AdminPostgresStore implements IAdminStore {
     const user = await this.findByUsername(username);
     if (!user) return undefined;
 
-    const query = updateQuery()
-      .from(TABLES.users)
-      .set("deleted", true)
-      .set("deleted_at", new Date())
-      .where("username = $1 AND deleted = false", username)
-      .build();
-
+    const query = setSoftDeletedQuery(TABLES.users, "username = $1", username, true);
     await execute(query.sql, query.values);
     return user;
   }
@@ -240,18 +239,21 @@ export class AdminPostgresStore implements IAdminStore {
     const deleted = await this.findDeletedByUsername(username);
     if (!deleted) return;
 
-    await executeInTransaction([
-      updateQuery()
-        .from(TABLES.users)
-        .set("deleted", false)
-        .set("deleted_at", null)
-        .where(
-          "uuid = (SELECT uuid FROM users WHERE username = $1 AND deleted = true ORDER BY deleted_at DESC LIMIT 1)",
-          username,
-        )
-        .build(),
-      deleteQuery().from(TABLES.users).where("username = $1 AND deleted = true", username).build(),
-    ]);
+    const query = setSoftDeletedQuery(
+      TABLES.users,
+      "uuid = (SELECT uuid FROM users WHERE username = $1 AND deleted = true ORDER BY deleted_at DESC LIMIT 1)",
+      username,
+      false,
+    );
+    await execute(query.sql, query.values);
+  }
+
+  async removeDeletedDuplicates(username: string): Promise<number> {
+    const { count } = await execute(
+      `DELETE FROM ${TABLES.users} WHERE username = $1 AND deleted = true RETURNING uuid`,
+      [username],
+    );
+    return count;
   }
 
   async purgeOldDeletedUsers(retentionDays: number): Promise<number> {

@@ -167,18 +167,20 @@ describe("UserContentPostgresStore (мок SQL-клиента)", () => {
     expect(activate?.values).toEqual([true, 42]);
   });
 
-  it("deleteByIdAndCountRemaining возвращает удалённое и остаток ссылок", async () => {
+  it("deleteByIdAndCountRemaining удаляет и считает остаток после удаления", async () => {
     fake.onSql(({ sql }) => {
       if (sql.includes("SELECT id, user_uuid, file_path")) return [contentRow({ id: 11 })];
       if (sql.includes("DELETE FROM")) return [contentRow({ id: 11 })];
-      return [{ same_path_total: "3" }];
+      return [{ same_path_total: "2" }];
     });
 
     const result = await store.deleteByIdAndCountRemaining(11, "skin");
 
     expect(result?.item.id).toBe(11);
     expect(result?.remainingCount).toBe(2);
-    const [count] = lastCalls(2);
+    const [lock, deleteStmt, count] = lastCalls(3);
+    expect(lock?.sql).toContain("FOR UPDATE");
+    expect(deleteStmt?.sql).toContain("DELETE FROM user_skins");
     expect(count?.sql).toContain("SELECT COUNT(*) AS same_path_total");
     expect(count?.values).toEqual(["http://localhost:3005/textures/skin.png"]);
   });

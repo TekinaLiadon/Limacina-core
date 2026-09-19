@@ -13,9 +13,10 @@ import {
   Post,
   Put,
   Query,
+  Req,
   Res,
 } from "@nestjs/common";
-import type { FastifyReply } from "fastify";
+import type { FastifyReply, FastifyRequest } from "fastify";
 import {
   ApiBody,
   ApiOperation,
@@ -27,6 +28,7 @@ import {
 } from "@nestjs/swagger";
 import { Public } from "../common/public.decorator";
 import { BatchProfilesPipe } from "./batch-profiles.pipe";
+import { parseTextureUpload } from "./texture-upload.parser";
 import { YggdrasilService } from "./service/yggdrasil.service";
 import {
   AuthenticateDto,
@@ -42,7 +44,6 @@ import {
   SessionProfileDto,
   ApiMetadataResponseDto,
   GameProfileDto,
-  UploadTextureDto,
 } from "./dto/dto";
 
 @ApiTags("yggdrasil")
@@ -181,10 +182,15 @@ export class YggdrasilController {
   @Put("api/user/profile/:uuid/:textureType")
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiSecurity("bearer")
-  @ApiOperation({ summary: "Upload texture (base64-encoded PNG in body)" })
+  @ApiOperation({
+    summary: "Upload texture (authlib-injector Texture Upload)",
+    description:
+      "Multipart/form-data по спеке authlib-injector: file — PNG (обязателен), " +
+      "model — модель скина slim/classic или пустая строка (только для скинов). " +
+      "Аутентификация: Authorization: Bearer <accessToken>.",
+  })
   @ApiParam({ name: "uuid" })
   @ApiParam({ name: "textureType", enum: ["skin", "cape"] })
-  @ApiBody({ type: UploadTextureDto })
   @ApiResponse({ status: 204, description: "Texture uploaded" })
   @ApiResponse({ status: 401, description: "Missing or invalid access token" })
   @ApiResponse({ status: 403, type: YggdrasilErrorDto })
@@ -197,11 +203,17 @@ export class YggdrasilController {
       }),
     )
     textureType: "skin" | "cape",
-    @Body() body: UploadTextureDto,
+    @Req() request: FastifyRequest,
     @Headers("authorization") authorization?: string,
   ): Promise<void> {
-    const buffer = Buffer.from(body.file, "base64");
-    await this.yggdrasilService.uploadTexture(uuid, textureType, buffer, body.model, authorization);
+    const { model, file } = await parseTextureUpload(request);
+    await this.yggdrasilService.uploadTexture(
+      uuid,
+      textureType,
+      Buffer.from(file),
+      model,
+      authorization,
+    );
   }
 
   @Delete("api/user/profile/:uuid/:textureType")

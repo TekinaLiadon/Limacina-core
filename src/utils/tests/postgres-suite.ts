@@ -13,6 +13,7 @@ export interface PostgresUserSeed {
   role?: string | undefined;
   approved?: boolean | undefined;
   banned?: boolean | undefined;
+  passwordChangedAt?: Date | undefined;
 }
 
 export function postgresDescribe(name: string, fn: () => void): void {
@@ -41,6 +42,7 @@ export async function createPostgresUser(seed: PostgresUserSeed = {}): Promise<S
     role: seed.role ?? "user",
     approved: seed.approved ?? false,
     banned: seed.banned ?? false,
+    passwordChangedAt: seed.passwordChangedAt,
   };
   const created = await authStore.saveUser(user);
   if (!created) {

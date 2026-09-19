@@ -4,9 +4,13 @@ export const LAUNCHER_VERSION_REGEX = /^\d+\.\d+\.\d+$/;
 
 export const VERSION_FORMAT_MESSAGE = "Версия должна быть в формате x.x.x (например 1.2.3)";
 
+export const RESERVED_LAUNCHER_VERSION = "0.0.0";
+
+export const RESERVED_VERSION_MESSAGE = "Версия 0.0.0 зарезервирована и не может быть опубликована";
+
 export const PUBLIC_DIR = "public";
 
-export const UPLOAD_TMP_DIR = join(PUBLIC_DIR, ".upload-tmp");
+export const UPLOAD_TMP_DIR = join("tmp", "upload-tmp");
 
 export const OLD_VERSIONS_DIR = "old";
 

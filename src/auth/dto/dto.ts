@@ -1,9 +1,8 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { IsNotEmpty, IsString, Matches, MaxLength, MinLength } from "class-validator";
 import { validationMessages } from "../../common/validation-messages";
+import { USERNAME_PATTERN } from "../../common/username-policy";
 import { MIN_PASSWORD_LENGTH } from "../password-policy";
-
-const USERNAME_PATTERN = /^[A-Za-z0-9_]+$/;
 
 export class RegisterDto {
   @ApiProperty({

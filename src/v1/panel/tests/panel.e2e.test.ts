@@ -43,7 +43,7 @@ import { ConfigUpdateService } from "../../../admin/config-update.service";
 import { TechnicalService } from "../../../technical/technical.service";
 import { AdminMapStore, AdminMapStoreToken } from "../../../admin/admin_store";
 import { AuthMapStore, AuthStoreToken } from "../../../auth/service/auth_store";
-import { buildLauncherZipName } from "../../../launcher/launcher-files";
+import { UPLOAD_TMP_DIR, buildLauncherZipName } from "../../../launcher/launcher-files";
 import GlobalConfig from "../../../config/global-config";
 import { AppConfigToken } from "../../../config/app-config.provider";
 import { Jwt_authGuard } from "../../../common/jwt_auth.guard";
@@ -1723,7 +1723,7 @@ describe("V1 panel эндпоинты", (): void => {
     const RELEASES_ROOT = join("public", "releases");
     const RELEASES_BACKUP = join("public", "releases.bak");
     const RELEASE_VERSION = "6.6.1";
-    const UPLOAD_TMP_DIR = join("public", ".upload-tmp");
+
     let releasesRootExisted = false;
 
     const releaseArtifact = (version: string, fileName: string): string =>

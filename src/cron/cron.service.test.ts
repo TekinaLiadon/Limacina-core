@@ -1,7 +1,11 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { CronService, nextDailyFireAt } from "./cron.service";
 
 const localDate = (iso: string): number => new Date(iso).getTime();
+
+function serviceLogger(service: CronService): { log: (...args: unknown[]) => void } {
+  return (service as unknown as { logger: { log: (...args: unknown[]) => void } }).logger;
+}
 
 describe("CronService", () => {
   it("runAll выполняет все зарегистрированные задачи", async () => {
@@ -54,9 +58,71 @@ describe("CronService", () => {
     await expect(service.runAll()).resolves.toBeUndefined();
   });
 
+  it("повторный прогон не стартует, пока не завершился предыдущий", async () => {
+    const service = new CronService();
+    let releaseFirst!: () => void;
+    const firstTaskGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const runs: string[] = [];
+    service.registerTasks(
+      { name: "slow", run: () => firstTaskGate },
+      { name: "second", run: () => void runs.push("second") },
+    );
+
+    const firstPass = service.runAll();
+    await Bun.sleep(10);
+    await service.runAll();
+
+    expect(runs).toEqual([]);
+
+    releaseFirst();
+    await firstPass;
+
+    expect(runs).toEqual(["second"]);
+  });
+
+  it("после завершения предыдущего прогона overlap-гард снова пропускает", async () => {
+    const service = new CronService();
+    const runs: string[] = [];
+    service.registerTasks({ name: "task", run: () => void runs.push("run") });
+
+    await service.runAll();
+    await service.runAll();
+
+    expect(runs).toEqual(["run", "run"]);
+  });
+
+  it("зависшая задача прерывается по таймауту, остальные выполняются", async () => {
+    const service = new CronService(50);
+    const runs: string[] = [];
+    service.registerTasks(
+      { name: "hang", run: () => new Promise<void>(() => {}) },
+      { name: "after", run: () => void runs.push("after") },
+    );
+
+    await service.runAll();
+
+    expect(runs).toEqual(["after"]);
+  });
+
+  it("после срабатывания таймаута планировщик продолжает работу", async () => {
+    const service = new CronService(50);
+    const runs: string[] = [];
+    service.registerTasks(
+      { name: "hang", run: () => new Promise<void>(() => {}) },
+      { name: "counter", run: () => void runs.push("run") },
+    );
+
+    await service.runAll();
+    await service.runAll();
+
+    expect(runs).toEqual(["run", "run"]);
+  });
+
   it("задачи, зарегистрированные после старта, выполняются", async () => {
     const service = new CronService();
-    service.onModuleInit();
+    service.onApplicationBootstrap();
     const runs: string[] = [];
     service.registerTasks({ name: "late", run: () => void runs.push("late") });
 
@@ -66,12 +132,28 @@ describe("CronService", () => {
     service.onModuleDestroy();
   });
 
+  it("лог старта отражает реальное число зарегистрированных задач", () => {
+    const service = new CronService();
+    service.registerTasks({ name: "first", run: () => {} }, { name: "second", run: () => {} });
+    const logSpy = spyOn(serviceLogger(service), "log");
+
+    try {
+      service.onApplicationBootstrap();
+
+      expect(logSpy).toHaveBeenCalledTimes(1);
+      expect(String(logSpy.mock.calls[0]?.[0])).toContain("задач: 2");
+    } finally {
+      logSpy.mockRestore();
+      service.onModuleDestroy();
+    }
+  });
+
   it("onModuleDestroy можно вызвать до старта и повторно", () => {
     const service = new CronService();
 
     expect(() => {
       service.onModuleDestroy();
-      service.onModuleInit();
+      service.onApplicationBootstrap();
       service.onModuleDestroy();
       service.onModuleDestroy();
     }).not.toThrow();
@@ -125,7 +207,7 @@ describe("CronService", () => {
         runs.push("run");
       },
     });
-    service.onModuleInit();
+    service.onApplicationBootstrap();
 
     try {
       await Bun.sleep(200);

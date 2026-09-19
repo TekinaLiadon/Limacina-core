@@ -1,5 +1,6 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../token.constants";
+import { MemoryDb, type MemoryUserRecord } from "../../memory/memory-db";
 
 export interface StoredUser {
   uuid: string;
@@ -35,17 +36,12 @@ export interface IAuthStore {
   deleteRefreshByUserId(userId: string): Promise<void>;
 }
 
-interface StoredAuthUser extends StoredUser {
-  deleted: boolean;
-  deletedAt: Date | null;
-}
-
 interface StoredRefreshEntry extends RefreshEntry {
   createdAt: number;
   expiresAt: number;
 }
 
-function toStoredUser(user: StoredAuthUser): StoredUser {
+function toStoredUser(user: MemoryUserRecord): StoredUser {
   return {
     uuid: user.uuid,
     username: user.username,
@@ -59,8 +55,12 @@ function toStoredUser(user: StoredAuthUser): StoredUser {
 
 @Injectable()
 export class AuthMapStore implements IAuthStore {
-  private readonly users = new Map<string, StoredAuthUser>();
+  private readonly users: Map<string, MemoryUserRecord>;
   private readonly tokens = new Map<string, StoredRefreshEntry>();
+
+  constructor(@Optional() db: MemoryDb = new MemoryDb()) {
+    this.users = db.users;
+  }
 
   async findByUsername(username: string): Promise<StoredUser | undefined> {
     const user = this.liveUser(username);
@@ -181,14 +181,14 @@ export class AuthMapStore implements IAuthStore {
     }
   }
 
-  private liveUser(username: string): StoredAuthUser | undefined {
+  private liveUser(username: string): MemoryUserRecord | undefined {
     for (const user of this.users.values()) {
       if (user.username === username && !user.deleted) return user;
     }
     return undefined;
   }
 
-  private findLiveUserCaseInsensitive(username: string): StoredAuthUser | undefined {
+  private findLiveUserCaseInsensitive(username: string): MemoryUserRecord | undefined {
     const lower = username.toLowerCase();
     for (const user of this.users.values()) {
       if (user.deleted) continue;

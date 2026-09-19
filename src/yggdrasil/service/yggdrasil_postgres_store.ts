@@ -28,6 +28,7 @@ interface UserRow extends Record<string, unknown> {
   password_hash: string;
   banned: boolean;
   approved: boolean;
+  password_changed_at: Date | null;
 }
 
 function rowToProfile(row: ProfileRow): YggdrasilProfile {
@@ -148,7 +149,7 @@ export class YggdrasilPostgresStore implements IYggdrasilStore {
   }
 
   async findUserByUsername(username: string): Promise<YggdrasilUserCredentials | undefined> {
-    const q = selectQuery("uuid", "password_hash", "banned", "approved")
+    const q = selectQuery("uuid", "password_hash", "banned", "approved", "password_changed_at")
       .from(TABLES.users)
       .where("username = $1", username)
       .where("deleted = false")
@@ -162,6 +163,7 @@ export class YggdrasilPostgresStore implements IYggdrasilStore {
       passwordHash: row.password_hash,
       banned: toBoolean(row.banned),
       approved: toBoolean(row.approved),
+      passwordChangedAt: row.password_changed_at ?? undefined,
     };
   }
 }

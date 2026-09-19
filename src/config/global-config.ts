@@ -44,6 +44,9 @@ const configSchema = z
     REDIS_URL: z.string().url().optional(),
     CACHE_PREFIX: z.string().optional(),
     MINECRAFT_HOST: z.string().optional(),
+    RCON_HOST: z.string().optional(),
+    RCON_PORT: z.coerce.number().int().min(1).max(65535).default(25575),
+    RCON_PASSWORD: z.string().optional(),
     DEPLOY_PINNED_REVISION: z
       .string()
       .regex(/^[0-9a-f]{40}$/, "DEPLOY_PINNED_REVISION must be a full 40-char git SHA")

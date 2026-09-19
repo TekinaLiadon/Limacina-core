@@ -8,10 +8,15 @@ import { BadRequestException, UnauthorizedException } from "@nestjs/common";
 import { JwtModule } from "@nestjs/jwt";
 import { AuthService } from "../auth.service";
 import { AuthMapStore, AuthStoreToken, type IAuthStore } from "../auth_store";
+import { MemoryDb } from "../../../memory/memory-db";
 import GlobalConfig from "../../../config/global-config";
 import { AppConfigToken } from "../../../config/app-config.provider";
 
 class FailingRefreshStore extends AuthMapStore {
+  constructor() {
+    super(new MemoryDb());
+  }
+
   override async saveRefresh(): Promise<void> {
     throw new Error("saveRefresh недоступен");
   }

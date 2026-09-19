@@ -1,4 +1,10 @@
-import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
+import {
+  Injectable,
+  Logger,
+  Optional,
+  type OnApplicationBootstrap,
+  type OnModuleDestroy,
+} from "@nestjs/common";
 
 export interface CronTask {
   name: string;
@@ -9,6 +15,8 @@ export const CRON_FIRE_HOUR = 4;
 
 export const CRON_SCHEDULE = `0 ${CRON_FIRE_HOUR} * * *`;
 
+export const CRON_TASK_TIMEOUT_MS = 10 * 60_000;
+
 export function nextDailyFireAt(hour: number, fromMs: number): number {
   const fire = new Date(fromMs);
   fire.setHours(hour, 0, 0, 0);
@@ -17,13 +25,16 @@ export function nextDailyFireAt(hour: number, fromMs: number): number {
 }
 
 @Injectable()
-export class CronService implements OnModuleInit, OnModuleDestroy {
+export class CronService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(CronService.name);
   private readonly tasks: CronTask[] = [];
+  private running = false;
   private job: import("bun").CronJob | undefined;
   private timer: Timer | undefined;
 
-  onModuleInit(): void {
+  constructor(@Optional() private readonly taskTimeoutMs: number = CRON_TASK_TIMEOUT_MS) {}
+
+  onApplicationBootstrap(): void {
     this.startSchedule();
     const mode = this.job ? "Bun.cron" : "таймер";
     this.logger.log(
@@ -44,13 +55,44 @@ export class CronService implements OnModuleInit, OnModuleDestroy {
   }
 
   async runAll(): Promise<void> {
-    for (const task of this.tasks) {
-      try {
-        await task.run();
-      } catch (err) {
-        this.logger.error({ err, task: task.name }, `Задача "${task.name}" упала`);
-      }
+    if (this.running) {
+      this.logger.warn("Пропуск прогона cron-задач: предыдущий прогон ещё выполняется");
+      return;
     }
+    this.running = true;
+    try {
+      for (const task of this.tasks) {
+        try {
+          await this.runWithTimeout(task);
+        } catch (err) {
+          this.logger.error({ err, task: task.name }, `Задача "${task.name}" упала`);
+        }
+      }
+    } finally {
+      this.running = false;
+    }
+  }
+
+  private runWithTimeout(task: CronTask): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(
+          new Error(`Задача "${task.name}" не завершилась за ${String(this.taskTimeoutMs)} мс`),
+        );
+      }, this.taskTimeoutMs);
+      timer.unref();
+
+      Promise.resolve()
+        .then(task.run)
+        .then(() => {
+          clearTimeout(timer);
+          resolve();
+        })
+        .catch((err: unknown) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+    });
   }
 
   private startSchedule(): void {

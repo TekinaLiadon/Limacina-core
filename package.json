@@ -21,6 +21,7 @@
     "fmt:check": "oxfmt --check",
     "check-all": "bun run check-types && bun run fmt:check && bun test --timeout 30000 && bun run lint && bun run coverage:gate && bun run test:randomize",
     "test:randomize": "bun test --randomize --timeout 30000",
+    "test:unit": "bun run scripts/run-unit.ts",
     "test:flows": "bun run scripts/run-flows.ts",
     "coverage:gate": "bun run scripts/coverage-gate.ts --threshold=95",
     "test:migrate": "bun test --cwd migration/",

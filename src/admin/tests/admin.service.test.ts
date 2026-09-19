@@ -3,7 +3,7 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 setupTestEnv();
 
 import { describe, expect, it, spyOn } from "bun:test";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { AdminService } from "../admin.service";
 import { AdminMapStore } from "../admin_store";
 import { AuthMapStore } from "../../auth/service/auth_store";
@@ -180,6 +180,72 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
 
     expect(await adminStore.findByUsername("rollbacktarget")).toBeUndefined();
     expect(await adminStore.findDeletedByUsername("rollbacktarget")).toBeDefined();
+    restoreUser.mockRestore();
+  });
+
+  it("restoreUser не теряет удалённые дубликаты при сбое auth-стора", async (): Promise<void> => {
+    const { adminStore, authStore, service } = await seed();
+    await adminStore.saveUser({
+      uuid: "rollback-dup-uuid",
+      username: "rollbacktarget",
+      role: "user",
+      approved: true,
+      banned: false,
+    });
+    await service.deleteUser("rollbacktarget", ACTOR);
+    await adminStore.deleteUser("rollbacktarget");
+    const restoreUser = spyOn(authStore, "restoreUser").mockRejectedValue(
+      new Error("auth store down"),
+    );
+
+    await expect(service.restoreUser("rollbacktarget", ACTOR)).rejects.toThrow("auth store down");
+
+    const deletedPage = await adminStore.searchDeletedUsers({
+      limit: 100,
+      offset: 0,
+      username: "rollbacktarget",
+    });
+    expect(deletedPage.items.map((item) => item.uuid).sort()).toEqual([
+      "rollback-dup-uuid",
+      "rollback-target-uuid",
+    ]);
+    restoreUser.mockRestore();
+  });
+
+  it("restoreUser подчищает дубликаты после успешного восстановления", async (): Promise<void> => {
+    const { adminStore, service } = await seed();
+    await adminStore.saveUser({
+      uuid: "rollback-dup-uuid",
+      username: "rollbacktarget",
+      role: "user",
+      approved: true,
+      banned: false,
+    });
+    await service.deleteUser("rollbacktarget", ACTOR);
+    await Bun.sleep(5);
+    await adminStore.deleteUser("rollbacktarget");
+
+    await service.restoreUser("rollbacktarget", ACTOR);
+
+    expect((await adminStore.findByUsername("rollbacktarget"))?.uuid).toBe("rollback-dup-uuid");
+    const deletedPage = await adminStore.searchDeletedUsers({
+      limit: 100,
+      offset: 0,
+      username: "rollbacktarget",
+    });
+    expect(deletedPage.items).toEqual([]);
+  });
+
+  it("гонка с регистрацией при restore маппится в 409 «ник занят»", async (): Promise<void> => {
+    const { adminStore, service } = await seed();
+    await service.deleteUser("rollbacktarget", ACTOR);
+    const restoreUser = spyOn(adminStore, "restoreUser").mockRejectedValue({ code: "23505" });
+
+    await expect(service.restoreUser("rollbacktarget", ACTOR)).rejects.toThrow(ConflictException);
+    await expect(service.restoreUser("rollbacktarget", ACTOR)).rejects.toThrow(
+      "уже занят живым пользователем",
+    );
+
     restoreUser.mockRestore();
   });
 });

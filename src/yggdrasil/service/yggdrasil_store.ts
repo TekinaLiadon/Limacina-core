@@ -1,4 +1,5 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
+import { MemoryDb, type MemoryUserRecord } from "../../memory/memory-db";
 
 export interface YggdrasilTextures {
   skinUrl?: string | null;
@@ -29,6 +30,7 @@ export interface YggdrasilUserCredentials {
   passwordHash: string;
   banned: boolean;
   approved: boolean;
+  passwordChangedAt?: Date | undefined;
 }
 
 export interface YggdrasilTokenRecord {
@@ -48,6 +50,7 @@ export interface YggdrasilSeedUser {
   passwordHash: string;
   banned?: boolean | undefined;
   approved?: boolean | undefined;
+  passwordChangedAt?: Date | undefined;
 }
 
 export const TOKEN_TTL_MS = 15 * 24 * 60 * 60 * 1000;
@@ -85,53 +88,69 @@ export interface IYggdrasilStore {
 
 @Injectable()
 export class YggdrasilMapStore implements IYggdrasilStore {
+  private readonly db: MemoryDb;
   private readonly profilesByUuid = new Map<string, YggdrasilProfile>();
   private readonly profilesByUsername = new Map<string, string>();
   private readonly profilesByUserId = new Map<string, string[]>();
-  private readonly users: Map<string, YggdrasilUserCredentials>;
 
-  constructor(seed: { users?: YggdrasilSeedUser[]; profiles?: YggdrasilProfile[] } = {}) {
-    this.users = new Map(
-      seed.users?.map((user) => [
-        user.username,
-        {
-          uuid: user.uuid,
-          passwordHash: user.passwordHash,
-          banned: user.banned ?? false,
-          approved: user.approved ?? true,
-        },
-      ]),
-    );
+  constructor(
+    @Optional() db: MemoryDb = new MemoryDb(),
+    seed: { users?: YggdrasilSeedUser[]; profiles?: YggdrasilProfile[] } = {},
+  ) {
+    this.db = db;
+    for (const user of seed.users ?? []) {
+      this.db.users.set(user.uuid, {
+        uuid: user.uuid,
+        username: user.username,
+        passwordHash: user.passwordHash,
+        role: "user",
+        approved: user.approved ?? true,
+        banned: user.banned ?? false,
+        deleted: false,
+        deletedAt: null,
+        passwordChangedAt: user.passwordChangedAt,
+      });
+    }
     for (const profile of seed.profiles ?? []) {
       this.indexProfile(profile);
     }
   }
 
   async findProfileByUuid(uuid: string): Promise<YggdrasilProfile | undefined> {
-    return this.profilesByUuid.get(uuid);
+    const indexed = this.visibleProfile(this.profilesByUuid.get(uuid));
+    if (indexed) return indexed;
+    return this.derivedProfile(uuid);
   }
 
   async findProfileByUsername(username: string): Promise<YggdrasilProfile | undefined> {
     const uuid = this.profilesByUsername.get(username);
-    if (!uuid) return undefined;
-    return this.profilesByUuid.get(uuid);
+    if (uuid) {
+      const indexed = this.visibleProfile(this.profilesByUuid.get(uuid));
+      if (indexed) return indexed;
+    }
+    const user = this.liveUser(username);
+    if (!user) return undefined;
+    return this.derivedProfile(user.uuid);
   }
 
   async findProfilesByUserId(userId: string): Promise<YggdrasilProfile[]> {
     const uuids = this.profilesByUserId.get(userId) ?? [];
-    return uuids
-      .map((uuid) => this.profilesByUuid.get(uuid))
+    const indexed = uuids
+      .map((uuid) => this.visibleProfile(this.profilesByUuid.get(uuid)))
       .filter((p): p is YggdrasilProfile => p !== undefined);
+    if (indexed.length > 0) return indexed;
+
+    const user = this.db.users.get(userId);
+    if (!user || user.deleted) return [];
+    const derived = this.derivedProfile(user.uuid);
+    return derived ? [derived] : [];
   }
 
   async findProfilesByUsernames(usernames: string[]): Promise<YggdrasilProfile[]> {
     const result: YggdrasilProfile[] = [];
     for (const name of usernames) {
-      const uuid = this.profilesByUsername.get(name);
-      if (uuid) {
-        const profile = this.profilesByUuid.get(uuid);
-        if (profile) result.push(profile);
-      }
+      const profile = await this.findProfileByUsername(name);
+      if (profile) result.push(profile);
     }
     return result;
   }
@@ -151,13 +170,19 @@ export class YggdrasilMapStore implements IYggdrasilStore {
   }
 
   async updateProfileTexture(uuid: string, textures: YggdrasilTextures): Promise<void> {
-    const profile = this.profilesByUuid.get(uuid);
-    if (!profile) return;
-    const updated = { ...profile, ...textures };
-    this.profilesByUuid.set(uuid, updated);
-    if (this.profilesByUsername.has(updated.username)) {
-      this.profilesByUsername.set(updated.username, uuid);
+    const indexed = this.profilesByUuid.get(uuid);
+    if (indexed) {
+      const updated = { ...indexed, ...textures };
+      this.profilesByUuid.set(uuid, updated);
+      if (this.profilesByUsername.has(updated.username)) {
+        this.profilesByUsername.set(updated.username, uuid);
+      }
+      return;
     }
+
+    const user = this.db.users.get(uuid);
+    if (!user || user.deleted) return;
+    this.indexProfile({ uuid: user.uuid, userId: user.uuid, username: user.username, ...textures });
   }
 
   async countProfilesByTextureUrl(url: string): Promise<number> {
@@ -169,6 +194,34 @@ export class YggdrasilMapStore implements IYggdrasilStore {
   }
 
   async findUserByUsername(username: string): Promise<YggdrasilUserCredentials | undefined> {
-    return this.users.get(username);
+    const user = this.liveUser(username);
+    if (!user) return undefined;
+    return {
+      uuid: user.uuid,
+      passwordHash: user.passwordHash,
+      banned: user.banned,
+      approved: user.approved,
+      passwordChangedAt: user.passwordChangedAt,
+    };
+  }
+
+  private liveUser(username: string): MemoryUserRecord | undefined {
+    for (const user of this.db.users.values()) {
+      if (user.username === username && !user.deleted) return user;
+    }
+    return undefined;
+  }
+
+  private visibleProfile(profile: YggdrasilProfile | undefined): YggdrasilProfile | undefined {
+    if (!profile) return undefined;
+    const owner = this.db.users.get(profile.userId);
+    if (!owner || !owner.deleted) return profile;
+    return undefined;
+  }
+
+  private derivedProfile(uuid: string): YggdrasilProfile | undefined {
+    const user = this.db.users.get(uuid);
+    if (!user || user.deleted) return undefined;
+    return { uuid: user.uuid, userId: user.uuid, username: user.username };
   }
 }

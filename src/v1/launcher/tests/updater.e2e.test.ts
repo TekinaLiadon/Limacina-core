@@ -225,10 +225,12 @@ describe("V1 launcher/update эндпоинты апдейтера (latest.json)
   describe("LauncherReleasesService — граничные случаи без релизов", () => {
     let service: LauncherReleasesService;
     let rootRenamed = false;
+    const BOUNDARY_BACKUP = join("public", "releases.boundary-bak");
 
     beforeAll((): void => {
+      rmSync(BOUNDARY_BACKUP, { recursive: true, force: true });
       if (existsSync(RELEASES_ROOT)) {
-        renameSync(RELEASES_ROOT, RELEASES_BACKUP);
+        renameSync(RELEASES_ROOT, BOUNDARY_BACKUP);
         rootRenamed = true;
       }
       service = new LauncherReleasesService(GlobalConfig.parseEnvOrExit());
@@ -236,7 +238,7 @@ describe("V1 launcher/update эндпоинты апдейтера (latest.json)
 
     afterAll((): void => {
       if (rootRenamed) {
-        renameSync(RELEASES_BACKUP, RELEASES_ROOT);
+        renameSync(BOUNDARY_BACKUP, RELEASES_ROOT);
       }
     });
 

@@ -261,20 +261,3 @@ export class ApiMetadataResponseDto {
   @ApiProperty()
   signaturePublickey!: string;
 }
-
-export class UploadTextureDto {
-  @ApiPropertyOptional({
-    example: "slim",
-    description: "Модель скина (slim/classic)",
-    maxLength: 16,
-  })
-  @IsOptional()
-  @IsString({ message: validationMessages.string("model") })
-  @MaxLength(16, { message: validationMessages.maxLength("model", 16) })
-  model?: string;
-
-  @ApiProperty({ description: "PNG в base64", maxLength: 700000 })
-  @IsString({ message: validationMessages.string("file") })
-  @MaxLength(700000, { message: validationMessages.maxLength("file", 700000) })
-  file!: string;
-}

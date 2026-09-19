@@ -54,6 +54,7 @@ function makeConfig(overrides: Partial<AppConfigType> = {}): AppConfigType {
     RATE_LIMIT_GLOBAL_MAX: 600,
     RATE_LIMIT_GLOBAL_WINDOW: 60000,
     BEHIND_PROXY: true,
+    RCON_PORT: 25575,
     ...overrides,
   };
 }
@@ -335,6 +336,78 @@ describe("TechnicalService", (): void => {
         rmSync(dir, { recursive: true, force: true });
       }
     });
+
+    it("при сбое отката auth-записи повторяет deleteUser и завершает init-owner явной ошибкой (TASK-269.16)", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
+      const adminStore = new AdminMapStore();
+      const authStore = new AuthMapStore();
+      const tokenPath = join(dir, "bootstrap.token");
+      const service = new TechnicalService(adminStore, authStore, makeConfig(), tokenPath);
+      try {
+        await service.onApplicationBootstrap();
+        const token = (await Bun.file(tokenPath).text()).trim();
+
+        const saveUser = spyOn(adminStore, "saveUser").mockRejectedValue(
+          new Error("admin store down"),
+        );
+        const originalDelete = authStore.deleteUser.bind(authStore);
+        const deleteUser = spyOn(authStore, "deleteUser")
+          .mockRejectedValueOnce(new Error("rollback down"))
+          .mockRejectedValueOnce(new Error("rollback down"))
+          .mockImplementationOnce((userUuid: string) => originalDelete(userUuid));
+
+        await expect(service.initOwner("owner", "securepassword", token)).rejects.toThrow(
+          "admin store down",
+        );
+        expect(deleteUser).toHaveBeenCalledTimes(3);
+        expect(await authStore.findByUsername("owner")).toBeUndefined();
+        expect(existsSync(tokenPath)).toBe(true);
+
+        saveUser.mockRestore();
+        const result = await service.initOwner("owner", "securepassword", token);
+        expect(result.username).toBe("owner");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("неудавшийся откат auth-записи не оставляет второго владельца при повторном init-owner (TASK-269.16)", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
+      const adminStore = new AdminMapStore();
+      const authStore = new AuthMapStore();
+      const tokenPath = join(dir, "bootstrap.token");
+      const service = new TechnicalService(adminStore, authStore, makeConfig(), tokenPath);
+      try {
+        await service.onApplicationBootstrap();
+        const token = (await Bun.file(tokenPath).text()).trim();
+
+        const saveUser = spyOn(adminStore, "saveUser").mockRejectedValue(
+          new Error("admin store down"),
+        );
+        const deleteUser = spyOn(authStore, "deleteUser").mockRejectedValue(
+          new Error("rollback down"),
+        );
+
+        await expect(service.initOwner("orphan", "securepassword", token)).rejects.toThrow(
+          InternalServerErrorException,
+        );
+        await expect(service.initOwner("orphan", "securepassword", token)).rejects.toThrow(
+          "Юзернейм уже занят",
+        );
+
+        expect(await adminStore.hasOwner()).toBe(false);
+        saveUser.mockRestore();
+        deleteUser.mockRestore();
+
+        await expect(service.initOwner("orphan", "securepassword", token)).rejects.toThrow(
+          "Юзернейм уже занят",
+        );
+        expect((await authStore.findByUsername("orphan"))?.role).toBe("owner");
+        expect(await adminStore.findByUsername("orphan")).toBeUndefined();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("runStep", () => {
@@ -407,6 +480,40 @@ describe("TechnicalService", (): void => {
         expect(await currentRevision(logger, outsideDir)).toBe("unknown");
       } finally {
         rmSync(outsideDir, { recursive: true, force: true });
+      }
+    });
+
+    it("прерывает зависший git-процесс по таймауту с доменной ошибкой", async () => {
+      let killProcess: (code: number) => void = () => {};
+      const streamClosers: Array<() => void> = [];
+      const makeStream = (): ReadableStream<Uint8Array> =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamClosers.push(() => controller.close());
+          },
+        });
+      const fakeProc = {
+        pid: 987_654_321,
+        exited: new Promise<number>((resolve) => {
+          killProcess = resolve;
+        }),
+        stdout: makeStream(),
+        stderr: makeStream(),
+        kill: (): void => {
+          killProcess(-15);
+          for (const close of streamClosers) close();
+        },
+      } as unknown as Bun.Subprocess<Bun.SpawnOptions.Writable, "pipe", "pipe">;
+
+      const spawnSpy = spyOn(Bun, "spawn").mockImplementation(
+        (() => fakeProc) as unknown as typeof Bun.spawn,
+      );
+      try {
+        await expect(currentRevision(logger, process.cwd(), 200)).rejects.toThrow(
+          InternalServerErrorException,
+        );
+      } finally {
+        spawnSpy.mockRestore();
       }
     });
   });

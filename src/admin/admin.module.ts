@@ -9,17 +9,19 @@ import { AdminPostgresStore } from "./admin_postgres_store";
 import { AuthStoreModule } from "../auth/service/auth_store.module";
 import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
 import { CronModule } from "../cron/cron.module";
+import { MemoryDb } from "../memory/memory-db";
+import { MemoryModule } from "../memory/memory.module";
 import { isSqlDriver, type AppConfigType } from "../config/global-config";
 
-const useFactory = (db: string) => {
+const useFactory = (db: string, memoryDb: MemoryDb) => {
   if (isSqlDriver(db)) {
     return new AdminPostgresStore();
   }
-  return new AdminMapStore();
+  return new AdminMapStore(memoryDb);
 };
 
 @Module({
-  imports: [AppConfigModule, AuthStoreModule, CronModule],
+  imports: [AppConfigModule, AuthStoreModule, CronModule, MemoryModule],
   providers: [
     AdminService,
     LogsService,
@@ -28,8 +30,9 @@ const useFactory = (db: string) => {
     ConfigUpdateService,
     {
       provide: AdminMapStoreToken,
-      useFactory: (config: AppConfigType) => useFactory(config.DB_DRIVER),
-      inject: [AppConfigToken],
+      useFactory: (config: AppConfigType, memoryDb: MemoryDb) =>
+        useFactory(config.DB_DRIVER, memoryDb),
+      inject: [AppConfigToken, MemoryDb],
     },
   ],
   exports: [

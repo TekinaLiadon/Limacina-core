@@ -1,4 +1,4 @@
-import { join, relative, resolve, isAbsolute } from "path";
+import { join, relative, resolve, isAbsolute, sep } from "path";
 import { readFile } from "fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
 import { NestFactory } from "@nestjs/core";
@@ -42,6 +42,7 @@ export async function bootstrap(): Promise<INestApplication> {
   await instance.register(fastifyStatic, {
     root: join(process.cwd(), "public"),
     wildcard: true,
+    dotfiles: "ignore",
   });
 
   const panelDir = join(process.cwd(), "public", "panel");
@@ -52,6 +53,7 @@ export async function bootstrap(): Promise<INestApplication> {
         root: panelDir,
         wildcard: true,
         decorateReply: false,
+        dotfiles: "ignore",
       });
 
       const panelIndexPath = join(panelDir, "index.html");
@@ -123,7 +125,10 @@ export async function bootstrap(): Promise<INestApplication> {
       "panel_launcher",
       "Управление лаунчером и его конфигом — только admin (/v1/panel/launcher)",
     )
-    .addTag("panel_server", "Управление сервером — перезапуск (/v1/panel/server)")
+    .addTag(
+      "panel_server",
+      "Управление сервером — перезапуск, RCON-консоль игрового сервера (/v1/panel/server)",
+    )
     .addTag(
       "yggdrasil",
       "Minecraft Yggdrasil protocol — пути диктуются протоколом authlib-injector, корень API совпадает с корнем сервера (/, /authserver, /sessionserver, /api)",
@@ -177,6 +182,13 @@ async function servePanelFallback(
   const relativePath = request.url.split("?")[0]!.replace(/^\/panel/, "") || "/index.html";
   const resolvedPath = resolve(panelDir, `.${relativePath}`);
   const relativeToPanel = relative(panelDir, resolvedPath);
+
+  const hasDotSegment = relativeToPanel
+    .split(sep)
+    .some((segment) => segment.startsWith(".") && segment !== "." && segment !== "..");
+  if (hasDotSegment) {
+    return reply.code(404).send("Not found");
+  }
 
   const isInsidePanel =
     !!relativeToPanel && !relativeToPanel.startsWith("..") && !isAbsolute(relativeToPanel);

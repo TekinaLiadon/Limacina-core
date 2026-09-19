@@ -4,10 +4,13 @@ import {
   selectQuery,
   updateQuery,
   deleteQuery,
+  updateColumnQuery,
+  setSoftDeletedQuery,
   execute,
   executeInTransaction,
   executeInTransactionReturning,
   toBoolean,
+  isUniqueViolation,
   TABLES,
 } from "../../utils/sql";
 import type { IAuthStore, StoredUser, RefreshEntry } from "./auth_store";
@@ -27,19 +30,6 @@ interface RefreshRow extends Record<string, unknown> {
   jti: string;
   user_id: string;
   username: string;
-}
-
-const PG_UNIQUE_VIOLATION_CODE = "23505";
-const MARIA_UNIQUE_VIOLATION_CODE = 1062;
-
-function isUniqueViolation(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const { code, errno } = error as { code?: unknown; errno?: unknown };
-  return (
-    code === PG_UNIQUE_VIOLATION_CODE ||
-    errno === PG_UNIQUE_VIOLATION_CODE ||
-    errno === MARIA_UNIQUE_VIOLATION_CODE
-  );
 }
 
 @Injectable()
@@ -108,22 +98,12 @@ export class AuthPostgresStore implements IAuthStore {
   }
 
   async setApproved(uuid: string, approved: boolean): Promise<void> {
-    const query = updateQuery()
-      .from(TABLES.users)
-      .set("approved", approved)
-      .where("uuid = $1", uuid)
-      .build();
-
+    const query = updateColumnQuery(TABLES.users, "approved", approved, "uuid = $1", uuid);
     await execute(query.sql, query.values);
   }
 
   async setBanned(uuid: string, banned: boolean): Promise<void> {
-    const query = updateQuery()
-      .from(TABLES.users)
-      .set("banned", banned)
-      .where("uuid = $1", uuid)
-      .build();
-
+    const query = updateColumnQuery(TABLES.users, "banned", banned, "uuid = $1", uuid);
     await execute(query.sql, query.values);
   }
 
@@ -151,34 +131,17 @@ export class AuthPostgresStore implements IAuthStore {
   }
 
   async updateRole(uuid: string, role: string): Promise<void> {
-    const query = updateQuery()
-      .from(TABLES.users)
-      .set("role", role)
-      .where("uuid = $1", uuid)
-      .build();
-
+    const query = updateColumnQuery(TABLES.users, "role", role, "uuid = $1", uuid);
     await execute(query.sql, query.values);
   }
 
   async deleteUser(uuid: string): Promise<void> {
-    const query = updateQuery()
-      .from(TABLES.users)
-      .set("deleted", true)
-      .set("deleted_at", new Date())
-      .where("uuid = $1 AND deleted = false", uuid)
-      .build();
-
+    const query = setSoftDeletedQuery(TABLES.users, "uuid = $1", uuid, true);
     await execute(query.sql, query.values);
   }
 
   async restoreUser(uuid: string): Promise<void> {
-    const query = updateQuery()
-      .from(TABLES.users)
-      .set("deleted", false)
-      .set("deleted_at", null)
-      .where("uuid = $1 AND deleted = true", uuid)
-      .build();
-
+    const query = setSoftDeletedQuery(TABLES.users, "uuid = $1", uuid, false);
     await execute(query.sql, query.values);
   }
 

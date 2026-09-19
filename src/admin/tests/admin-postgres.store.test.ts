@@ -269,6 +269,38 @@ postgresDescribe("AdminPostgresStore (postgres)", () => {
     await expect(store.restoreUser(user.username)).rejects.toThrow();
   });
 
+  it("removeDeletedDuplicates удаляет только удалённых с тем же ником", async () => {
+    const dupPrefix = `${prefix}_dup_${generateUuid().slice(0, 8)}`;
+    const makeSeeded = async (username: string): Promise<string> => {
+      const uuid = generateUuid();
+      trackPostgresUser({ uuid });
+      expect(
+        await authStore.saveUser({
+          uuid,
+          username,
+          passwordHash: "dup-test-hash",
+          role: "user",
+          approved: true,
+          banned: false,
+        }),
+      ).toBe(true);
+      return uuid;
+    };
+
+    const firstUuid = await makeSeeded(`${dupPrefix}_a`);
+    await store.deleteUser(`${dupPrefix}_a`);
+    const secondUuid = await makeSeeded(`${dupPrefix}_a`);
+    await store.deleteUser(`${dupPrefix}_a`);
+    const otherUuid = await makeSeeded(`${dupPrefix}_b`);
+    await store.deleteUser(`${dupPrefix}_b`);
+
+    expect(await store.removeDeletedDuplicates(`${dupPrefix}_a`)).toBe(2);
+
+    expect(await findRawUser(firstUuid)).toBeUndefined();
+    expect(await findRawUser(secondUuid)).toBeUndefined();
+    expect(await findRawUser(otherUuid)).toBeDefined();
+  });
+
   it("purgeOldDeletedUsers удаляет только просроченных удалённых", async () => {
     const stale = await createAdminUser();
     const fresh = await createAdminUser();

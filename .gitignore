@@ -15,7 +15,7 @@ public/textures/*
 !public/textures/default.png
 public/capes/*
 public/models/*
-public/.upload-tmp/
+tmp/
 keys/
 bootstrap.token
 .idea

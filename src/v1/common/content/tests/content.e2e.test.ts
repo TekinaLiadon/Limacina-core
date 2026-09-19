@@ -33,6 +33,7 @@ import { buildTestPng } from "../../../../utils/tests/test-png";
 const TEST_UUID = "v1user-uuid-0001";
 
 const pngBuffer = (variant = 16): Buffer => buildTestPng({ variant });
+const capeBuffer = (variant: number): Buffer => buildTestPng({ width: 64, height: 32, variant });
 
 @Injectable()
 class TestJwtStrategy extends PassportStrategy(Strategy) {
@@ -277,6 +278,44 @@ describe("V1 common/content эндпоинты", (): void => {
       expect(activeItems[0]?.id).toBe(second.id);
 
       for (const skin of [first, second]) {
+        await supertest(app.getHttpServer())
+          .delete(`/v1/common/content/skins/${skin.id}`)
+          .set("Authorization", `Bearer ${userToken}`)
+          .expect(200);
+      }
+    });
+
+    it("при удалении неактивного скина активный и профиль не меняются", async () => {
+      const first = await uploadOwnSkin();
+      const second = await uploadOwnSkin();
+      const third = await uploadOwnSkin();
+
+      await supertest(app.getHttpServer())
+        .patch("/v1/common/content/skins/active")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ id: first.id })
+        .expect(200);
+
+      const profileStore = app.get(YggdrasilStoreToken);
+      await profileStore.saveProfile({
+        uuid: TEST_UUID,
+        userId: TEST_UUID,
+        username: "v1user",
+        skinUrl: first.url,
+      });
+
+      await supertest(app.getHttpServer())
+        .delete(`/v1/common/content/skins/${second.id}`)
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(200);
+
+      const store = app.get(UserContentStoreToken);
+      const remaining = await store.findByUserUuid(TEST_UUID, "skin");
+      const activeItems = remaining.filter((s: { active: boolean }) => s.active);
+      expect(activeItems.map((s: { id: number }) => s.id)).toEqual([first.id]);
+      expect((await profileStore.findProfileByUuid(TEST_UUID))?.skinUrl).toBe(first.url);
+
+      for (const skin of [first, third]) {
         await supertest(app.getHttpServer())
           .delete(`/v1/common/content/skins/${skin.id}`)
           .set("Authorization", `Bearer ${userToken}`)
@@ -609,7 +648,7 @@ describe("V1 common/content эндпоинты", (): void => {
       const uploadRes = await supertest(app.getHttpServer())
         .post("/v1/common/content/capes")
         .set("Authorization", `Bearer ${userToken}`)
-        .attach("file", pngBuffer(64), "cape.png")
+        .attach("file", capeBuffer(64), "cape.png")
         .expect(201);
 
       trackUploadedFile(uploadRes.body.url);
@@ -640,7 +679,7 @@ describe("V1 common/content эндпоинты", (): void => {
       const uploadRes = await supertest(app.getHttpServer())
         .post("/v1/common/content/capes")
         .set("Authorization", `Bearer ${userToken}`)
-        .attach("file", pngBuffer(65), "cape.png")
+        .attach("file", capeBuffer(65), "cape.png")
         .expect(201);
 
       trackUploadedFile(uploadRes.body.url);
@@ -745,7 +784,7 @@ describe("V1 common/content эндпоинты", (): void => {
       const uploadRes = await supertest(app.getHttpServer())
         .post("/v1/common/content/capes")
         .set("Authorization", `Bearer ${userToken}`)
-        .attach("file", pngBuffer(96), "cape.png")
+        .attach("file", capeBuffer(96), "cape.png")
         .expect(201);
 
       trackUploadedFile(uploadRes.body.url);
@@ -766,7 +805,7 @@ describe("V1 common/content эндпоинты", (): void => {
       const uploadRes = await supertest(app.getHttpServer())
         .post("/v1/common/content/capes")
         .set("Authorization", `Bearer ${otherUserToken}`)
-        .attach("file", pngBuffer(97), "cape.png")
+        .attach("file", capeBuffer(97), "cape.png")
         .expect(201);
 
       trackUploadedFile(uploadRes.body.url);

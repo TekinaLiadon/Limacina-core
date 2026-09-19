@@ -7,12 +7,19 @@ import { buildTestPng } from "../../utils/tests/test-png";
 import { chmodSync, existsSync, statSync, unlinkSync } from "node:fs";
 import { BadRequestException } from "@nestjs/common";
 import { UserContentService } from "../user-content.service";
-import { UserContentMapStore } from "../user_content_store";
+import {
+  UserContentMapStore,
+  type ContentDeletionResult,
+  type ContentType,
+} from "../user_content_store";
 import { YggdrasilMapStore } from "../../yggdrasil/service/yggdrasil_store";
+import { MemoryDb } from "../../memory/memory-db";
 import GlobalConfig, { type AppConfigType } from "../../config/global-config";
 
 const MAX_SKINS = 2;
 const pngBytes = (variant: number): Uint8Array => new Uint8Array(buildTestPng({ variant }));
+const capeBytes = (variant: number): Uint8Array =>
+  new Uint8Array(buildTestPng({ width: 64, height: 32, variant }));
 
 const sha256 = (bytes: Uint8Array): string =>
   new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
@@ -309,7 +316,7 @@ describe("UserContentService — unlink с учётом профильных с�
   });
 
   it("файл плаща не удаляется, пока профиль ссылается на него", async () => {
-    const bytes = pngBytes(32);
+    const bytes = capeBytes(32);
     const userUuid = "prof-cape-0001";
     await profileStore.saveProfile({
       uuid: userUuid,
@@ -343,8 +350,294 @@ describe("UserContentService — unlink с учётом профильных с�
   });
 });
 
+describe("UserContentService — удаление скинов и активность (TASK-269.6)", (): void => {
+  let service: UserContentService;
+  let store: UserContentMapStore;
+  let profileStore: YggdrasilMapStore;
+  let config: AppConfigType;
+  const writtenFiles: string[] = [];
+
+  beforeAll(() => {
+    config = GlobalConfig.parseEnvOrExit({
+      ...process.env,
+      MAX_SKINS_PER_USER: "3",
+    });
+    store = new UserContentMapStore();
+    profileStore = new YggdrasilMapStore();
+    service = new UserContentService(store, config, profileStore);
+  });
+
+  afterAll(() => {
+    for (const filePath of writtenFiles) {
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+
+  const trackFile = (filePath: string): void => {
+    if (!writtenFiles.includes(filePath)) writtenFiles.push(filePath);
+  };
+
+  const localPathOf = (url: string): string => `public/${url.replace(`${config.BASE_URL}/`, "")}`;
+
+  const uploadThree = async (userUuid: string, username: string) => {
+    const first = await service.uploadSkin(userUuid, username, pngBytes(71));
+    const second = await service.uploadSkin(userUuid, username, pngBytes(72));
+    const third = await service.uploadSkin(userUuid, username, pngBytes(73));
+    for (const upload of [first, second, third]) trackFile(localPathOf(upload.url));
+    return { first, second, third };
+  };
+
+  it("удаление неактивного скина не меняет активный и skinUrl профиля", async () => {
+    const userUuid = "del-inactive-0001";
+    const username = "delinactive";
+    const { first, second, third } = await uploadThree(userUuid, username);
+    await profileStore.saveProfile({ uuid: userUuid, userId: userUuid, username });
+    await service.setActiveSkin(userUuid, first.id);
+    expect((await profileStore.findProfileByUuid(userUuid))?.skinUrl).toBe(first.url);
+
+    try {
+      await service.delete(userUuid, second.id, "skin");
+
+      const skins = await store.findByUserUuid(userUuid, "skin");
+      expect(skins.filter((item) => item.active).map((item) => item.id)).toEqual([first.id]);
+      expect((await profileStore.findProfileByUuid(userUuid))?.skinUrl).toBe(first.url);
+    } finally {
+      await service.delete(userUuid, first.id, "skin");
+      await service.delete(userUuid, third.id, "skin");
+    }
+  });
+
+  it("удаление активного скина переводит активность и профиль на последний оставшийся", async () => {
+    const userUuid = "del-active-0001";
+    const username = "delactive";
+    const { first, second, third } = await uploadThree(userUuid, username);
+    await profileStore.saveProfile({ uuid: userUuid, userId: userUuid, username });
+    await service.setActiveSkin(userUuid, first.id);
+
+    await service.delete(userUuid, first.id, "skin");
+
+    const skins = await store.findByUserUuid(userUuid, "skin");
+    expect(skins.filter((item) => item.active).map((item) => item.id)).toEqual([third.id]);
+    expect((await profileStore.findProfileByUuid(userUuid))?.skinUrl).toBe(third.url);
+
+    await service.delete(userUuid, second.id, "skin");
+    await service.delete(userUuid, third.id, "skin");
+  });
+
+  it("удаление последнего скина обнуляет skinUrl профиля", async () => {
+    const userUuid = "del-last-0001";
+    const username = "dellast";
+    const first = await service.uploadSkin(userUuid, username, pngBytes(74));
+    trackFile(localPathOf(first.url));
+    await profileStore.saveProfile({ uuid: userUuid, userId: userUuid, username });
+    await service.setActiveSkin(userUuid, first.id);
+
+    await service.delete(userUuid, first.id, "skin");
+
+    expect((await store.findByUserUuid(userUuid, "skin")).length).toBe(0);
+    expect((await profileStore.findProfileByUuid(userUuid))?.skinUrl).toBeNull();
+  });
+
+  it("откат setActiveSkin не перетирает конкурентную активацию другого скина", async () => {
+    const userUuid = "race-active-0001";
+    const username = "raceactive";
+    const { first, second, third } = await uploadThree(userUuid, username);
+    const okProfiles = new YggdrasilMapStore();
+    const gatedProfiles = new GatedTextureSyncStore();
+    await okProfiles.saveProfile({ uuid: userUuid, userId: userUuid, username });
+    await gatedProfiles.saveProfile({ uuid: userUuid, userId: userUuid, username });
+    const okService = new UserContentService(store, config, okProfiles);
+    const racingService = new UserContentService(store, config, gatedProfiles);
+    await okService.setActiveSkin(userUuid, first.id);
+
+    const started = deferred();
+    const gate = deferred();
+    gatedProfiles.onSync = async () => {
+      started.resolve();
+      await gate.promise;
+    };
+
+    const pendingActivation = racingService.setActiveSkin(userUuid, second.id);
+    await started.promise;
+
+    await okService.setActiveSkin(userUuid, third.id);
+    gate.resolve();
+
+    await expect(pendingActivation).rejects.toThrow("Синхронизация профиля недоступна");
+
+    const skins = await store.findByUserUuid(userUuid, "skin");
+    expect(skins.filter((item) => item.active).map((item) => item.id)).toEqual([third.id]);
+    expect((await okProfiles.findProfileByUuid(userUuid))?.skinUrl).toBe(third.url);
+  });
+});
+
+describe("UserContentService — откат загрузки плаща при сбое синка профиля (TASK-269.9)", (): void => {
+  let store: UserContentMapStore;
+  let config: AppConfigType;
+  const writtenFiles: string[] = [];
+
+  beforeAll(() => {
+    config = GlobalConfig.parseEnvOrExit({
+      ...process.env,
+      MAX_CAPES_PER_USER: "2",
+    });
+    store = new UserContentMapStore();
+  });
+
+  afterAll(() => {
+    for (const filePath of writtenFiles) {
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+
+  const trackFile = (filePath: string): void => {
+    if (!writtenFiles.includes(filePath)) writtenFiles.push(filePath);
+  };
+
+  const localPathOf = (url: string): string => `public/${url.replace(`${config.BASE_URL}/`, "")}`;
+
+  it("при сбое синка профиля строка и файл плаща откатываются", async () => {
+    const userUuid = "rb-cape-0001";
+    const username = "rbcape";
+    const bytes = capeBytes(91);
+    trackFile(`public/capes/${username}-${sha256(bytes)}.png`);
+
+    const failingProfiles = new FailingTextureSyncStore();
+    await failingProfiles.saveProfile({ uuid: userUuid, userId: userUuid, username });
+    const failingService = new UserContentService(store, config, failingProfiles);
+
+    await expect(failingService.uploadCape(userUuid, username, bytes)).rejects.toThrow(
+      "Синхронизация профиля недоступна",
+    );
+
+    expect((await store.findByUserUuid(userUuid, "cape")).length).toBe(0);
+    expect(
+      existsSync(localPathOf(`${config.BASE_URL}/capes/${username}-${sha256(bytes)}.png`)),
+    ).toBe(false);
+  });
+
+  it("повторная загрузка того же плаща после сбоя создаёт одну строку", async () => {
+    const userUuid = "rb-cape-0002";
+    const username = "rbcape2";
+    const bytes = capeBytes(92);
+    trackFile(`public/capes/${username}-${sha256(bytes)}.png`);
+
+    const failingProfiles = new FailingTextureSyncStore();
+    await failingProfiles.saveProfile({ uuid: userUuid, userId: userUuid, username });
+    const profiles = new YggdrasilMapStore();
+    await profiles.saveProfile({ uuid: userUuid, userId: userUuid, username });
+    const failingService = new UserContentService(store, config, failingProfiles);
+    const okService = new UserContentService(store, config, profiles);
+
+    await expect(failingService.uploadCape(userUuid, username, bytes)).rejects.toThrow();
+
+    const upload = await okService.uploadCape(userUuid, username, bytes);
+    const capes = await store.findByUserUuid(userUuid, "cape");
+    expect(capes.length).toBe(1);
+    expect(capes[0]?.filePath).toBe(upload.url);
+    expect(existsSync(localPathOf(upload.url))).toBe(true);
+    expect((await profiles.findProfileByUuid(userUuid))?.capeUrl).toBe(upload.url);
+  });
+});
+
+describe("UserContentService — сериализация операций над одним файлом (TASK-269.10)", (): void => {
+  let service: UserContentService;
+  let store: GatedDeleteStore;
+  let config: AppConfigType;
+  const writtenFiles: string[] = [];
+
+  beforeAll(() => {
+    config = GlobalConfig.parseEnvOrExit({
+      ...process.env,
+      MAX_SKINS_PER_USER: "2",
+    });
+    store = new GatedDeleteStore();
+    service = new UserContentService(store, config);
+  });
+
+  afterAll(() => {
+    for (const filePath of writtenFiles) {
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+
+  const trackFile = (filePath: string): void => {
+    if (!writtenFiles.includes(filePath)) writtenFiles.push(filePath);
+  };
+
+  const localPathOf = (url: string): string => `public/${url.replace(`${config.BASE_URL}/`, "")}`;
+
+  it("загрузка ждёт завершения удаления того же файла — нет битых ссылок", async () => {
+    const userUuid = "race-path-0001";
+    const username = "racepath";
+    const bytes = pngBytes(101);
+    const upload = await service.uploadSkin(userUuid, username, bytes);
+    const localPath = localPathOf(upload.url);
+    trackFile(localPath);
+
+    const started = deferred();
+    const gate = deferred();
+    store.onDelete = async () => {
+      started.resolve();
+      await gate.promise;
+    };
+
+    const pendingDelete = service.delete(userUuid, upload.id, "skin");
+    await started.promise;
+
+    const racingUpload = service.uploadSkin(userUuid, username, bytes);
+    expect(await store.countByFilePath(upload.url, "skin")).toBe(0);
+    expect(existsSync(localPath)).toBe(true);
+
+    gate.resolve();
+    await pendingDelete;
+    await racingUpload;
+
+    expect(await store.countByFilePath(upload.url, "skin")).toBe(1);
+    expect(existsSync(localPath)).toBe(true);
+  });
+});
+
+class GatedTextureSyncStore extends YggdrasilMapStore {
+  onSync: (() => Promise<void>) | undefined;
+
+  constructor() {
+    super(new MemoryDb());
+  }
+
+  override async updateProfileTexture(): Promise<void> {
+    if (this.onSync) await this.onSync();
+    throw new Error("Синхронизация профиля недоступна");
+  }
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 class FailingTextureSyncStore extends YggdrasilMapStore {
+  constructor() {
+    super(new MemoryDb());
+  }
+
   override async updateProfileTexture(): Promise<void> {
     throw new Error("Синхронизация профиля недоступна");
+  }
+}
+
+class GatedDeleteStore extends UserContentMapStore {
+  onDelete: (() => Promise<void>) | undefined;
+
+  override async deleteByIdAndCountRemaining(
+    id: number,
+    type: ContentType,
+  ): Promise<ContentDeletionResult | undefined> {
+    const result = await super.deleteByIdAndCountRemaining(id, type);
+    if (this.onDelete) await this.onDelete();
+    return result;
   }
 }

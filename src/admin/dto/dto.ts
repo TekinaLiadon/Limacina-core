@@ -14,6 +14,7 @@ import {
 } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { validationMessages } from "../../common/validation-messages";
+import { LimitQuery, OffsetQuery } from "../../common/dto/dto";
 import { MIN_PASSWORD_LENGTH } from "../../auth/password-policy";
 import { ASSIGNABLE_ROLES, type AssignableRole } from "../../common/roles";
 
@@ -26,18 +27,11 @@ export class UsersSearchQueryDto {
     maximum: 100,
     description: "Пользователей на страницу",
   })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: validationMessages.int("limit") })
-  @Min(1, { message: validationMessages.min("limit", 1) })
-  @Max(100, { message: validationMessages.max("limit", 100) })
+  @LimitQuery(100)
   limit?: number;
 
   @ApiProperty({ default: 0, minimum: 0, description: "Смещение от начала списка" })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: validationMessages.int("offset") })
-  @Min(0, { message: validationMessages.min("offset", 0) })
+  @OffsetQuery()
   offset?: number;
 
   @ApiProperty({
@@ -214,10 +208,7 @@ export class V1LogsQueryDto {
     minimum: 0,
     description: "Смещение от начала списка отфильтрованных строк",
   })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: validationMessages.int("offset") })
-  @Min(0, { message: validationMessages.min("offset", 0) })
+  @OffsetQuery()
   offset?: number;
 
   @ApiProperty({
@@ -226,11 +217,7 @@ export class V1LogsQueryDto {
     maximum: 1000,
     description: "Максимум строк на страницу",
   })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: validationMessages.int("limit") })
-  @Min(1, { message: validationMessages.min("limit", 1) })
-  @Max(1000, { message: validationMessages.max("limit", 1000) })
+  @LimitQuery(1000)
   limit?: number;
 
   @ApiProperty({

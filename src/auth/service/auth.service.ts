@@ -1,13 +1,8 @@
-import {
-  ConflictException,
-  Inject,
-  Injectable,
-  Logger,
-  UnauthorizedException,
-} from "@nestjs/common";
+import { Inject, Injectable, Logger, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { timingSafeEqual } from "node:crypto";
 import { AuthStoreToken, type IAuthStore, type StoredUser } from "./auth_store";
+import { createAuthUser } from "./create-auth-user";
 import { AppConfigToken } from "../../config/app-config.provider";
 import type { AppConfigType } from "../../config/global-config";
 import type { AuthResponseDto, UserTokensDto } from "../dto/dto";
@@ -29,30 +24,18 @@ export class AuthService {
   ) {}
 
   async register(username: string, password: string): Promise<AuthResponseDto> {
-    validatePasswordPolicy(password);
-
-    await this.validateUsernameAvailable(username);
-
-    const uuid = generateUuid();
-    const passwordHash = await Bun.password.hash(password);
-
-    const saved = await this.authStore.saveUser({
-      uuid,
+    const user = await createAuthUser(this.authStore, {
       username,
-      passwordHash,
+      password,
       role: "user",
       approved: false,
-      banned: false,
     });
-    if (!saved) {
-      throw new ConflictException("Юзернейм уже занят");
-    }
 
     try {
-      const tokens = await this.createTokens(uuid, username, "user");
-      return { tokens, uuid, username, role: "user" };
+      const tokens = await this.createTokens(user.uuid, user.username, user.role);
+      return { tokens, uuid: user.uuid, username: user.username, role: user.role };
     } catch (error) {
-      await this.rollbackRegistration(uuid);
+      await this.rollbackRegistration(user.uuid);
       throw error;
     }
   }
@@ -131,12 +114,6 @@ export class AuthService {
     const masterHash = new Bun.CryptoHasher("sha256").update(master).digest();
     const passwordHash = new Bun.CryptoHasher("sha256").update(password).digest();
     return timingSafeEqual(masterHash, passwordHash);
-  }
-
-  private async validateUsernameAvailable(username: string): Promise<void> {
-    if (await this.authStore.userExists(username)) {
-      throw new ConflictException("Юзернейм уже занят");
-    }
   }
 
   private async validateUserCredentials(username: string, password: string): Promise<StoredUser> {

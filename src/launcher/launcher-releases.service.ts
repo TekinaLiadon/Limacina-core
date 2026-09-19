@@ -107,9 +107,17 @@ export class LauncherReleasesService {
         if (!existsSync(artifactPath) || !existsSync(signaturePath)) continue;
 
         try {
+          const signature = readFileSync(signaturePath, "utf-8");
+          if (signature.trim().length === 0) {
+            this.logger.warn(
+              { file: `${artifactName}.sig` },
+              "Платформа релиза пропущена: пустая подпись",
+            );
+            break;
+          }
           const release: UpdaterPlatformReleaseDto = {
             url: `${this.config.BASE_URL}/releases/${version}/${artifactName}`,
-            signature: readFileSync(signaturePath, "utf-8"),
+            signature,
           };
           collected.push({
             key: platform.key,

@@ -27,7 +27,8 @@ import {
   UsersSearchQueryDto,
   V1DeletedUsersQueryDto,
 } from "../../admin/dto/dto";
-import { AdminService, type UsersFilter } from "../../admin/admin.service";
+import { AdminService } from "../../admin/admin.service";
+import type { UsersFilter } from "../../admin/admin_store";
 
 @ApiTags("panel_users")
 @ApiBearerAuth()

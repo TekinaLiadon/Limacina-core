@@ -4,13 +4,13 @@ import {
   linkSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   statSync,
-  unlinkSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   BadRequestException,
   ConflictException,
@@ -19,14 +19,24 @@ import {
   Optional,
 } from "@nestjs/common";
 import type { LauncherReleaseResponseDto } from "./dto/dto";
+import { removeFilesQuietly } from "../utils/fs";
 import {
   LAUNCHER_VERSION_REGEX,
   PUBLIC_DIR,
   RELEASES_DIR,
+  RESERVED_LAUNCHER_VERSION,
+  RESERVED_VERSION_MESSAGE,
   VERSION_FORMAT_MESSAGE,
   buildUpdaterArtifactName,
   findUpdaterPlatform,
 } from "../launcher/launcher-files";
+import {
+  buildReleaseBackupName,
+  buildReleaseLockName,
+  buildReleaseStagingName,
+  cleanupReleaseServiceDirs,
+  recoverReleaseBackups,
+} from "../launcher/release-service-dirs";
 
 const PUBLISH_LOCK_TIMEOUT_MS = 10_000;
 const PUBLISH_LOCK_STALE_MS = 5 * 60_000;
@@ -53,11 +63,17 @@ export class LauncherReleaseService {
       if (!version) {
         throw new BadRequestException("Не передано поле version");
       }
+      if (version === RESERVED_LAUNCHER_VERSION) {
+        throw new BadRequestException(RESERVED_VERSION_MESSAGE);
+      }
       if (!LAUNCHER_VERSION_REGEX.test(version)) {
         throw new BadRequestException(VERSION_FORMAT_MESSAGE);
       }
       if (artifacts.length === 0) {
         throw new BadRequestException("Нужен хотя бы один артефакт платформы");
+      }
+      for (const artifact of artifacts) {
+        this.validateArtifactSignature(artifact);
       }
 
       const releasesRoot = join(PUBLIC_DIR, RELEASES_DIR);
@@ -65,10 +81,10 @@ export class LauncherReleaseService {
       mkdirSync(releasesRoot, { recursive: true });
 
       await this.acquirePublishLock(version);
-      const stagingDir = join(releasesRoot, `.staging-${randomUUID()}`);
+      const stagingDir = join(releasesRoot, buildReleaseStagingName(randomUUID()));
       try {
         mkdirSync(stagingDir, { recursive: true });
-        this.cleanStaleServiceDirs(releasesRoot);
+        this.cleanServiceDirs(releasesRoot);
         if (existsSync(releaseDir)) {
           this.stageExistingFiles(releaseDir, stagingDir);
         }
@@ -92,7 +108,7 @@ export class LauncherReleaseService {
   }
 
   private lockDir(version: string): string {
-    return join(PUBLIC_DIR, RELEASES_DIR, `.lock-${version}`);
+    return join(PUBLIC_DIR, RELEASES_DIR, buildReleaseLockName(version));
   }
 
   private async acquirePublishLock(version: string): Promise<void> {
@@ -104,6 +120,11 @@ export class LauncherReleaseService {
         mkdirSync(lockDir);
         return;
       } catch {
+        if (Date.now() > deadline) {
+          throw new ConflictException(
+            `Публикация версии ${version} уже выполняется, повторите позже`,
+          );
+        }
         let stale = false;
         try {
           stale = Date.now() - statSync(lockDir).mtimeMs > PUBLISH_LOCK_STALE_MS;
@@ -113,12 +134,6 @@ export class LauncherReleaseService {
         if (stale) {
           this.logger.warn({ lockDir }, "Захвачен протухший лок публикации релиза");
           this.releasePublishLock(version);
-          continue;
-        }
-        if (Date.now() > deadline) {
-          throw new ConflictException(
-            `Публикация версии ${version} уже выполняется, повторите позже`,
-          );
         }
         await Bun.sleep(100);
       }
@@ -133,25 +148,9 @@ export class LauncherReleaseService {
     }
   }
 
-  private cleanStaleServiceDirs(releasesRoot: string): void {
-    let entries: string[];
-    try {
-      entries = readdirSync(releasesRoot);
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (!entry.startsWith(".staging-") && !entry.includes(".old-")) continue;
-      const fullPath = join(releasesRoot, entry);
-      try {
-        if (Date.now() - statSync(fullPath).mtimeMs > SERVICE_DIR_STALE_MS) {
-          this.logger.warn({ dir: entry }, "Удалён протухший служебный каталог публикации");
-          this.removeDirQuietly(fullPath);
-        }
-      } catch {
-        continue;
-      }
-    }
+  private cleanServiceDirs(releasesRoot: string): void {
+    recoverReleaseBackups(releasesRoot, this.logger);
+    cleanupReleaseServiceDirs(releasesRoot, this.logger, SERVICE_DIR_STALE_MS);
   }
 
   private stageExistingFiles(releaseDir: string, stagingDir: string): void {
@@ -165,6 +164,20 @@ export class LauncherReleaseService {
       } catch {
         copyFileSync(source, target);
       }
+    }
+  }
+
+  private validateArtifactSignature(artifact: UpdaterArtifactUpload): void {
+    let signature: string;
+    try {
+      signature = readFileSync(artifact.signatureTempPath, "utf-8");
+    } catch {
+      throw new BadRequestException(
+        `Не удалось прочитать подпись платформы ${artifact.platformKey}`,
+      );
+    }
+    if (signature.trim().length === 0) {
+      throw new BadRequestException(`Подпись платформы ${artifact.platformKey} пустая`);
     }
   }
 
@@ -188,7 +201,10 @@ export class LauncherReleaseService {
   private swapReleaseDir(releaseDir: string, stagingDir: string): void {
     let backupDir: string | undefined;
     if (existsSync(releaseDir)) {
-      backupDir = `${releaseDir}.old-${randomUUID()}`;
+      backupDir = join(
+        dirname(releaseDir),
+        buildReleaseBackupName(basename(releaseDir), randomUUID()),
+      );
       renameSync(releaseDir, backupDir);
     }
     try {
@@ -220,17 +236,10 @@ export class LauncherReleaseService {
   }
 
   private removeTempFiles(artifacts: UpdaterArtifactUpload[]): void {
-    for (const artifact of artifacts) {
-      for (const tempPath of [artifact.artifactTempPath, artifact.signatureTempPath]) {
-        try {
-          if (existsSync(tempPath)) unlinkSync(tempPath);
-        } catch (error) {
-          this.logger.error(
-            { err: error, path: tempPath },
-            "Не удалось удалить временный файл загрузки релиза",
-          );
-        }
-      }
-    }
+    removeFilesQuietly(
+      this.logger,
+      artifacts.flatMap((artifact) => [artifact.artifactTempPath, artifact.signatureTempPath]),
+      "Не удалось удалить временный файл загрузки релиза",
+    );
   }
 }

@@ -1,25 +1,21 @@
 import { Injectable, BadRequestException, Logger } from "@nestjs/common";
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { LauncherUpdateResponseDto } from "./dto/dto";
+import { removeFilesQuietly, writeFileAtomicSync } from "../utils/fs";
 import {
   LAUNCHER_VERSION_REGEX,
   OLD_VERSIONS_DIR,
   PUBLIC_DIR,
+  RESERVED_LAUNCHER_VERSION,
+  RESERVED_VERSION_MESSAGE,
+  VERSION_FORMAT_MESSAGE,
   buildLauncherZipName,
   isSupportedPlatform,
   parseLauncherZipName,
 } from "../launcher/launcher-files";
-
-const VERSION_FILE = join(PUBLIC_DIR, "version.json");
+import { buildReplacedZipName } from "../launcher/release-service-dirs";
+import { VERSION_FILE, readLauncherVersion } from "../launcher/version-file";
 
 interface ZipMigrationStep {
   os: string;
@@ -45,7 +41,7 @@ export class LauncherUpdateService {
 
   update(version: string, files: LauncherPlatformFile[]): LauncherUpdateResponseDto {
     try {
-      const targetVersion = version || this.getCurrentVersion();
+      const targetVersion = version || this.requireCurrentVersion();
       this.validateVersion(targetVersion);
 
       for (const file of files) {
@@ -71,9 +67,22 @@ export class LauncherUpdateService {
   }
 
   private validateVersion(version: string): void {
-    if (!LAUNCHER_VERSION_REGEX.test(version)) {
-      throw new BadRequestException("Версия должна быть в формате x.x.x (например 1.2.3)");
+    if (version === RESERVED_LAUNCHER_VERSION) {
+      throw new BadRequestException(RESERVED_VERSION_MESSAGE);
     }
+    if (!LAUNCHER_VERSION_REGEX.test(version)) {
+      throw new BadRequestException(VERSION_FORMAT_MESSAGE);
+    }
+  }
+
+  private requireCurrentVersion(): string {
+    const current = readLauncherVersion();
+    if (!current) {
+      throw new BadRequestException(
+        "Не удалось определить текущую версию: version.json отсутствует или повреждён — укажите версию явно",
+      );
+    }
+    return current;
   }
 
   private validatePlatform(os: string, arch: string): void {
@@ -84,9 +93,7 @@ export class LauncherUpdateService {
 
   private writeVersion(version: string): void {
     const data: VersionData = { version };
-    const tmpPath = `${VERSION_FILE}.tmp`;
-    writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`);
-    renameSync(tmpPath, VERSION_FILE);
+    writeFileAtomicSync(VERSION_FILE, `${JSON.stringify(data, null, 2)}\n`);
   }
 
   private stageNewZips(version: string, files: LauncherPlatformFile[]): ZipMigrationStep[] {
@@ -96,19 +103,21 @@ export class LauncherUpdateService {
       const dir = join(PUBLIC_DIR, file.os, file.arch);
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
+      const step: ZipMigrationStep = {
+        os: file.os,
+        arch: file.arch,
+        archived: [],
+        zipFile: buildLauncherZipName(version, file.os, file.arch),
+      };
+      migration.push(step);
+
       try {
-        const archived = this.archiveCurrentZips(dir, file.os, file.arch, version);
+        this.archiveCurrentZips(step, dir, version);
 
-        const filename = buildLauncherZipName(version, file.os, file.arch);
-        const replacedZip = this.replaceExistingZip(dir, filename);
+        const replacedZip = this.replaceExistingZip(dir, step.zipFile);
+        if (replacedZip) step.replacedZip = replacedZip;
 
-        migration.push(
-          replacedZip
-            ? { os: file.os, arch: file.arch, archived, zipFile: filename, replacedZip }
-            : { os: file.os, arch: file.arch, archived, zipFile: filename },
-        );
-
-        renameSync(file.tempPath, join(dir, filename));
+        renameSync(file.tempPath, join(dir, step.zipFile));
       } catch (error) {
         this.rollbackZips(migration, version);
         throw error;
@@ -122,10 +131,10 @@ export class LauncherUpdateService {
     const targetPath = join(dir, filename);
     if (!existsSync(targetPath)) return undefined;
 
-    const backupPath = `${targetPath}.replaced`;
+    const backupPath = join(dir, buildReplacedZipName(filename));
     if (existsSync(backupPath)) unlinkSync(backupPath);
     renameSync(targetPath, backupPath);
-    return `${filename}.replaced`;
+    return buildReplacedZipName(filename);
   }
 
   private discardReplacedBackups(migration: ZipMigrationStep[]): void {
@@ -145,17 +154,11 @@ export class LauncherUpdateService {
   }
 
   private removeTempFiles(files: LauncherPlatformFile[]): void {
-    for (const file of files) {
-      if (!existsSync(file.tempPath)) continue;
-      try {
-        unlinkSync(file.tempPath);
-      } catch (error) {
-        this.logger.error(
-          { err: error, path: file.tempPath },
-          "Не удалось удалить временный файл загрузки лаунчера",
-        );
-      }
-    }
+    removeFilesQuietly(
+      this.logger,
+      files.map((file) => file.tempPath),
+      "Не удалось удалить временный файл загрузки лаунчера",
+    );
   }
 
   private rollbackZips(migration: ZipMigrationStep[], version: string): void {
@@ -177,7 +180,7 @@ export class LauncherUpdateService {
       } catch (error) {
         this.logger.error(
           { err: error, os: step.os, arch: step.arch, version },
-          "Не удалось откатить файлы лаунчера после сбоя записи version.json",
+          "Не удалось откатить файлы лаунчера после сбоя обновления",
         );
       }
     }
@@ -187,20 +190,16 @@ export class LauncherUpdateService {
     this.writeVersion(version);
   }
 
-  private archiveCurrentZips(dir: string, os: string, arch: string, newVersion: string): string[] {
-    const archived: string[] = [];
-
+  private archiveCurrentZips(step: ZipMigrationStep, dir: string, newVersion: string): void {
     for (const file of readdirSync(dir)) {
       if (!file.endsWith(".zip")) continue;
 
-      const fileVersion = parseLauncherZipName(file, os, arch);
+      const fileVersion = parseLauncherZipName(file, step.os, step.arch);
       if (fileVersion === newVersion) continue;
 
       this.moveZipToArchive(dir, file);
-      archived.push(file);
+      step.archived.push(file);
     }
-
-    return archived;
   }
 
   private moveZipToArchive(dir: string, file: string): void {
@@ -212,14 +211,5 @@ export class LauncherUpdateService {
     renameSync(join(dir, file), targetPath);
 
     this.logger.log({ file }, "Старая версия лаунчера перенесена в архив");
-  }
-
-  getCurrentVersion(): string {
-    try {
-      const data: VersionData = JSON.parse(readFileSync(VERSION_FILE, "utf-8"));
-      return data.version;
-    } catch {
-      return "0.0.0";
-    }
   }
 }

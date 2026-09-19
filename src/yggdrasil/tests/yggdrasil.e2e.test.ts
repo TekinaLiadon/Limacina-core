@@ -29,6 +29,8 @@ import GlobalConfig from "../../config/global-config";
 import { AppConfigToken } from "../../config/app-config.provider";
 import { registerAuthRateLimit } from "../../common/auth-rate-limit";
 import { buildTestPng } from "../../utils/tests/test-png";
+import { MAX_TEXTURE_BYTES } from "../../utils/texture";
+import fastifyMultipart from "@fastify/multipart";
 
 const TEST_USERNAME = "testplayer";
 const TEST_UUID = "a1b2c3d4e5f67890abcdef1234567890";
@@ -48,17 +50,24 @@ const BIND_PROFILE_UUID = "d4e5f6a7b8c9d4e5f6a7b8c9d4e5f6a7";
 const BIND_SECOND_PROFILE_UUID = "f6a7b8c9d4e5f6a7b8c9d4e5f6a7b8c9";
 const BIND_SECOND_PROFILE_NAME = "profilebinder2";
 const SIGNOUT_LIMIT_USERNAME = "signoutlimiter";
+const PASSCHANGE_USERNAME = "pwjwtplayer";
+const PASSCHANGE_USER_UUID = "66666666666666666666666666666666";
+const PASSCHANGE_PROFILE_UUID = "a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2";
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const buildPngBase64 = (body: string): string => {
+const buildPngBuffer = (body: string): Buffer => {
   let hash = 5381;
   for (const byte of Buffer.from(body)) hash = ((hash * 33) ^ byte) & 0xffffffff;
-  return Buffer.from(buildTestPng({ variant: hash & 0xff })).toString("base64");
+  return Buffer.from(buildTestPng({ variant: hash & 0xff }));
 };
 
-const buildInvalidPngBase64 = (): string => {
-  const bytes = new Uint8Array([...PNG_SIGNATURE, ...new Uint8Array(Buffer.from("garbage"))]);
-  return Buffer.from(bytes.buffer).toString("base64");
+const buildCapeBuffer = (body: string): Buffer => {
+  let hash = 5381;
+  for (const byte of Buffer.from(body)) hash = ((hash * 33) ^ byte) & 0xffffffff;
+  return Buffer.from(buildTestPng({ width: 64, height: 32, variant: hash & 0xff }));
 };
+
+const buildInvalidPngBuffer = (): Buffer =>
+  Buffer.from([...PNG_SIGNATURE, ...new Uint8Array(Buffer.from("garbage"))]);
 
 describe("Yggdrasil эндпоинты", () => {
   let app: INestApplication;
@@ -78,6 +87,12 @@ describe("Yggdrasil эндпоинты", () => {
       { username: BANNED_USERNAME, uuid: BANNED_USER_UUID, passwordHash, banned: true },
       { username: PENDING_USERNAME, uuid: PENDING_USER_UUID, passwordHash, approved: false },
       { username: BIND_USERNAME, uuid: BIND_USER_UUID, passwordHash },
+      {
+        username: PASSCHANGE_USERNAME,
+        uuid: PASSCHANGE_USER_UUID,
+        passwordHash,
+        passwordChangedAt: new Date(Date.now() - 60_000),
+      },
     ];
     const seedProfiles: YggdrasilProfile[] = [
       { uuid: TEST_UUID, userId: TEST_USER_UUID, username: TEST_USERNAME },
@@ -89,6 +104,11 @@ describe("Yggdrasil эндпоинты", () => {
         userId: BIND_USER_UUID,
         username: BIND_SECOND_PROFILE_NAME,
       },
+      {
+        uuid: PASSCHANGE_PROFILE_UUID,
+        userId: PASSCHANGE_USER_UUID,
+        username: PASSCHANGE_USERNAME,
+      },
     ];
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -99,7 +119,9 @@ describe("Yggdrasil эндпоинты", () => {
         { provide: AppConfigToken, useFactory: () => appConfig },
         {
           provide: YggdrasilStoreToken,
-          useFactory: () => new YggdrasilMapStore({ users: seedUsers, profiles: seedProfiles }),
+          useFactory: (db: MemoryDb) =>
+            new YggdrasilMapStore(db, { users: seedUsers, profiles: seedProfiles }),
+          inject: [MemoryDb],
         },
         {
           provide: YggdrasilTokenStoreToken,
@@ -122,6 +144,7 @@ describe("Yggdrasil эндпоинты", () => {
     app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
     const fastifyInstance = app.getHttpAdapter().getInstance() as FastifyInstance;
     await registerAuthRateLimit(fastifyInstance, { max: 10, ipMax: 1000, timeWindow: 60000 });
+    await fastifyInstance.register(fastifyMultipart, { limits: { fileSize: 50 * 1024 * 1024 } });
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
 
@@ -986,7 +1009,7 @@ describe("Yggdrasil эндпоинты", () => {
     it("возвращает 401 без Authorization заголовка", async () => {
       await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
-        .send({ file: buildPngBase64("fake-png-data") })
+        .attach("file", buildPngBuffer("fake-png-data"), "skin.png")
         .expect(401);
     });
 
@@ -996,18 +1019,18 @@ describe("Yggdrasil эндпоинты", () => {
       await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
         .set("Authorization", `Bearer ${attackerToken}`)
-        .send({ file: buildPngBase64("fake-png-data") })
+        .attach("file", buildPngBuffer("fake-png-data"), "skin.png")
         .expect(403);
     });
 
-    it("загружает скин как base64", async () => {
+    it("загружает скин как multipart/form-data (TASK-269.5)", async () => {
       const token = await authenticateAndBindProfile();
-      const base64 = buildPngBase64("fake-png-data");
 
       await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
         .set("Authorization", `Bearer ${token}`)
-        .send({ file: base64, model: "slim" })
+        .field("model", "slim")
+        .attach("file", buildPngBuffer("fake-png-data"), "skin.png")
         .expect(204);
 
       const profile = await store.findProfileByUuid(TEST_UUID);
@@ -1024,10 +1047,25 @@ describe("Yggdrasil эндпоинты", () => {
       await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
         .set("Authorization", `Bearer ${token}`)
-        .send({ file: buildPngBase64("model-classic"), model: "classic" })
+        .field("model", "classic")
+        .attach("file", buildPngBuffer("model-classic"), "skin.png")
         .expect(204);
 
       expect((await store.findProfileByUuid(TEST_UUID))!.skinModel).toBe("classic");
+      const url = (await store.findProfileByUuid(TEST_UUID))!.skinUrl!;
+      uploadedTextures.push(url.replace(/^https?:\/\/[^/]+\//, "public/"));
+    });
+
+    it("пустая строка модели — нормальный скин (спека authlib-injector)", async () => {
+      const token = await authenticateAndBindProfile();
+      await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .field("model", "")
+        .attach("file", buildPngBuffer("model-empty"), "skin.png")
+        .expect(204);
+
+      expect((await store.findProfileByUuid(TEST_UUID))!.skinModel).toBeNull();
       const url = (await store.findProfileByUuid(TEST_UUID))!.skinUrl!;
       uploadedTextures.push(url.replace(/^https?:\/\/[^/]+\//, "public/"));
     });
@@ -1038,7 +1076,8 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
         .set("Authorization", `Bearer ${token}`)
-        .send({ file: buildPngBase64("model-wide"), model: "wide" })
+        .field("model", "wide")
+        .attach("file", buildPngBuffer("model-wide"), "skin.png")
         .expect(400);
 
       expect(res.body.error).toBe("IllegalArgumentException");
@@ -1051,28 +1090,42 @@ describe("Yggdrasil эндпоинты", () => {
       const res = await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
         .set("Authorization", `Bearer ${token}`)
-        .send({ file: buildInvalidPngBase64() })
+        .attach("file", buildInvalidPngBuffer(), "skin.png")
         .expect(403);
 
       expect(res.body.errorMessage).toContain("Invalid texture file");
     });
 
-    it("возвращает 401 для несуществующего профиля без токена (TASK-28)", async () => {
-      const base64 = buildPngBase64("fake-png-data");
+    it("JSON вместо multipart — 406 (TASK-269.5)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Content-Type", "application/json")
+        .send({ file: buildPngBuffer("json-body").toString("base64") });
 
+      expect(res.status).toBe(406);
+    });
+
+    it("multipart без файла — 400 (TASK-269.5)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .field("model", "slim");
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain("Файл не загружен");
+    });
+
+    it("возвращает 401 для несуществующего профиля без токена (TASK-28)", async () => {
       await supertest(app.getHttpServer())
         .put("/api/user/profile/00000000000000000000000000000000/skin")
-        .send({ file: base64 })
+        .attach("file", buildPngBuffer("fake-png-data"), "skin.png")
         .expect(401);
     });
 
     it("мусорный bearer для несуществующего профиля — 401 до поиска профиля (TASK-28)", async () => {
-      const base64 = buildPngBase64("fake-png-data");
-
       const res = await supertest(app.getHttpServer())
         .put("/api/user/profile/00000000000000000000000000000000/skin")
         .set("Authorization", "Bearer garbage-token")
-        .send({ file: base64 })
+        .attach("file", buildPngBuffer("fake-png-data"), "skin.png")
         .expect(401);
 
       expect(res.body.errorMessage).toBe("Invalid token.");
@@ -1080,12 +1133,11 @@ describe("Yggdrasil эндпоинты", () => {
 
     it("валидный токен для несуществующего профиля — 403 Invalid token (TASK-28)", async () => {
       const token = await authenticateUser(ATTACKER_USERNAME);
-      const base64 = buildPngBase64("fake-png-data");
 
       const res = await supertest(app.getHttpServer())
         .put("/api/user/profile/00000000000000000000000000000000/skin")
         .set("Authorization", `Bearer ${token}`)
-        .send({ file: base64 })
+        .attach("file", buildPngBuffer("fake-png-data"), "skin.png")
         .expect(403);
 
       expect(res.body.errorMessage).toBe("Invalid token.");
@@ -1094,33 +1146,30 @@ describe("Yggdrasil эндпоинты", () => {
     it("возвращает 400 для неизвестного textureType", async () => {
       const res = await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/hat`)
-        .send({ file: buildPngBase64("fake-png-data") })
+        .attach("file", buildPngBuffer("fake-png-data"), "skin.png")
         .expect(400);
 
       expect(res.body.statusCode).toBe(400);
     });
 
-    it("возвращает 413 для тела больше bodyLimit", async () => {
-      const oversizedBase64 = Buffer.alloc(1024 * 1024, 0x61).toString("base64");
-
+    it("возвращает 413 для файла больше стрим-лимита (1 МБ)", async () => {
       const res = await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
         .set("Authorization", `Bearer ${await authenticateAndBindProfile()}`)
-        .send({ file: oversizedBase64 });
+        .attach("file", Buffer.alloc(MAX_TEXTURE_BYTES * 2 + 1, 0x61), "skin.png");
 
       expect(res.status).toBe(413);
     });
   });
 
   describe("PUT /api/user/profile/:uuid/cape", () => {
-    it("загружает кейп как base64", async () => {
+    it("загружает кейп как multipart/form-data", async () => {
       const token = await authenticateAndBindProfile();
-      const base64 = buildPngBase64("fake-cape-data");
 
       await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/cape`)
         .set("Authorization", `Bearer ${token}`)
-        .send({ file: base64 })
+        .attach("file", buildCapeBuffer("fake-cape-data"), "cape.png")
         .expect(204);
 
       const profile = await store.findProfileByUuid(TEST_UUID);
@@ -1210,7 +1259,7 @@ describe("Yggdrasil эндпоинты", () => {
       await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
         .set("Authorization", `Bearer ${token}`)
-        .send({ file: buildPngBase64(body) })
+        .attach("file", buildPngBuffer(body), "skin.png")
         .expect(204);
       const profile = await store.findProfileByUuid(TEST_UUID);
       const url = profile!.skinUrl!;
@@ -1277,7 +1326,7 @@ describe("Yggdrasil эндпоинты", () => {
       await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/cape`)
         .set("Authorization", `Bearer ${token}`)
-        .send({ file: buildPngBase64("lifecycle-cape-first") })
+        .attach("file", buildCapeBuffer("lifecycle-cape-first"), "cape.png")
         .expect(204);
       const firstUrl = (await store.findProfileByUuid(TEST_UUID))!.capeUrl!;
       uploadedTextures.push(localPathOf(firstUrl));
@@ -1285,7 +1334,7 @@ describe("Yggdrasil эндпоинты", () => {
       await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/cape`)
         .set("Authorization", `Bearer ${token}`)
-        .send({ file: buildPngBase64("lifecycle-cape-second") })
+        .attach("file", buildCapeBuffer("lifecycle-cape-second"), "cape.png")
         .expect(204);
       const secondUrl = (await store.findProfileByUuid(TEST_UUID))!.capeUrl!;
       uploadedTextures.push(localPathOf(secondUrl));
@@ -1345,9 +1394,9 @@ describe("Yggdrasil эндпоинты", () => {
 
     const listTextureFiles = (): string[] => readdirSync("public/textures").sort();
 
-    const texturePathFor = (base64: string): string => {
+    const texturePathFor = (buffer: Buffer): string => {
       const hasher = new Bun.CryptoHasher("sha256");
-      hasher.update(new Uint8Array(Buffer.from(base64, "base64")));
+      hasher.update(new Uint8Array(buffer));
       return `public/textures/testplayer-${hasher.digest("hex")}.png`;
     };
 
@@ -1363,7 +1412,7 @@ describe("Yggdrasil эндпоинты", () => {
         await supertest(app.getHttpServer())
           .put(`/api/user/profile/${TEST_UUID}/skin`)
           .set("Authorization", `Bearer ${token}`)
-          .send({ file: buildPngBase64("order-store-fail") })
+          .attach("file", buildPngBuffer("order-store-fail"), "skin.png")
           .expect(500);
 
         expect(listTextureFiles()).toEqual(filesBefore);
@@ -1376,7 +1425,7 @@ describe("Yggdrasil эндпоинты", () => {
     it("сбой записи файла откатывает текстуру в сторе", async () => {
       await resetProfile();
       const token = await authenticateAndBindProfile();
-      const body = buildPngBase64("order-write-fail");
+      const body = buildPngBuffer("order-write-fail");
       const blockedPath = texturePathFor(body);
       mkdirSync(blockedPath, { recursive: true });
       const updateSpy = spyOn(store, "updateProfileTexture");
@@ -1385,7 +1434,7 @@ describe("Yggdrasil эндпоинты", () => {
         await supertest(app.getHttpServer())
           .put(`/api/user/profile/${TEST_UUID}/skin`)
           .set("Authorization", `Bearer ${token}`)
-          .send({ file: body })
+          .attach("file", body, "skin.png")
           .expect(500);
 
         expect(updateSpy).toHaveBeenCalledTimes(2);
@@ -1526,6 +1575,58 @@ describe("Yggdrasil эндпоинты", () => {
 
       expect(res.body.errorMessage).toBe("Invalid token.");
     });
+
+    it("PUT текстуры токеном забаненного — 403 Invalid token (TASK-269.2)", async () => {
+      const token = await seedUserToken(BANNED_USERNAME, BANNED_USER_UUID, BANNED_PROFILE_UUID);
+
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${BANNED_PROFILE_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .attach("file", buildPngBuffer("banned-put"), "skin.png")
+        .expect(403);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
+    });
+
+    it("DELETE текстуры токеном забаненного — 403 Invalid token (TASK-269.2)", async () => {
+      const token = await seedUserToken(BANNED_USERNAME, BANNED_USER_UUID, BANNED_PROFILE_UUID);
+
+      const res = await supertest(app.getHttpServer())
+        .delete(`/api/user/profile/${BANNED_PROFILE_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(403);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
+    });
+
+    it("PUT текстуры токеном неодобренного — 403 Invalid token (TASK-269.2)", async () => {
+      const token = await seedUserToken(PENDING_USERNAME, PENDING_USER_UUID, null);
+
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
+        .attach("file", buildPngBuffer("pending-put"), "skin.png")
+        .expect(403);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
+    });
+
+    it("PUT текстуры JWT забаненного — 403 Invalid token (TASK-269.2)", async () => {
+      const jwt = encodeAccessJwt({
+        sub: BANNED_USER_UUID,
+        username: BANNED_USERNAME,
+        typ: "access",
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${BANNED_PROFILE_UUID}/skin`)
+        .set("Authorization", `Bearer ${jwt}`)
+        .attach("file", buildPngBuffer("banned-jwt-put"), "skin.png")
+        .expect(403);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
+    });
   });
 
   describe("JWT-ветка join и текстур (TASK-29)", () => {
@@ -1583,12 +1684,10 @@ describe("Yggdrasil эндпоинты", () => {
     });
 
     it("upload текстуры с access JWT — 204", async () => {
-      const base64 = buildPngBase64("jwt-texture-upload");
-
       await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
         .set("Authorization", `Bearer ${accessJwt()}`)
-        .send({ file: base64 })
+        .attach("file", buildPngBuffer("jwt-texture-upload"), "skin.png")
         .expect(204);
 
       const profile = await store.findProfileByUuid(TEST_UUID);
@@ -1596,6 +1695,140 @@ describe("Yggdrasil эндпоинты", () => {
       if (profile!.skinUrl) {
         uploadedTextures.push(profile!.skinUrl.replace(/^https?:\/\/[^/]+\//, "public/"));
       }
+    });
+  });
+
+  describe("Отзыв JWT после смены пароля (TASK-269.7)", () => {
+    const passchangeJwt = (issuedAtSecondsAgo: number): string =>
+      encodeAccessJwt({
+        sub: PASSCHANGE_USER_UUID,
+        username: PASSCHANGE_USERNAME,
+        typ: "access",
+        iat: Math.floor(Date.now() / 1000) - issuedAtSecondsAgo,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+    it("join JWT, выпущенным до смены пароля — 403 Invalid token", async () => {
+      const res = await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({
+          accessToken: passchangeJwt(120),
+          selectedProfile: PASSCHANGE_PROFILE_UUID,
+          serverId: "jwt-stale-join",
+        })
+        .expect(403);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
+    });
+
+    it("upload текстуры JWT, выпущенным до смены пароля — 403 Invalid token", async () => {
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${PASSCHANGE_PROFILE_UUID}/skin`)
+        .set("Authorization", `Bearer ${passchangeJwt(120)}`)
+        .attach("file", buildPngBuffer("stale-jwt-skin"), "skin.png")
+        .expect(403);
+
+      expect(res.body.errorMessage).toBe("Invalid token.");
+    });
+
+    it("join свежим JWT после смены пароля — 204", async () => {
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({
+          accessToken: passchangeJwt(0),
+          selectedProfile: PASSCHANGE_PROFILE_UUID,
+          serverId: "jwt-fresh-join",
+        })
+        .expect(204);
+    });
+
+    it("upload текстуры свежим JWT после смены пароля — 204", async () => {
+      await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${PASSCHANGE_PROFILE_UUID}/skin`)
+        .set("Authorization", `Bearer ${passchangeJwt(0)}`)
+        .attach("file", buildPngBuffer("fresh-jwt-skin"), "skin.png")
+        .expect(204);
+
+      const profile = await store.findProfileByUuid(PASSCHANGE_PROFILE_UUID);
+      expect(profile!.skinUrl).toBeTruthy();
+      if (profile!.skinUrl) {
+        uploadedTextures.push(profile!.skinUrl.replace(/^https?:\/\/[^/]+\//, "public/"));
+      }
+    });
+  });
+
+  describe("uploadableTextures (TASK-269.5)", () => {
+    const texturePropertyValue = (
+      properties: Array<{ name: string; value: string }>,
+      propertyName: string,
+    ): string | undefined => properties.find((p) => p.name === propertyName)?.value;
+
+    it("authenticate отдаёт uploadableTextures в selectedProfile и availableProfiles", async () => {
+      const res = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
+
+      expect(texturePropertyValue(res.body.selectedProfile.properties, "uploadableTextures")).toBe(
+        "skin,cape",
+      );
+      expect(
+        texturePropertyValue(res.body.availableProfiles[0].properties, "uploadableTextures"),
+      ).toBe("skin,cape");
+    });
+
+    it("refresh отдаёт uploadableTextures в selectedProfile", async () => {
+      const authRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: TEST_USERNAME, password: TEST_PASSWORD })
+        .expect(200);
+
+      const refreshRes = await supertest(app.getHttpServer())
+        .post("/authserver/refresh")
+        .send({ accessToken: authRes.body.accessToken })
+        .expect(200);
+
+      expect(
+        texturePropertyValue(refreshRes.body.selectedProfile.properties, "uploadableTextures"),
+      ).toBe("skin,cape");
+    });
+
+    it("profile/:uuid отдаёт uploadableTextures", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get(`/sessionserver/session/minecraft/profile/${TEST_UUID}`)
+        .expect(200);
+
+      expect(texturePropertyValue(res.body.properties, "uploadableTextures")).toBe("skin,cape");
+    });
+
+    it("hasJoined отдаёт uploadableTextures", async () => {
+      const token = await authenticateAndBindProfile();
+
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({
+          accessToken: token,
+          selectedProfile: TEST_UUID,
+          serverId: "uploadable-join",
+        })
+        .expect(204);
+
+      const res = await supertest(app.getHttpServer())
+        .get(
+          `/sessionserver/session/minecraft/hasJoined?username=${TEST_USERNAME}&serverId=uploadable-join`,
+        )
+        .expect(200);
+
+      expect(texturePropertyValue(res.body.properties, "uploadableTextures")).toBe("skin,cape");
+    });
+
+    it("batchProfiles остаётся без properties (по спеке)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .post("/api/profiles/minecraft")
+        .send([TEST_USERNAME])
+        .expect(200);
+
+      expect(res.body[0].properties).toEqual([]);
     });
   });
 
@@ -1685,18 +1918,39 @@ describe("Yggdrasil эндпоинты", () => {
         .expect(400);
     });
 
-    it("upload: model длиннее 16 — 400", async () => {
-      await supertest(app.getHttpServer())
+    it("upload: модель длиннее 16 — 400 Invalid model", async () => {
+      const token = await authenticateAndBindProfile();
+
+      const res = await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
-        .send({ file: buildPngBase64("x"), model: long(17) })
+        .set("Authorization", `Bearer ${token}`)
+        .field("model", long(17))
+        .attach("file", buildPngBuffer("x"), "skin.png")
         .expect(400);
+
+      expect(res.body.errorMessage).toContain("Invalid model");
     });
 
-    it("upload: file длиннее 700000 — 400", async () => {
-      await supertest(app.getHttpServer())
+    it("upload: файл больше 512 КБ — 403 (лимит текстуры)", async () => {
+      const token = await authenticateAndBindProfile();
+
+      const res = await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
-        .send({ file: long(700001) })
-        .expect(400);
+        .set("Authorization", `Bearer ${token}`)
+        .attach("file", Buffer.alloc(MAX_TEXTURE_BYTES + 1, 0x61), "skin.png")
+        .expect(403);
+
+      expect(res.body.errorMessage).toContain("Texture file too large");
+    });
+
+    it("upload: второй файл — 400 (TASK-269.5)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .attach("file", buildPngBuffer("x"), "skin.png")
+        .attach("file", buildPngBuffer("y"), "another.png");
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain("один файл");
     });
   });
 });

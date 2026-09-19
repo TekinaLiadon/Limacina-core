@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { buildTestPng } from "./test-png";
-import { buildDefaultSkinUrl, isSkinModel, pngStructureErrorMessage, sha256Hex } from "../texture";
+import {
+  buildDefaultSkinUrl,
+  isSkinModel,
+  pngStructureErrorMessage,
+  sha256Hex,
+  textureDimensionsErrorMessage,
+} from "../texture";
 import { lastById } from "../collection";
 
 describe("texture utils", () => {
@@ -34,6 +40,29 @@ describe("texture utils", () => {
     expect(isSkinModel("slim")).toBe(true);
     expect(isSkinModel("STEVE")).toBe(false);
     expect(isSkinModel("")).toBe(false);
+  });
+
+  it("textureDimensionsErrorMessage пропускает допустимые размеры скина и плаща", () => {
+    for (const size of [
+      { width: 64, height: 32 },
+      { width: 64, height: 64 },
+    ]) {
+      expect(textureDimensionsErrorMessage(buildTestPng(size), "skin")).toBeNull();
+    }
+    for (const size of [
+      { width: 64, height: 32 },
+      { width: 22, height: 17 },
+    ]) {
+      expect(textureDimensionsErrorMessage(buildTestPng(size), "cape")).toBeNull();
+    }
+  });
+
+  it("textureDimensionsErrorMessage отклоняет недопустимые размеры", () => {
+    const square = buildTestPng({ width: 128, height: 128 });
+    expect(textureDimensionsErrorMessage(square, "skin")).toMatch(
+      /dimensions 128x128 \(allowed: 64x32, 64x64\)/,
+    );
+    expect(textureDimensionsErrorMessage(square, "cape")).toMatch(/allowed: 64x32, 22x17/);
   });
 
   it("buildDefaultSkinUrl склеивает base URL и путь дефолтного скина", () => {

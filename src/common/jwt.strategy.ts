@@ -14,7 +14,7 @@ export interface JwtAccessPayload {
   iat?: number;
 }
 
-function issuedBeforePasswordChange(
+export function issuedBeforePasswordChange(
   payload: JwtAccessPayload,
   passwordChangedAt: Date | undefined,
 ): boolean {

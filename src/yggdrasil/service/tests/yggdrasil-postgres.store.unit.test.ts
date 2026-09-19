@@ -184,12 +184,14 @@ describe("YggdrasilPostgresStore (мок SQL-клиента)", () => {
   });
 
   it("findUserByUsername маппит креды", async () => {
+    const changedAt = new Date("2026-01-01T00:00:00Z");
     fake.onSql(() => [
       {
         uuid: "profile-uuid",
         password_hash: "hash",
         banned: true,
         approved: false,
+        password_changed_at: changedAt,
       },
     ]);
 
@@ -200,9 +202,11 @@ describe("YggdrasilPostgresStore (мок SQL-клиента)", () => {
       passwordHash: "hash",
       banned: true,
       approved: false,
+      passwordChangedAt: changedAt,
     });
     const [call] = lastCalls(1);
     expect(call?.sql).toContain("FROM users WHERE username = $1");
+    expect(call?.sql).toContain("password_changed_at");
   });
 
   it("findUserByUsername без строк отвечает undefined", async () => {

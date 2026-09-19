@@ -245,3 +245,27 @@ export function deleteQuery(): {
     },
   };
 }
+
+export function updateColumnQuery(
+  table: TableName,
+  column: string,
+  value: SqlValue,
+  condition: string,
+  conditionValue: SqlValue,
+): BuiltQuery {
+  return updateQuery().from(table).set(column, value).where(condition, conditionValue).build();
+}
+
+export function setSoftDeletedQuery(
+  table: TableName,
+  condition: string,
+  conditionValue: SqlValue,
+  deleted: boolean,
+): BuiltQuery {
+  return updateQuery()
+    .from(table)
+    .set("deleted", deleted)
+    .set("deleted_at", deleted ? new Date() : null)
+    .where(`${condition} AND deleted = ${deleted ? "false" : "true"}`, conditionValue)
+    .build();
+}

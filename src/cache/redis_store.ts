@@ -1,52 +1,50 @@
 import { Injectable, Logger, type OnModuleDestroy } from "@nestjs/common";
+import {
+  RedisClientLifecycle,
+  REDIS_RECONNECT_DELAY_MS,
+  type RedisLifecycleClient,
+} from "../utils/redis-lifecycle";
 import { DEFAULT_CACHE_TTL_MS, isValidCacheTtl, type ICacheStore } from "./cache_store";
 
-export const COMMAND_TIMEOUT_MS = 500;
-const FAILURE_LOG_INTERVAL = 100;
-const RECONNECT_DELAY_MS = 5_000;
-
-export interface RedisClientLike {
+export interface RedisClientLike extends RedisLifecycleClient {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, px: "PX", milliseconds: number): Promise<unknown>;
   del(key: string): Promise<number>;
-  close(): void;
-  connect?(): Promise<void>;
-  onconnect?: (() => void) | null;
-  onclose?: ((error: Error) => void) | null;
 }
 
 @Injectable()
 export class RedisCacheStore implements ICacheStore, OnModuleDestroy {
   private readonly logger = new Logger(RedisCacheStore.name);
-  private consecutiveFailures = 0;
-  private closed = false;
-  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly lifecycle: RedisClientLifecycle;
 
   constructor(
     private readonly client: RedisClientLike,
     private readonly keyPrefix: string = "",
-    private readonly reconnectDelayMs: number = RECONNECT_DELAY_MS,
+    reconnectDelayMs: number = REDIS_RECONNECT_DELAY_MS,
   ) {
-    this.client.onclose = (error: Error) => {
-      this.logger.error({ err: error }, "Redis отключился, запланировано переподключение");
-      this.scheduleReconnect();
-    };
-    this.client.onconnect = () => {
-      this.clearReconnectTimer();
-      this.logger.log("Redis подключен");
-    };
+    this.lifecycle = new RedisClientLifecycle(
+      client,
+      this.logger,
+      {
+        onclose: "Redis отключился, запланировано переподключение",
+        onconnect: "Redis подключен",
+        recovered: "Redis снова отвечает, кеш восстановлен",
+        failure: "Команда Redis не выполнена, промах кеша",
+      },
+      reconnectDelayMs,
+    );
   }
 
   async get<T = unknown>(key: string): Promise<T | undefined> {
     let raw: string | null;
     try {
-      raw = await this.withTimeout(this.client.get(this.buildKey(key)), "get");
+      raw = await this.lifecycle.withTimeout(this.client.get(this.buildKey(key)), "get");
     } catch (error) {
-      this.reportFailure(error, "get", key);
+      this.lifecycle.reportFailure(error, { key, action: "get" });
       return undefined;
     }
 
-    this.reportSuccess();
+    this.lifecycle.reportSuccess();
     if (raw === null) return undefined;
 
     try {
@@ -76,94 +74,30 @@ export class RedisCacheStore implements ICacheStore, OnModuleDestroy {
     }
 
     try {
-      await this.withTimeout(
+      await this.lifecycle.withTimeout(
         this.client.set(this.buildKey(key), payload, "PX", ttlMs ?? DEFAULT_CACHE_TTL_MS),
         "set",
       );
-      this.reportSuccess();
+      this.lifecycle.reportSuccess();
     } catch (error) {
-      this.reportFailure(error, "set", key);
+      this.lifecycle.reportFailure(error, { key, action: "set" });
     }
   }
 
   async delete(key: string): Promise<void> {
     try {
-      await this.withTimeout(this.client.del(this.buildKey(key)), "delete");
-      this.reportSuccess();
+      await this.lifecycle.withTimeout(this.client.del(this.buildKey(key)), "delete");
+      this.lifecycle.reportSuccess();
     } catch (error) {
-      this.reportFailure(error, "delete", key);
+      this.lifecycle.reportFailure(error, { key, action: "delete" });
     }
   }
 
   onModuleDestroy(): void {
-    this.closed = true;
-    this.clearReconnectTimer();
-    this.client.close();
+    this.lifecycle.dispose();
   }
 
   private buildKey(key: string): string {
     return this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
-  }
-
-  private scheduleReconnect(): void {
-    const { connect } = this.client;
-    if (this.closed || this.reconnectTimer !== undefined || !connect) return;
-
-    const reconnect = connect.bind(this.client);
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = undefined;
-      reconnect().catch((error: unknown) => {
-        this.logger.error({ err: error }, "Переподключение к Redis не удалось");
-        this.scheduleReconnect();
-      });
-    }, this.reconnectDelayMs);
-    this.reconnectTimer.unref();
-  }
-
-  private clearReconnectTimer(): void {
-    if (this.reconnectTimer === undefined) return;
-    clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = undefined;
-  }
-
-  private async withTimeout<T>(operation: Promise<T>, action: string): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const expiration = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`Redis ${action} не ответил за ${COMMAND_TIMEOUT_MS} мс`)),
-        COMMAND_TIMEOUT_MS,
-      );
-    });
-
-    try {
-      return await Promise.race([operation, expiration]);
-    } catch (error) {
-      operation.catch(() => {});
-      throw error;
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-    }
-  }
-
-  private reportSuccess(): void {
-    if (this.consecutiveFailures === 0) return;
-
-    this.logger.log(
-      { skippedFailures: this.consecutiveFailures },
-      "Redis снова отвечает, кеш восстановлен",
-    );
-    this.consecutiveFailures = 0;
-  }
-
-  private reportFailure(error: unknown, action: string, key: string): void {
-    this.consecutiveFailures += 1;
-    if (this.consecutiveFailures !== 1 && this.consecutiveFailures % FAILURE_LOG_INTERVAL !== 0) {
-      return;
-    }
-
-    this.logger.error(
-      { err: error, key, action, consecutiveFailures: this.consecutiveFailures },
-      "Команда Redis не выполнена, промах кеша",
-    );
   }
 }

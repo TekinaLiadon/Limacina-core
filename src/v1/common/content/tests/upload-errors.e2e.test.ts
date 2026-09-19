@@ -16,6 +16,7 @@ import supertest from "supertest";
 import { V1ContentController } from "../content.controller";
 import { UserContentService } from "../../../../user-content/user-content.service";
 import { MAX_TEXTURE_BYTES } from "../../../../utils/texture";
+import { TEXTURE_UPLOAD_LIMIT_BYTES } from "../../../../user-content/user-content.parser";
 import {
   UserContentMapStore,
   UserContentStoreToken,
@@ -104,6 +105,10 @@ describe("V1 common/content — ошибки загрузки файлов", ():
       .send("{}");
 
     expect(res.status).toBe(406);
+    expect(res.body).toEqual({
+      statusCode: 406,
+      message: "the request is not multipart",
+    });
   });
 
   it("возвращает 413, а не 500, при превышении стрим-лимита маршрута", async () => {
@@ -113,5 +118,8 @@ describe("V1 common/content — ошибки загрузки файлов", ():
       .attach("file", Buffer.alloc(MAX_TEXTURE_BYTES * 2 + 1, "a"), "skin.png");
 
     expect(res.status).toBe(413);
+    expect(res.body.message).toBe(
+      `Файл слишком большой: максимум ${TEXTURE_UPLOAD_LIMIT_BYTES} байт`,
+    );
   });
 });

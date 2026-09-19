@@ -1,8 +1,16 @@
+import { deflateSync, inflateSync } from "node:zlib";
+
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const IHDR_DATA_LENGTH = 13;
 const PNG_CHUNK_HEADER_BYTES = 8;
-const PNG_BIT_DEPTHS = [1, 2, 4, 8, 16];
-const PNG_COLOR_TYPES = [0, 2, 3, 4, 6];
+const PNG_COLOR_TYPE_BIT_DEPTHS: Record<number, number[]> = {
+  0: [1, 2, 4, 8, 16],
+  2: [8, 16],
+  3: [1, 2, 4, 8],
+  4: [8, 16],
+  6: [8, 16],
+};
+const PLTE_FORBIDDEN_COLOR_TYPES = [0, 4];
 
 export const MAX_PNG_DIMENSION = 1024;
 
@@ -54,11 +62,12 @@ function validateIhdr(data: Uint8Array, at: number, maxDimension: number): void 
   if (width > maxDimension || height > maxDimension) {
     throw new PngStructureError(`dimensions ${width}x${height} exceed ${maxDimension}`);
   }
-  if (!PNG_BIT_DEPTHS.includes(bitDepth)) {
-    throw new PngStructureError(`invalid bit depth ${bitDepth}`);
-  }
-  if (!PNG_COLOR_TYPES.includes(colorType)) {
+  const allowedBitDepths = PNG_COLOR_TYPE_BIT_DEPTHS[colorType];
+  if (!allowedBitDepths) {
     throw new PngStructureError(`invalid color type ${colorType}`);
+  }
+  if (!allowedBitDepths.includes(bitDepth)) {
+    throw new PngStructureError(`invalid bit depth ${bitDepth} for color type ${colorType}`);
   }
   if (compression !== 0) {
     throw new PngStructureError("invalid compression method");
@@ -69,6 +78,10 @@ function validateIhdr(data: Uint8Array, at: number, maxDimension: number): void 
   if (interlace > 1) {
     throw new PngStructureError("invalid interlace method");
   }
+}
+
+export function readPngDimensions(file: Uint8Array): { width: number; height: number } {
+  return { width: readUint32(file, 16), height: readUint32(file, 20) };
 }
 
 export function validatePngStructure(
@@ -83,8 +96,10 @@ export function validatePngStructure(
   }
 
   let offset = PNG_SIGNATURE.length;
+  let colorType: number | undefined;
   let ihdrChecked = false;
   let idatFound = false;
+  let plteSeen = false;
 
   while (offset < file.length) {
     if (file.length - offset < PNG_CHUNK_HEADER_BYTES) {
@@ -114,12 +129,30 @@ export function validatePngStructure(
         throw new PngStructureError("invalid IHDR length");
       }
       validateIhdr(file, dataStart, maxDimension);
+      colorType = file[dataStart + 9];
       ihdrChecked = true;
     } else if (type === "IHDR") {
       throw new PngStructureError("duplicate IHDR");
     }
 
-    if (type === "IDAT") idatFound = true;
+    if (type === "PLTE") {
+      if (plteSeen) {
+        throw new PngStructureError("duplicate PLTE");
+      }
+      if (colorType !== undefined && PLTE_FORBIDDEN_COLOR_TYPES.includes(colorType)) {
+        throw new PngStructureError(`PLTE not allowed for color type ${colorType}`);
+      }
+      plteSeen = true;
+    }
+    if (type === "IDAT") {
+      if (length === 0) {
+        throw new PngStructureError("empty IDAT chunk");
+      }
+      if (colorType === 3 && !plteSeen) {
+        throw new PngStructureError("missing PLTE for indexed color");
+      }
+      idatFound = true;
+    }
 
     if (type === "IEND") {
       if (!idatFound) {
@@ -135,4 +168,78 @@ export function validatePngStructure(
   }
 
   throw new PngStructureError("IEND chunk not found");
+}
+
+interface PngChunk {
+  type: string;
+  data: Uint8Array;
+}
+
+function walkChunks(file: Uint8Array): PngChunk[] {
+  const chunks: PngChunk[] = [];
+  let offset = PNG_SIGNATURE.length;
+  while (offset < file.length) {
+    const length = readUint32(file, offset);
+    const type = chunkType(file, offset + 4);
+    if (!type) throw new PngStructureError("invalid chunk type");
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    if (dataEnd + 4 > file.length) {
+      throw new PngStructureError(`chunk ${type} exceeds file size`);
+    }
+    chunks.push({ type, data: file.subarray(dataStart, dataEnd) });
+    offset = dataEnd + 4;
+    if (type === "IEND") break;
+  }
+  return chunks;
+}
+
+function buildChunk(type: string, data: Uint8Array): Buffer {
+  const chunk = Buffer.alloc(12 + data.length);
+  chunk.writeUInt32BE(data.length, 0);
+  chunk.write(type, 4, "ascii");
+  Buffer.from(data).copy(chunk, 8);
+  chunk.writeUInt32BE(crc32(chunk, 4, 8 + data.length), 8 + data.length);
+  return chunk;
+}
+
+export function sanitizePng(file: Uint8Array): Buffer {
+  validatePngStructure(file);
+
+  const chunks = walkChunks(file);
+  const ihdr = chunks.find((chunk) => chunk.type === "IHDR")!.data;
+  const colorType = ihdr[9]!;
+  const idatChunks = chunks.filter((chunk) => chunk.type === "IDAT");
+  const hasForeignChunks = chunks.some(
+    (chunk) =>
+      chunk.type !== "IHDR" &&
+      chunk.type !== "IEND" &&
+      chunk.type !== "IDAT" &&
+      !(chunk.type === "PLTE" && colorType === 3) &&
+      chunk.type !== "tRNS",
+  );
+  if (!hasForeignChunks && idatChunks.length === 1) {
+    return Buffer.from(file);
+  }
+
+  const plte = colorType === 3 ? chunks.find((chunk) => chunk.type === "PLTE")?.data : undefined;
+  const trns = chunks.find((chunk) => chunk.type === "tRNS")?.data;
+  const idat = Buffer.concat(idatChunks.map((chunk) => Buffer.from(chunk.data)));
+
+  let rawImageData: Buffer;
+  try {
+    rawImageData = inflateSync(idat);
+  } catch {
+    throw new PngStructureError("corrupt IDAT stream");
+  }
+
+  const parts = [
+    Buffer.from(PNG_SIGNATURE),
+    buildChunk("IHDR", ihdr),
+    ...(plte ? [buildChunk("PLTE", plte)] : []),
+    ...(trns ? [buildChunk("tRNS", trns)] : []),
+    buildChunk("IDAT", deflateSync(rawImageData)),
+    buildChunk("IEND", Buffer.alloc(0)),
+  ];
+  return Buffer.concat(parts);
 }

@@ -1,4 +1,6 @@
-import type { UsersFilter, UsersPage, DeletedUsersPage } from "./admin.service";
+import { Optional } from "@nestjs/common";
+
+import { MemoryDb, type MemoryUserRecord } from "../memory/memory-db";
 
 export const AdminMapStoreToken = Symbol("AdminMapStore");
 
@@ -16,6 +18,23 @@ export interface DeletedUser extends AdminUser {
   deletedAt: Date;
 }
 
+export interface UsersFilter {
+  limit: number;
+  offset: number;
+  username?: string | undefined;
+  approved?: boolean | undefined;
+}
+
+export interface UsersPage {
+  items: AdminUser[];
+  total: number;
+}
+
+export interface DeletedUsersPage {
+  items: DeletedUser[];
+  total: number;
+}
+
 export interface IAdminStore {
   findByUsername(username: string): Promise<AdminUser | undefined>;
   saveUser(user: AdminUser): Promise<void>;
@@ -27,13 +46,9 @@ export interface IAdminStore {
   deleteUser(username: string): Promise<AdminUser | undefined>;
   findDeletedByUsername(username: string): Promise<DeletedUser | undefined>;
   restoreUser(username: string): Promise<void>;
+  removeDeletedDuplicates(username: string): Promise<number>;
   purgeOldDeletedUsers(retentionDays: number): Promise<number>;
   hasOwner(): Promise<boolean>;
-}
-
-interface StoredAdminUser extends AdminUser {
-  deleted: boolean;
-  deletedAt: Date | null;
 }
 
 function userMatchesFilter(user: AdminUser, filter: UsersFilter): boolean {
@@ -63,7 +78,12 @@ function toDeletedUser(user: AdminUser, deletedAt: Date): DeletedUser {
   return { ...user, deletedAt };
 }
 
-function toAdminView(user: StoredAdminUser): AdminUser {
+function deletedUserView(user: MemoryUserRecord): DeletedUser | undefined {
+  if (user.deletedAt === null) return undefined;
+  return toDeletedUser(user, user.deletedAt);
+}
+
+function toAdminView(user: MemoryUserRecord): AdminUser {
   return {
     uuid: user.uuid,
     username: user.username,
@@ -74,7 +94,11 @@ function toAdminView(user: StoredAdminUser): AdminUser {
 }
 
 export class AdminMapStore implements IAdminStore {
-  private readonly users = new Map<string, StoredAdminUser>();
+  private readonly users: Map<string, MemoryUserRecord>;
+
+  constructor(@Optional() db: MemoryDb = new MemoryDb()) {
+    this.users = db.users;
+  }
 
   async findByUsername(username: string): Promise<AdminUser | undefined> {
     const user = this.liveUser(username);
@@ -83,21 +107,23 @@ export class AdminMapStore implements IAdminStore {
   }
 
   async saveUser(user: AdminUser): Promise<void> {
-    this.users.set(user.uuid, { ...user, deleted: false, deletedAt: null });
+    const existing = this.users.get(user.uuid);
+    const next: MemoryUserRecord = {
+      uuid: user.uuid,
+      username: user.username,
+      passwordHash: existing?.passwordHash ?? "",
+      role: user.role,
+      approved: user.approved,
+      banned: user.banned,
+      deleted: false,
+      deletedAt: null,
+      passwordChangedAt: existing?.passwordChangedAt,
+    };
+    this.users.set(user.uuid, next);
   }
 
   async searchUsers(filter: UsersFilter): Promise<UsersPage> {
-    const matched: AdminUser[] = [];
-    for (const user of this.users.values()) {
-      if (user.deleted || !userMatchesFilter(user, filter)) continue;
-      matched.push(toAdminView(user));
-    }
-
-    const sorted = matched.toSorted(compareByUsername);
-    return {
-      items: sorted.slice(filter.offset, filter.offset + filter.limit),
-      total: sorted.length,
-    };
+    return this.searchUserRecords(filter, false, toAdminView);
   }
 
   async setApproved(username: string, approved: boolean): Promise<void> {
@@ -125,11 +151,21 @@ export class AdminMapStore implements IAdminStore {
   }
 
   async searchDeletedUsers(filter: UsersFilter): Promise<DeletedUsersPage> {
-    const matched: DeletedUser[] = [];
+    return this.searchUserRecords(filter, true, deletedUserView);
+  }
+
+  private searchUserRecords<View extends AdminUser>(
+    filter: UsersFilter,
+    deleted: boolean,
+    toView: (user: MemoryUserRecord) => View | undefined,
+  ): { items: View[]; total: number } {
+    const matched: View[] = [];
     for (const user of this.users.values()) {
-      if (!user.deleted || user.deletedAt === null) continue;
+      if (user.deleted !== deleted) continue;
       if (!userMatchesFilter(user, filter)) continue;
-      matched.push(toDeletedUser(user, user.deletedAt));
+      const view = toView(user);
+      if (!view) continue;
+      matched.push(view);
     }
 
     const sorted = matched.toSorted(compareByUsername);
@@ -151,7 +187,16 @@ export class AdminMapStore implements IAdminStore {
 
     user.deleted = false;
     user.deletedAt = null;
-    this.removeStaleDeletedDuplicates(username, user.uuid);
+  }
+
+  async removeDeletedDuplicates(username: string): Promise<number> {
+    let removed = 0;
+    for (const [uuid, user] of this.users) {
+      if (user.username !== username || !user.deleted) continue;
+      this.users.delete(uuid);
+      removed += 1;
+    }
+    return removed;
   }
 
   async purgeOldDeletedUsers(retentionDays: number): Promise<number> {
@@ -173,27 +218,19 @@ export class AdminMapStore implements IAdminStore {
     return false;
   }
 
-  private liveUser(username: string): StoredAdminUser | undefined {
+  private liveUser(username: string): MemoryUserRecord | undefined {
     for (const user of this.users.values()) {
       if (user.username === username && !user.deleted) return user;
     }
     return undefined;
   }
 
-  private newestDeletedUser(username: string): StoredAdminUser | undefined {
-    let newest: StoredAdminUser | undefined;
+  private newestDeletedUser(username: string): MemoryUserRecord | undefined {
+    let newest: MemoryUserRecord | undefined;
     for (const user of this.users.values()) {
       if (user.username !== username || !user.deleted) continue;
       if (!newest || (user.deletedAt ?? 0) > (newest.deletedAt ?? 0)) newest = user;
     }
     return newest;
-  }
-
-  private removeStaleDeletedDuplicates(username: string, keptUuid: string): void {
-    for (const [uuid, user] of this.users) {
-      if (uuid !== keptUuid && user.username === username && user.deleted) {
-        this.users.delete(uuid);
-      }
-    }
   }
 }

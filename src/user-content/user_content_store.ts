@@ -271,22 +271,29 @@ export class UserContentPostgresStore implements IUserContentStore {
     const [item] = existing.rows;
     if (!item) return undefined;
 
+    const lock = selectQuery("uuid")
+      .from(TABLES.users)
+      .where("uuid = $1", item.user_uuid)
+      .forUpdate()
+      .build();
+
     const results = await executeInTransactionReturning<
       ContentRow & { same_path_total: number | string }
     >([
-      {
-        sql: `SELECT COUNT(*) AS same_path_total FROM ${table} WHERE file_path = $1`,
-        values: [item.file_path],
-      },
+      lock,
       {
         sql: `DELETE FROM ${table} WHERE id = $1 RETURNING id`,
         values: [id],
       },
+      {
+        sql: `SELECT COUNT(*) AS same_path_total FROM ${table} WHERE file_path = $1`,
+        values: [item.file_path],
+      },
     ]);
     if ((results[1]?.count ?? 0) === 0) return undefined;
 
-    const samePathTotal = Number(results[0]?.rows[0]?.same_path_total ?? 0);
-    return { item: rowToItem(item), remainingCount: samePathTotal - 1 };
+    const remainingCount = Number(results[2]?.rows[0]?.same_path_total ?? 0);
+    return { item: rowToItem(item), remainingCount };
   }
 }
 
