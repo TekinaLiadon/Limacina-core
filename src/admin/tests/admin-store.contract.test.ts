@@ -179,6 +179,19 @@ contractDescribeEach("контракт IAdminStore", (driver) => {
     expect(found?.role).toBe("admin");
   });
 
+  it("setApproved/setBanned/setRole возвращают признак применения (TASK-267.13)", async () => {
+    const user = await ctx.makeUser();
+
+    expect(await ctx.store.setApproved(user.username, user.approved)).toBe(true);
+    expect(await ctx.store.setBanned(user.username, user.banned)).toBe(true);
+    expect(await ctx.store.setRole(user.username, user.role)).toBe(true);
+
+    const missing = uniqueUsername("missing");
+    expect(await ctx.store.setApproved(missing, true)).toBe(false);
+    expect(await ctx.store.setBanned(missing, true)).toBe(false);
+    expect(await ctx.store.setRole(missing, "admin")).toBe(false);
+  });
+
   it("deleteUser прячет пользователя в живых списках и показывает в удалённых", async () => {
     const user = await ctx.makeUser();
 

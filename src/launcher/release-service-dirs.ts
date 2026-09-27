@@ -15,6 +15,14 @@ export function buildReleaseLockName(version: string): string {
   return `.lock-${version}`;
 }
 
+export const RELEASE_LOCK_TOKEN_FILENAME = "owner.token";
+
+const STOLEN_INFIX = ".stolen-";
+
+export function buildReleaseStolenLockName(version: string, uuid: string): string {
+  return `${buildReleaseLockName(version)}${STOLEN_INFIX}${uuid}`;
+}
+
 export function buildReleaseBackupName(version: string, uuid: string): string {
   return `${BACKUP_INFIX}${version}-${uuid}`;
 }
@@ -29,6 +37,12 @@ export function isReleaseStagingEntry(entry: string): boolean {
 
 export function isReleaseLockEntry(entry: string): boolean {
   return entry.startsWith(".lock-");
+}
+
+export function isReleaseStolenLockEntry(entry: string): boolean {
+  const infixIndex = entry.indexOf(STOLEN_INFIX);
+  if (!entry.startsWith(".lock-") || infixIndex < 0) return false;
+  return UUID_PATTERN.test(entry.slice(infixIndex + STOLEN_INFIX.length));
 }
 
 export function isReleaseBackupEntry(entry: string): boolean {

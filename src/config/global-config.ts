@@ -74,6 +74,13 @@ export function isSqlDriver(driver: string): driver is SqlDriver {
   return (SQL_DRIVERS as readonly string[]).includes(driver);
 }
 
+export function createStoreByDriver<T>(
+  dbDriver: string,
+  stores: { sql: () => T; map: () => T },
+): T {
+  return isSqlDriver(dbDriver) ? stores.sql() : stores.map();
+}
+
 const AppConfig = new ZodEnvConfig("app", configSchema);
 
 export type AppConfigType = z.output<typeof configSchema>;

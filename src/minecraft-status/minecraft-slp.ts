@@ -22,6 +22,7 @@ const MAX_RESPONSE_BYTES = 256 * 1024;
 const MAX_VARINT_BYTES = 5;
 const MAX_ACCUMULATED_BYTES = MAX_RESPONSE_BYTES + MAX_VARINT_BYTES;
 const MAX_REPORTED_PLAYERS = 2_147_483_647;
+const MAX_VERSION_NAME_LENGTH = 64;
 
 export interface MinecraftTarget {
   host: string;
@@ -141,8 +142,12 @@ export function extractStatusJson(jsonBytes: Uint8Array): MinecraftStatus {
 
   const online = parsePlayerCount(parsed.players?.online, "online");
   const max = parsePlayerCount(parsed.players?.max, "max");
+  if (online > max) {
+    throw new Error(`players.online ${online} exceeds players.max ${max}`);
+  }
   const versionName = parsed.version?.name;
-  const version = typeof versionName === "string" ? versionName : "unknown";
+  const version =
+    typeof versionName === "string" ? versionName.slice(0, MAX_VERSION_NAME_LENGTH) : "unknown";
 
   return { online, max, version };
 }

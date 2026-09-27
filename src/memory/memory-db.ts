@@ -1,8 +1,4 @@
 import { Injectable } from "@nestjs/common";
-import type {
-  YggdrasilSessionRecord,
-  YggdrasilTokenRecord,
-} from "../yggdrasil/service/yggdrasil_store";
 
 export interface CacheEntryRecord {
   value: string;
@@ -19,6 +15,29 @@ export interface MemoryUserRecord {
   deleted: boolean;
   deletedAt: Date | null;
   passwordChangedAt?: Date | undefined;
+}
+
+export interface TokenEntry {
+  profileId: string | null;
+  username: string;
+  clientToken: string;
+  userId: string;
+}
+
+export interface SessionEntry {
+  profileId: string;
+  username: string;
+}
+
+export interface YggdrasilTokenRecord {
+  entry: TokenEntry;
+  issuedAt: number;
+  expiresAt: number;
+}
+
+export interface YggdrasilSessionRecord {
+  entry: SessionEntry;
+  expiresAt: number;
 }
 
 @Injectable()

@@ -37,10 +37,12 @@ import { V1PanelServerController } from "../server.controller";
 import { AdminService } from "../../../admin/admin.service";
 import { CronService } from "../../../cron/cron.service";
 import { LogsService } from "../../../admin/logs.service";
-import { LauncherUpdateService } from "../../../admin/launcher-update.service";
-import { LauncherReleaseService } from "../../../admin/launcher-release.service";
-import { ConfigUpdateService } from "../../../admin/config-update.service";
-import { TechnicalService } from "../../../technical/technical.service";
+import { LauncherUpdateService } from "../../../launcher/launcher-update.service";
+import { ReleasePublishService } from "../../../launcher/release-publish.service";
+import { ConfigUpdateService } from "../../../launcher/config-update.service";
+import { TechnicalBootstrapService } from "../../../technical/technical-bootstrap.service";
+import { TechnicalRestartService } from "../../../technical/technical-restart.service";
+import { TechnicalRebuildService } from "../../../technical/technical-rebuild.service";
 import { AdminMapStore, AdminMapStoreToken } from "../../../admin/admin_store";
 import { AuthMapStore, AuthStoreToken } from "../../../auth/service/auth_store";
 import { UPLOAD_TMP_DIR, buildLauncherZipName } from "../../../launcher/launcher-files";
@@ -118,9 +120,11 @@ describe("V1 panel эндпоинты", (): void => {
         CronService,
         LogsService,
         LauncherUpdateService,
-        LauncherReleaseService,
+        ReleasePublishService,
         ConfigUpdateService,
-        TechnicalService,
+        TechnicalBootstrapService,
+        TechnicalRestartService,
+        TechnicalRebuildService,
         { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
         TestJwtStrategy,
         {
@@ -216,6 +220,16 @@ describe("V1 panel эндпоинты", (): void => {
       approved: true,
       banned: false,
     });
+    for (const { uuid, username, role, approved } of users) {
+      await authStoreInstance.saveUser({
+        uuid,
+        username,
+        passwordHash: "placeholder-hash",
+        role,
+        approved,
+        banned: false,
+      });
+    }
 
     const deletedTargets: Array<[string, string]> = [
       ["dana", "user"],
@@ -1080,9 +1094,18 @@ describe("V1 panel эндпоинты", (): void => {
   describe("Аудит мутаций", () => {
     it("успех пишется в log, отказ — в error, с актором и целью", async () => {
       const store = app.get(AdminMapStoreToken, { strict: false });
+      const authStore = app.get(AuthStoreToken, { strict: false });
       await store.saveUser({
         uuid: "audituser-uuid",
         username: "audituser",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      await authStore.saveUser({
+        uuid: "audituser-uuid",
+        username: "audituser",
+        passwordHash: "placeholder-hash",
         role: "user",
         approved: true,
         banned: false,
@@ -1122,6 +1145,7 @@ describe("V1 panel эндпоинты", (): void => {
         errorSpy.mockRestore();
         await store.setBanned("audituser", false);
         await store.deleteUser("audituser");
+        await authStore.deleteUser("audituser-uuid");
       }
     });
   });
@@ -1129,9 +1153,18 @@ describe("V1 panel эндпоинты", (): void => {
   describe("Повторное удаление пользователя", () => {
     it("перезаписывает запись в удалённых при повторном удалении", async () => {
       const store = app.get(AdminMapStoreToken, { strict: false });
+      const authStore = app.get(AuthStoreToken, { strict: false });
       await store.saveUser({
         uuid: "repeatuser-uuid",
         username: "repeatuser",
+        role: "user",
+        approved: true,
+        banned: false,
+      });
+      await authStore.saveUser({
+        uuid: "repeatuser-uuid",
+        username: "repeatuser",
+        passwordHash: "placeholder-hash",
         role: "user",
         approved: true,
         banned: false,
@@ -1171,26 +1204,29 @@ describe("V1 panel эндпоинты", (): void => {
     });
   });
 
-  function stubRestartPipeline(service: TechnicalService): {
+  function stubRestartPipeline(
+    restartService: TechnicalRestartService,
+    rebuildService: TechnicalRebuildService,
+  ): {
     signalled: () => boolean;
     steps: () => string[];
   } {
     let shutdownSignalled = false;
     const stepCalls: string[] = [];
-    service.sendShutdownSignal = () => {
+    restartService.sendShutdownSignal = () => {
       shutdownSignalled = true;
     };
-    service.gitPull = async () => {
+    rebuildService.gitPull = async () => {
       stepCalls.push("gitPull");
       return { before: "rev-before", after: "rev-after" };
     };
-    service.installDependencies = async () => {
+    rebuildService.installDependencies = async () => {
       stepCalls.push("installDependencies");
     };
-    service.runMigrations = async () => {
+    rebuildService.runMigrations = async () => {
       stepCalls.push("runMigrations");
     };
-    service.buildBinary = async () => {
+    rebuildService.buildBinary = async () => {
       stepCalls.push("buildBinary");
     };
     return {
@@ -1201,7 +1237,10 @@ describe("V1 panel эндпоинты", (): void => {
 
   describe("POST /v1/panel/server/restart", () => {
     it("без body перезапускает сервер без пересборки", async () => {
-      const stub = stubRestartPipeline(app.get(TechnicalService));
+      const stub = stubRestartPipeline(
+        app.get(TechnicalRestartService),
+        app.get(TechnicalRebuildService),
+      );
 
       const res = await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
@@ -1215,7 +1254,10 @@ describe("V1 panel эндпоинты", (): void => {
     });
 
     it("rebuild: true отвечает 202 и выполняет конвейер в фоне", async () => {
-      const stub = stubRestartPipeline(app.get(TechnicalService));
+      const stub = stubRestartPipeline(
+        app.get(TechnicalRestartService),
+        app.get(TechnicalRebuildService),
+      );
 
       const res = await supertest(app.getHttpServer())
         .post("/v1/panel/server/restart")
@@ -1229,9 +1271,10 @@ describe("V1 panel эндпоинты", (): void => {
     });
 
     it("rebuild: true при упавшем шаге: 202, ошибка в статусе, без перезапуска", async () => {
-      const technicalService = app.get(TechnicalService);
-      const stub = stubRestartPipeline(technicalService);
-      technicalService.gitPull = async () => {
+      const restartService = app.get(TechnicalRestartService);
+      const rebuildService = app.get(TechnicalRebuildService);
+      const stub = stubRestartPipeline(restartService, rebuildService);
+      rebuildService.gitPull = async () => {
         throw new InternalServerErrorException("Пересборка не удалась на шаге git pull");
       };
 
@@ -1241,20 +1284,21 @@ describe("V1 panel эндпоинты", (): void => {
         .send({ rebuild: true })
         .expect(202);
 
-      await waitForCondition(() => technicalService.getRebuildStatus().lastError !== null);
+      await waitForCondition(() => rebuildService.getRebuildStatus().lastError !== null);
       await Bun.sleep(500);
       expect(stub.signalled()).toBe(false);
       expect(stub.steps()).toEqual([]);
     });
 
     it("возвращает 409 пока пересборка выполняется", async () => {
-      const technicalService = app.get(TechnicalService);
-      stubRestartPipeline(technicalService);
+      const restartService = app.get(TechnicalRestartService);
+      const rebuildService = app.get(TechnicalRebuildService);
+      stubRestartPipeline(restartService, rebuildService);
       let release = (): void => {};
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
-      technicalService.gitPull = async () => {
+      rebuildService.gitPull = async () => {
         await gate;
         return { before: "rev-before", after: "rev-after" };
       };
@@ -1265,7 +1309,7 @@ describe("V1 panel эндпоинты", (): void => {
           .set("Authorization", `Bearer ${ownerToken}`)
           .send({ rebuild: true })
           .expect(202);
-        await waitForCondition(() => technicalService.getRebuildStatus().inProgress);
+        await waitForCondition(() => rebuildService.getRebuildStatus().inProgress);
 
         await supertest(app.getHttpServer())
           .post("/v1/panel/server/restart")
@@ -1276,7 +1320,7 @@ describe("V1 panel эндпоинты", (): void => {
         release();
       }
 
-      await waitForCondition(() => !technicalService.getRebuildStatus().inProgress);
+      await waitForCondition(() => !rebuildService.getRebuildStatus().inProgress);
     });
 
     it("возвращает 400 при не-булевом rebuild", async () => {
@@ -1309,13 +1353,14 @@ describe("V1 panel эндпоинты", (): void => {
 
   describe("GET /v1/panel/server/rebuild", () => {
     it("отдаёт статус выполняющейся и завершённой пересборки", async () => {
-      const technicalService = app.get(TechnicalService);
-      const stub = stubRestartPipeline(technicalService);
+      const restartService = app.get(TechnicalRestartService);
+      const rebuildService = app.get(TechnicalRebuildService);
+      const stub = stubRestartPipeline(restartService, rebuildService);
       let release = (): void => {};
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
-      technicalService.gitPull = async () => {
+      rebuildService.gitPull = async () => {
         await gate;
         return { before: "rev-before", after: "rev-after" };
       };
@@ -1327,7 +1372,7 @@ describe("V1 panel эндпоинты", (): void => {
           .send({ rebuild: true })
           .expect(202);
 
-        await waitForCondition(() => technicalService.getRebuildStatus().inProgress);
+        await waitForCondition(() => rebuildService.getRebuildStatus().inProgress);
 
         const running = await supertest(app.getHttpServer())
           .get("/v1/panel/server/rebuild")
@@ -1338,7 +1383,7 @@ describe("V1 panel эндпоинты", (): void => {
         release();
       }
 
-      await waitForCondition(() => !technicalService.getRebuildStatus().inProgress);
+      await waitForCondition(() => !rebuildService.getRebuildStatus().inProgress);
 
       const done = await supertest(app.getHttpServer())
         .get("/v1/panel/server/rebuild")
@@ -1537,7 +1582,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("создаёт конфиг (единственная точка записи)", async () => {
       const res = await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher/config")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .send(validConfig)
         .expect(200);
 
@@ -1551,7 +1596,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("повторная запись конфига заменяет файл целиком и подчищает temp (TASK-21)", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher/config")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .send({ ...validConfig, projectName: "V1SecondWrite" })
         .expect(200);
 
@@ -1568,10 +1613,18 @@ describe("V1 panel эндпоинты", (): void => {
         .expect(403);
     });
 
-    it("возвращает 400 при отсутствии обязательных полей", async () => {
+    it("возвращает 403 для админа — запись конфига привилегия овнера", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher/config")
         .set("Authorization", `Bearer ${adminToken}`)
+        .send(validConfig)
+        .expect(403);
+    });
+
+    it("возвращает 400 при отсутствии обязательных полей", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher/config")
+        .set("Authorization", `Bearer ${ownerToken}`)
         .send({ projectName: "OnlyName" })
         .expect(400);
     });
@@ -1579,7 +1632,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 400 при невалидных данных", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher/config")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .send({ ...validConfig, online: "not-a-bool" })
         .expect(400);
     });
@@ -1611,7 +1664,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 400 при невалидной версии", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .field("version", "bad-version")
         .expect(400);
     });
@@ -1619,7 +1672,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 400 при неизвестном имени файлового поля", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .field("version", "9.9.9")
         .attach("linux_x64", Buffer.from("zip-content"), "launcher.zip")
         .expect(400);
@@ -1628,7 +1681,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("обновляет версию лаунчера", async () => {
       const res = await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .field("version", "9.9.9")
         .expect(200);
 
@@ -1644,15 +1697,14 @@ describe("V1 panel эндпоинты", (): void => {
       try {
         const res = await supertest(app.getHttpServer())
           .patch("/v1/panel/launcher")
-          .set("Authorization", `Bearer ${adminToken}`)
+          .set("Authorization", `Bearer ${ownerToken}`)
           .field("version", "7.7.7")
           .attach("linux_x86_64", Buffer.from("streamed-zip-content"), "launcher.zip")
           .expect(200);
 
         expect(res.body.updated).toContain("linux/x86_64");
 
-        const tmpDir = join("public", ".upload-tmp");
-        const leftovers = existsSync(tmpDir) ? readdirSync(tmpDir) : [];
+        const leftovers = existsSync(UPLOAD_TMP_DIR) ? readdirSync(UPLOAD_TMP_DIR) : [];
         expect(leftovers).toEqual([]);
         expect(readFileSync(join(zipDir, "Limacina-7.7.7-linux-x86_64.zip"), "utf-8")).toBe(
           "streamed-zip-content",
@@ -1662,7 +1714,7 @@ describe("V1 panel эндпоинты", (): void => {
           const zipPath = join(dir, "Limacina-7.7.7-linux-x86_64.zip");
           if (existsSync(zipPath)) unlinkSync(zipPath);
         }
-        rmSync(join("public", ".upload-tmp"), { recursive: true, force: true });
+        rmSync(UPLOAD_TMP_DIR, { recursive: true, force: true });
       }
     });
 
@@ -1678,7 +1730,7 @@ describe("V1 panel эндпоинты", (): void => {
           versions.map((version) =>
             supertest(app.getHttpServer())
               .patch("/v1/panel/launcher")
-              .set("Authorization", `Bearer ${adminToken}`)
+              .set("Authorization", `Bearer ${ownerToken}`)
               .field("version", version)
               .attach("linux_x86_64", Buffer.from(`zip-${version}`), "launcher.zip"),
           ),
@@ -1717,6 +1769,14 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 401 без токена", async () => {
       await supertest(app.getHttpServer()).patch("/v1/panel/launcher").expect(401);
     });
+
+    it("возвращает 403 для админа — обновление лаунчера привилегия овнера", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .field("version", "9.9.9")
+        .expect(403);
+    });
   });
 
   describe("PATCH /v1/panel/launcher/release (tauri-plugin-updater)", () => {
@@ -1751,7 +1811,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 400 без поля version", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher/release")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .attach("windows-x86_64", Buffer.from("installer"), "Setup.exe")
         .attach("windows-x86_64_sig", Buffer.from("sig"), "Setup.exe.sig")
         .expect(400);
@@ -1760,7 +1820,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 400 при невалидной версии", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher/release")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .field("version", "bad-version")
         .expect(400);
     });
@@ -1768,7 +1828,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 400 при неизвестном имени файлового поля", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher/release")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .field("version", RELEASE_VERSION)
         .attach("linux_x64", Buffer.from("installer"), "app.AppImage")
         .expect(400);
@@ -1777,7 +1837,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 400 при неподдерживаемом расширении артефакта", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher/release")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .field("version", RELEASE_VERSION)
         .attach("windows-x86_64", Buffer.from("installer"), "Setup.msi")
         .attach("windows-x86_64_sig", Buffer.from("sig"), "Setup.exe.sig")
@@ -1787,7 +1847,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 400 при неполной паре артефакт+подпись", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher/release")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .field("version", RELEASE_VERSION)
         .attach("windows-x86_64", Buffer.from("installer"), "Setup.exe")
         .expect(400);
@@ -1796,7 +1856,7 @@ describe("V1 panel эндпоинты", (): void => {
     it("публикует релиз: артефакт и подпись по каноническим путям, temp чистится", async () => {
       const res = await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher/release")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .field("version", RELEASE_VERSION)
         .attach("windows-x86_64", Buffer.from("installer-content"), "Setup.exe")
         .attach("windows-x86_64_sig", Buffer.from("sig-content"), "Setup.exe.sig")
@@ -1829,7 +1889,7 @@ describe("V1 panel эндпоинты", (): void => {
 
       await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher/release")
-        .set("Authorization", `Bearer ${adminToken}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
         .field("version", RELEASE_VERSION)
         .attach("windows-x86_64", Buffer.from("installer-v2"), "Setup.exe")
         .attach("windows-x86_64_sig", Buffer.from("sig-v2"), "Setup.exe.sig")
@@ -1841,6 +1901,16 @@ describe("V1 panel эндпоинты", (): void => {
           file.endsWith(".replaced"),
         ),
       ).toBe(false);
+    });
+
+    it("возвращает 403 для админа — публикация релиза привилегия овнера", async () => {
+      await supertest(app.getHttpServer())
+        .patch("/v1/panel/launcher/release")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .field("version", RELEASE_VERSION)
+        .attach("windows-x86_64", Buffer.from("installer"), "Setup.exe")
+        .attach("windows-x86_64_sig", Buffer.from("sig"), "Setup.exe.sig")
+        .expect(403);
     });
   });
 });

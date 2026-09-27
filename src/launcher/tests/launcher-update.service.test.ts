@@ -15,7 +15,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { LauncherUpdateService, type LauncherPlatformFile } from "../launcher-update.service";
-import { OLD_VERSIONS_DIR, UPLOAD_TMP_DIR } from "../../launcher/launcher-files";
+import { OLD_VERSIONS_DIR, UPLOAD_TMP_DIR } from "../launcher-files";
 
 const VERSION_FILE = "public/version.json";
 const VERSION_BACKUP = "public/version.json.bak";

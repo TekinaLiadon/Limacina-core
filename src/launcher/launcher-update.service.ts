@@ -13,9 +13,9 @@ import {
   buildLauncherZipName,
   isSupportedPlatform,
   parseLauncherZipName,
-} from "../launcher/launcher-files";
-import { buildReplacedZipName } from "../launcher/release-service-dirs";
-import { VERSION_FILE, readLauncherVersion } from "../launcher/version-file";
+} from "./launcher-files";
+import { buildReplacedZipName } from "./release-service-dirs";
+import { VERSION_FILE, readLauncherVersion } from "./version-file";
 
 interface ZipMigrationStep {
   os: string;

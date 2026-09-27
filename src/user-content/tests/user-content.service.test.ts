@@ -598,6 +598,23 @@ describe("UserContentService — сериализация операций на�
   });
 });
 
+describe("UserContentService — тексты ошибок удаления", (): void => {
+  let service: UserContentService;
+
+  beforeAll(() => {
+    const config = GlobalConfig.parseEnvOrExit({ ...process.env });
+    service = new UserContentService(new UserContentMapStore(), config);
+  });
+
+  it("404 называет тип контента в именительном падеже", async () => {
+    await expect(service.delete("notfound-user-0001", 1, "skin")).rejects.toThrow("Скин не найден");
+    await expect(service.delete("notfound-user-0001", 1, "cape")).rejects.toThrow("Плащ не найден");
+    await expect(service.delete("notfound-user-0001", 1, "model")).rejects.toThrow(
+      "Модель не найдена",
+    );
+  });
+});
+
 class GatedTextureSyncStore extends YggdrasilMapStore {
   onSync: (() => Promise<void>) | undefined;
 

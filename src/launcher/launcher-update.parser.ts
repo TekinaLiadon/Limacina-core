@@ -2,7 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 import type { FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { SUPPORTED_PLATFORMS, UPLOAD_TMP_DIR } from "../launcher/launcher-files";
+import { SUPPORTED_PLATFORMS, UPLOAD_TMP_DIR } from "./launcher-files";
 import { removeFile, streamPartToFile } from "../utils/multipart-file";
 import type { LauncherPlatformFile } from "./launcher-update.service";
 

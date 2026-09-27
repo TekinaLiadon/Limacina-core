@@ -128,6 +128,24 @@ contractDescribeEach("контракт IAuthStore", (driver) => {
     expect((await ctx.store.findByUsername(user.username))?.approved).toBe(true);
   });
 
+  it("setApproved/setBanned/updateRole возвращают признак применения (TASK-267.13)", async () => {
+    const user = await ctx.makeUser();
+
+    expect(await ctx.store.setApproved(user.uuid, true)).toBe(true);
+    expect(await ctx.store.setBanned(user.uuid, false)).toBe(true);
+    expect(await ctx.store.updateRole(user.uuid, "user")).toBe(true);
+
+    const missing = generateUuid();
+    expect(await ctx.store.setApproved(missing, true)).toBe(false);
+    expect(await ctx.store.setBanned(missing, true)).toBe(false);
+    expect(await ctx.store.updateRole(missing, "admin")).toBe(false);
+
+    await ctx.store.deleteUser(user.uuid);
+    expect(await ctx.store.setApproved(user.uuid, true)).toBe(false);
+    expect(await ctx.store.setBanned(user.uuid, true)).toBe(false);
+    expect(await ctx.store.updateRole(user.uuid, "admin")).toBe(false);
+  });
+
   it("setBanned переключает бан в обе стороны", async () => {
     const user = await ctx.makeUser();
 

@@ -1,4 +1,4 @@
-import { UPLOAD_TMP_DIR } from "../../launcher/launcher-files";
+import { UPLOAD_TMP_DIR } from "../launcher-files";
 import { setupTestEnv } from "../../utils/tests/test-env";
 
 setupTestEnv();
@@ -8,10 +8,7 @@ import { BadRequestException } from "@nestjs/common";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import type { FastifyRequest } from "fastify";
 import { Readable } from "node:stream";
-import {
-  MAX_RELEASE_ARTIFACT_BYTES,
-  parseLauncherReleaseRequest,
-} from "../launcher-release.parser";
+import { MAX_RELEASE_ARTIFACT_BYTES, parseLauncherReleaseRequest } from "../release-publish.parser";
 
 interface FakePart {
   type: "field" | "file";

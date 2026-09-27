@@ -97,14 +97,28 @@ export class AuthPostgresStore implements IAuthStore {
     return true;
   }
 
-  async setApproved(uuid: string, approved: boolean): Promise<void> {
-    const query = updateColumnQuery(TABLES.users, "approved", approved, "uuid = $1", uuid);
-    await execute(query.sql, query.values);
+  async setApproved(uuid: string, approved: boolean): Promise<boolean> {
+    const query = updateColumnQuery(
+      TABLES.users,
+      "approved",
+      approved,
+      "uuid = $1 AND deleted = false",
+      uuid,
+    );
+    const { count } = await execute(query.sql, query.values);
+    return this.appliedToLiveUser(count, uuid);
   }
 
-  async setBanned(uuid: string, banned: boolean): Promise<void> {
-    const query = updateColumnQuery(TABLES.users, "banned", banned, "uuid = $1", uuid);
-    await execute(query.sql, query.values);
+  async setBanned(uuid: string, banned: boolean): Promise<boolean> {
+    const query = updateColumnQuery(
+      TABLES.users,
+      "banned",
+      banned,
+      "uuid = $1 AND deleted = false",
+      uuid,
+    );
+    const { count } = await execute(query.sql, query.values);
+    return this.appliedToLiveUser(count, uuid);
   }
 
   async userExists(username: string): Promise<boolean> {
@@ -130,9 +144,28 @@ export class AuthPostgresStore implements IAuthStore {
     ]);
   }
 
-  async updateRole(uuid: string, role: string): Promise<void> {
-    const query = updateColumnQuery(TABLES.users, "role", role, "uuid = $1", uuid);
-    await execute(query.sql, query.values);
+  async updateRole(uuid: string, role: string): Promise<boolean> {
+    const query = updateColumnQuery(
+      TABLES.users,
+      "role",
+      role,
+      "uuid = $1 AND deleted = false",
+      uuid,
+    );
+    const { count } = await execute(query.sql, query.values);
+    return this.appliedToLiveUser(count, uuid);
+  }
+
+  private async appliedToLiveUser(affected: number, uuid: string): Promise<boolean> {
+    if (affected > 0) return true;
+    const query = selectQuery("1")
+      .from(TABLES.users)
+      .where("uuid = $1", uuid)
+      .where("deleted = false")
+      .limit(1)
+      .build();
+    const { rows } = await execute(query.sql, query.values);
+    return rows.length > 0;
   }
 
   async deleteUser(uuid: string): Promise<void> {

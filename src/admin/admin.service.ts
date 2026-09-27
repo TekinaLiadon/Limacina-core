@@ -28,6 +28,11 @@ interface MutationStep {
   undo: () => Promise<void>;
 }
 
+interface StatusFieldAccess<Value> {
+  write: (value: Value) => Promise<boolean>;
+  read: () => Promise<Value | undefined>;
+}
+
 @Injectable()
 export class AdminService implements OnModuleInit {
   private readonly logger = new Logger(AdminService.name);
@@ -62,30 +67,36 @@ export class AdminService implements OnModuleInit {
 
   async setApproved(username: string, approved: boolean, actor: RequestUser): Promise<void> {
     await this.applyUserMutation(username, actor, "approve", "Статус одобрения изменён", (user) =>
-      this.buildStorePairSteps(
+      this.statusPairSteps(
+        username,
         {
-          run: () => this.adminStore.setApproved(username, approved),
-          undo: () => this.adminStore.setApproved(username, user.approved),
+          write: (value) => this.adminStore.setApproved(username, value),
+          read: async () => (await this.adminStore.findByUsername(username))?.approved,
         },
         {
-          run: () => this.authStore.setApproved(user.uuid, approved),
-          undo: () => this.authStore.setApproved(user.uuid, user.approved),
+          write: (value) => this.authStore.setApproved(user.uuid, value),
+          read: async () => (await this.authStore.findByUsername(username))?.approved,
         },
+        approved,
+        user.approved,
       ),
     );
   }
 
   async setBanned(username: string, banned: boolean, actor: RequestUser): Promise<void> {
     await this.applyUserMutation(username, actor, "ban", "Статус бана изменён", (user) =>
-      this.buildStorePairSteps(
+      this.statusPairSteps(
+        username,
         {
-          run: () => this.adminStore.setBanned(username, banned),
-          undo: () => this.adminStore.setBanned(username, user.banned),
+          write: (value) => this.adminStore.setBanned(username, value),
+          read: async () => (await this.adminStore.findByUsername(username))?.banned,
         },
         {
-          run: () => this.authStore.setBanned(user.uuid, banned),
-          undo: () => this.authStore.setBanned(user.uuid, user.banned),
+          write: (value) => this.authStore.setBanned(user.uuid, value),
+          read: async () => (await this.authStore.findByUsername(username))?.banned,
         },
+        banned,
+        user.banned,
       ),
     );
   }
@@ -99,16 +110,19 @@ export class AdminService implements OnModuleInit {
       throw new ForbiddenException("Невозможно выдать роль, равную или выше собственной");
     }
 
-    await this.applyUserMutation(username, actor, "setRole", "Роль пользователя изменена", (user) =>
-      this.buildStorePairSteps(
+    await this.applyUserMutation(username, actor, "setRole", "Роль пользователя изменён", (user) =>
+      this.statusPairSteps(
+        username,
         {
-          run: () => this.adminStore.setRole(username, role),
-          undo: () => this.adminStore.setRole(username, user.role),
+          write: (value) => this.adminStore.setRole(username, value),
+          read: async () => (await this.adminStore.findByUsername(username))?.role,
         },
         {
-          run: () => this.authStore.updateRole(user.uuid, role),
-          undo: () => this.authStore.updateRole(user.uuid, user.role),
+          write: (value) => this.authStore.updateRole(user.uuid, value),
+          read: async () => (await this.authStore.findByUsername(username))?.role,
         },
+        role,
+        user.role,
       ),
     );
   }
@@ -128,18 +142,26 @@ export class AdminService implements OnModuleInit {
       throw new NotFoundException(`Пользователь ${username} не найден`);
     }
 
-    await this.applyWithRollback(
-      this.buildStorePairSteps(
-        {
-          run: () => this.adminStore.setRole(username, "owner"),
-          undo: () => this.adminStore.setRole(username, user.role),
-        },
-        {
-          run: () => this.authStore.updateRole(user.uuid, "owner"),
-          undo: () => this.authStore.updateRole(user.uuid, user.role),
-        },
-      ),
-    );
+    try {
+      await this.applyWithRollback(
+        this.statusPairSteps(
+          username,
+          {
+            write: (value) => this.adminStore.setRole(username, value),
+            read: async () => (await this.adminStore.findByUsername(username))?.role,
+          },
+          {
+            write: (value) => this.authStore.updateRole(user.uuid, value),
+            read: async () => (await this.authStore.findByUsername(username))?.role,
+          },
+          "owner",
+          user.role,
+        ),
+      );
+    } catch (error) {
+      this.logger.error(this.audit(actor, username, "setOwner"), "Отказ: мутация не применена");
+      throw error;
+    }
     this.logger.log(this.audit(actor, username, "setOwner"), "Пользователь назначен владельцем");
   }
 
@@ -269,18 +291,53 @@ export class AdminService implements OnModuleInit {
     buildSteps: (user: AdminUser) => MutationStep[],
   ): Promise<void> {
     const user = await this.findMutableUser(username, actor, action);
-    await this.applyWithRollback(buildSteps(user));
+    try {
+      await this.applyWithRollback(buildSteps(user));
+    } catch (error) {
+      this.logger.error(this.audit(actor, username, action), "Отказ: мутация не применена");
+      throw error;
+    }
     this.logger.log(this.audit(actor, username, action), successMessage);
   }
 
-  private buildStorePairSteps(
-    admin: { run: () => Promise<void>; undo: () => Promise<void> },
-    auth: { run: () => Promise<void>; undo: () => Promise<void> },
+  private statusPairSteps<Value extends boolean | string>(
+    username: string,
+    admin: StatusFieldAccess<Value>,
+    auth: StatusFieldAccess<Value>,
+    next: Value,
+    previous: Value,
   ): MutationStep[] {
     return [
-      { run: admin.run, undo: admin.undo },
-      { run: auth.run, undo: auth.undo },
+      this.statusStep(username, admin, next, previous),
+      this.statusStep(username, auth, next, previous),
     ];
+  }
+
+  private statusStep<Value extends boolean | string>(
+    username: string,
+    access: StatusFieldAccess<Value>,
+    next: Value,
+    previous: Value,
+  ): MutationStep {
+    return {
+      run: async () => {
+        const applied = await access.write(next);
+        if (!applied) {
+          throw new NotFoundException(`Пользователь ${username} не найден`);
+        }
+      },
+      undo: async () => {
+        const current = await access.read();
+        if (current !== next) {
+          this.logger.warn(
+            { username },
+            "Откат мутации пропущен: пользователь отсутствует или изменён конкурентно",
+          );
+          return;
+        }
+        await access.write(previous);
+      },
+    };
   }
 
   private async applyWithRollback(steps: MutationStep[]): Promise<void> {

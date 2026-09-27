@@ -117,6 +117,19 @@ describe("CacheMapStore", (): void => {
     expect(await store.get<string>("b")).toBeUndefined();
     expect(await store.get<string>("a")).toBe("A2");
   });
+
+  it("вытеснение при заполненной мапе сначала чистит истёкшие записи (TASK-269.29)", async (): Promise<void> => {
+    const store = new CacheMapStore(new MemoryDb(), 2);
+
+    await store.set("fresh", "F", 60_000);
+    await store.set("stale", "S", 1);
+    await Bun.sleep(5);
+    await store.set("newcomer", "N");
+
+    expect(await store.get<string>("fresh")).toBe("F");
+    expect(await store.get<string>("newcomer")).toBe("N");
+    expect(await store.get<string>("stale")).toBeUndefined();
+  });
 });
 
 describe("createCacheStore", (): void => {

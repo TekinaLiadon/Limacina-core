@@ -47,7 +47,7 @@
     "@scalar/nestjs-api-reference": "^1.2.17",
     "@tsconfig/node-lts": "^24.0.1",
     "@typescript/native-preview": "^7.0.0-dev.20260707.2",
-    "bunsql-native-migrate": "0.2.0",
+    "bunsql-native-migrate": "0.4.1",
     "chokidar": "^5.0.0",
     "nestjs-pino": "^4.6.1",
     "passport": "^0.7.0",

@@ -14,24 +14,28 @@ import {
   type IUserContentStore,
 } from "./user_content_store";
 import type { UserContentUploadResponseDto } from "./dto/dto";
-import { unlinkSync } from "node:fs";
 import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 import { YggdrasilStoreToken, type IYggdrasilStore } from "../yggdrasil/service/yggdrasil_store";
 import { sanitizeFilePrefix } from "../utils/file-prefix";
 import { sanitizePng } from "../utils/png";
 import {
+  TEXTURE_DIRECTORIES,
+  buildContentLocation,
+  releaseContentFile,
+} from "../utils/content-files";
+import {
   DEFAULT_SKIN_PATH,
-  MAX_TEXTURE_BYTES,
   type SkinModel,
+  type TextureKind,
   buildDefaultSkinUrl,
-  pngStructureErrorMessage,
-  sha256Hex,
-  textureDimensionsErrorMessage,
+  textureFileIssue,
 } from "../utils/texture";
 import { lastById } from "../utils/collection";
 
 export const MAX_MODEL_BYTES = 256 * 1024;
+
+const CONTENT_DIRECTORIES: readonly string[] = [...TEXTURE_DIRECTORIES, "models"];
 
 const hasBinaryBytes = (file: Uint8Array): boolean =>
   file.some((byte) => byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d);
@@ -117,16 +121,25 @@ export class UserContentService {
     }
 
     const stored = type === "model" ? file : sanitizePng(file);
-    const hash = sha256Hex(stored);
     const prefix = sanitizeFilePrefix(username, userUuid);
-    const filename = `${prefix}-${hash}.${extension}`;
-    const url = `${this.config.BASE_URL}/${directory}/${filename}`;
-    const filePath = `public/${directory}/${filename}`;
+    const location = buildContentLocation(
+      this.config.BASE_URL,
+      directory,
+      prefix,
+      stored,
+      extension,
+    );
 
-    return this.withPathLock(url, async () => {
+    return this.withPathLock(location.url, async () => {
       let item: Awaited<ReturnType<IUserContentStore["saveWithinLimit"]>>;
       try {
-        item = await this.store.saveWithinLimit(userUuid, url, type, maxPerUser, skinModel);
+        item = await this.store.saveWithinLimit(
+          userUuid,
+          location.url,
+          type,
+          maxPerUser,
+          skinModel,
+        );
       } catch (error) {
         if (!isUserContentLimitExceededError(error)) throw error;
         this.logger.warn({ userUuid, type, maxPerUser }, "Upload limit reached");
@@ -136,23 +149,23 @@ export class UserContentService {
       }
 
       try {
-        await Bun.write(filePath, new Uint8Array(stored));
+        await Bun.write(location.path, new Uint8Array(stored));
       } catch (error) {
-        await this.rollbackUpload(item.id, type, filePath, url);
+        await this.rollbackUpload(item.id, type, location.url);
         throw error;
       }
 
       if (type === "cape") {
         try {
-          await this.syncProfileTexture(userUuid, { capeUrl: url });
+          await this.syncProfileTexture(userUuid, { capeUrl: location.url });
         } catch (error) {
-          await this.rollbackUpload(item.id, type, filePath, url);
+          await this.rollbackUpload(item.id, type, location.url);
           throw error;
         }
       }
 
       this.logger.debug({ userUuid, type, id: item.id }, "Uploaded");
-      return { id: item.id, url };
+      return { id: item.id, url: location.url };
     });
   }
 
@@ -174,29 +187,22 @@ export class UserContentService {
     }
   }
 
-  private async rollbackUpload(
-    id: number,
-    type: ContentType,
-    localPath: string,
-    url: string,
-  ): Promise<void> {
+  private async rollbackUpload(id: number, type: ContentType, url: string): Promise<void> {
     try {
       const removed = await this.store.deleteByIdAndCountRemaining(id, type);
-      if (!removed || removed.remainingCount > 0) return;
-      if (this.profileStore && (await this.profileStore.countProfilesByTextureUrl(url)) > 0) {
-        return;
-      }
-      this.unlinkLocalFile(localPath);
+      if (!removed) return;
+      const profileRefs = this.profileStore
+        ? await this.profileStore.countProfilesByTextureUrl(url)
+        : 0;
+      await releaseContentFile({
+        logger: this.logger,
+        baseUrl: this.config.BASE_URL,
+        url,
+        directories: CONTENT_DIRECTORIES,
+        referenceCount: removed.remainingCount + profileRefs,
+      });
     } catch (error) {
-      this.logger.error({ err: error, id, type, localPath }, "Не удалось откатить загрузку");
-    }
-  }
-
-  private unlinkLocalFile(localPath: string): void {
-    try {
-      unlinkSync(localPath);
-    } catch (error) {
-      this.logger.error({ err: error, path: localPath }, "Не удалось удалить файл контента");
+      this.logger.error({ err: error, id, type, url }, "Не удалось откатить загрузку");
     }
   }
 
@@ -305,35 +311,35 @@ export class UserContentService {
     return "моделей";
   }
 
+  private contentNotFoundMessage(type: ContentType): string {
+    if (type === "skin") return "Скин не найден";
+    if (type === "cape") return "Плащ не найден";
+    return "Модель не найдена";
+  }
+
   private isDefaultSkin(type: ContentType, filePath: string): boolean {
     if (type !== "skin") return false;
     return filePath === this.defaultSkinUrl || filePath === DEFAULT_SKIN_PATH;
   }
 
-  private validatePngFile(file: Uint8Array, type: ContentType): void {
+  private validatePngFile(file: Uint8Array, type: TextureKind): void {
     const contentName = this.contentTypeName(type);
     if (file.length === 0) {
       throw new BadRequestException(`Файл ${contentName} пустой`);
     }
-    if (file.length > MAX_TEXTURE_BYTES) {
+
+    const issue = textureFileIssue(file, type);
+    if (!issue) return;
+
+    if (issue.kind === "size") {
       throw new BadRequestException(
-        `Файл ${contentName} слишком большой: ${file.length} байт (максимум ${MAX_TEXTURE_BYTES})`,
+        `Файл ${contentName} слишком большой: ${issue.bytes} байт (максимум ${issue.maxBytes})`,
       );
     }
-
-    const invalidMessage = pngStructureErrorMessage(file);
-    if (invalidMessage) {
-      throw new BadRequestException(`Невалидный файл ${contentName}: ${invalidMessage}`);
+    if (issue.kind === "dimensions") {
+      throw new BadRequestException(`Недопустимый размер файла ${contentName}: ${issue.message}`);
     }
-
-    if (type === "skin" || type === "cape") {
-      const dimensionMessage = textureDimensionsErrorMessage(file, type);
-      if (dimensionMessage) {
-        throw new BadRequestException(
-          `Недопустимый размер файла ${contentName}: ${dimensionMessage}`,
-        );
-      }
-    }
+    throw new BadRequestException(`Невалидный файл ${contentName}: ${issue.message}`);
   }
 
   private validateModelFile(file: Uint8Array): void {
@@ -385,8 +391,7 @@ export class UserContentService {
   async delete(ownerUuid: string, id: number, type: ContentType): Promise<void> {
     const item = await this.store.findById(id, type);
     if (!item) {
-      const name = this.contentTypeName(type);
-      throw new NotFoundException(`${name.slice(0, -1)} не найден`);
+      throw new NotFoundException(this.contentNotFoundMessage(type));
     }
 
     if (item.userUuid !== ownerUuid) {
@@ -409,23 +414,13 @@ export class UserContentService {
 
       await this.syncProfileAfterDelete(ownerUuid, type, item.active);
 
-      if (removed.remainingCount > 0) {
-        this.logger.debug(
-          { id, type, remainingCount: removed.remainingCount },
-          "Файл контента ещё используется другими записями",
-        );
-        return;
-      }
-
-      if (profileRefs > 0) {
-        this.logger.debug(
-          { id, type, profileRefs },
-          "Файл контента ещё используется профилями Yggdrasil",
-        );
-        return;
-      }
-
-      this.unlinkLocalFile(`public/${item.filePath.replace(`${this.config.BASE_URL}/`, "")}`);
+      await releaseContentFile({
+        logger: this.logger,
+        baseUrl: this.config.BASE_URL,
+        url: item.filePath,
+        directories: CONTENT_DIRECTORIES,
+        referenceCount: removed.remainingCount + profileRefs,
+      });
 
       this.logger.debug({ ownerUuid, type, id }, "Deleted");
     });

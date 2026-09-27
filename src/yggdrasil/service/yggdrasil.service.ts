@@ -1,6 +1,6 @@
 import { HttpException, HttpStatus, Inject, Injectable, Logger } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
-import { readFileSync, existsSync, unlinkSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { sign } from "node:crypto";
 import { generateUuid } from "../../utils/uuid";
@@ -40,13 +40,11 @@ import type { AppConfigType } from "../../config/global-config";
 import { resolveKeysDir } from "./keys-dir";
 import { sanitizeFilePrefix } from "../../utils/file-prefix";
 import {
-  MAX_TEXTURE_BYTES,
-  buildDefaultSkinUrl,
-  isSkinModel,
-  pngStructureErrorMessage,
-  sha256Hex,
-  textureDimensionsErrorMessage,
-} from "../../utils/texture";
+  TEXTURE_DIRECTORIES,
+  buildContentLocation,
+  releaseContentFile,
+} from "../../utils/content-files";
+import { buildDefaultSkinUrl, isSkinModel, textureFileIssue } from "../../utils/texture";
 import { sanitizePng } from "../../utils/png";
 import { lastById } from "../../utils/collection";
 
@@ -74,6 +72,16 @@ function buildUploadableTexturesProperty(): TextureProperty {
   };
 }
 
+const IPV4_HOST_PATTERN = /^(\d{1,3})(\.\d{1,3}){3}$/;
+
+function resolveSkinWildcardDomain(host: string): string | null {
+  if (host.includes(":") || IPV4_HOST_PATTERN.test(host)) return null;
+  const firstDot = host.indexOf(".");
+  if (firstDot === -1) return null;
+  if (!host.includes(".", firstDot + 1)) return `.${host}`;
+  return host.slice(firstDot);
+}
+
 @Injectable()
 export class YggdrasilService {
   private readonly logger = new Logger(YggdrasilService.name);
@@ -81,6 +89,7 @@ export class YggdrasilService {
   private readonly jwtSecret: string;
   private readonly privateKey: string;
   private readonly publicKeyPem: string;
+  private dummyPasswordHash: Promise<string> | undefined;
 
   constructor(
     @Inject(YggdrasilStoreToken) private readonly store: IYggdrasilStore,
@@ -124,12 +133,27 @@ export class YggdrasilService {
     );
   }
 
+  private async matchPasswordVerifyTiming(password: string): Promise<void> {
+    this.dummyPasswordHash ??= Bun.password.hash(generateUuid());
+    await Bun.password.verify(password, await this.dummyPasswordHash);
+  }
+
   async authenticate(dto: AuthenticateDto): Promise<AuthenticateResponseDto> {
     const user = await this.store.findUserByUsername(dto.username);
-    if (!user)
+    if (!user) {
+      await this.matchPasswordVerifyTiming(dto.password);
       throw this.createError(
         { info: dto.username },
         "user not found",
+        "Invalid credentials. Invalid username or password.",
+      );
+    }
+
+    const valid = await Bun.password.verify(dto.password, user.passwordHash);
+    if (!valid)
+      throw this.createError(
+        { info: dto.username },
+        "invalid password",
         "Invalid credentials. Invalid username or password.",
       );
 
@@ -137,14 +161,6 @@ export class YggdrasilService {
       throw this.createError(
         { info: dto.username },
         "user banned or not approved",
-        "Invalid credentials. Invalid username or password.",
-      );
-
-    const valid = await Bun.password.verify(dto.password, user.passwordHash);
-    if (!valid)
-      throw this.createError(
-        { info: dto.username },
-        "invalid password",
         "Invalid credentials. Invalid username or password.",
       );
 
@@ -256,12 +272,14 @@ export class YggdrasilService {
 
   async signout(dto: SignoutDto): Promise<void> {
     const user = await this.store.findUserByUsername(dto.username);
-    if (!user)
+    if (!user) {
+      await this.matchPasswordVerifyTiming(dto.password);
       throw this.createError(
         { info: dto.username },
         "invalid credentials",
         "Invalid credentials. Invalid username or password.",
       );
+    }
 
     const valid = await Bun.password.verify(dto.password, user.passwordHash);
     if (!valid)
@@ -420,31 +438,28 @@ export class YggdrasilService {
   }
 
   private validateTextureFile(file: Buffer, textureType: "skin" | "cape"): void {
-    if (file.length > MAX_TEXTURE_BYTES) {
-      throw this.createError(
-        { info: `size ${file.length} bytes, max ${MAX_TEXTURE_BYTES}` },
-        "texture upload",
-        `Texture file too large: ${file.length} bytes (max ${MAX_TEXTURE_BYTES}).`,
-      );
-    }
+    const issue = textureFileIssue(file, textureType);
+    if (!issue) return;
 
-    const invalidMessage = pngStructureErrorMessage(file);
-    if (invalidMessage) {
+    if (issue.kind === "size") {
       throw this.createError(
-        { info: invalidMessage },
+        { info: `size ${issue.bytes} bytes, max ${issue.maxBytes}` },
         "texture upload",
-        `Invalid texture file: ${invalidMessage}.`,
+        `Texture file too large: ${issue.bytes} bytes (max ${issue.maxBytes}).`,
       );
     }
-
-    const dimensionMessage = textureDimensionsErrorMessage(file, textureType);
-    if (dimensionMessage) {
+    if (issue.kind === "dimensions") {
       throw this.createError(
-        { info: dimensionMessage },
+        { info: issue.message },
         "texture upload",
-        `Invalid texture dimensions: ${dimensionMessage}.`,
+        `Invalid texture dimensions: ${issue.message}.`,
       );
     }
+    throw this.createError(
+      { info: issue.message },
+      "texture upload",
+      `Invalid texture file: ${issue.message}.`,
+    );
   }
 
   private computeTextureTarget(
@@ -453,11 +468,7 @@ export class YggdrasilService {
     fallbackPrefix: string,
   ): { url: string; path: string } {
     const prefix = sanitizeFilePrefix(ownerUsername, fallbackPrefix);
-    const filename = `${prefix}-${sha256Hex(file)}.png`;
-    return {
-      url: `${this.config.BASE_URL}/textures/${filename}`,
-      path: `public/textures/${filename}`,
-    };
+    return buildContentLocation(this.config.BASE_URL, "textures", prefix, file, "png");
   }
 
   private async rollbackProfileTexture(
@@ -499,34 +510,17 @@ export class YggdrasilService {
     textureType: "skin" | "cape",
   ): Promise<void> {
     if (!url) return;
-    const localPath = this.resolveOwnTexturePath(url);
-    if (!localPath) return;
+    if (url === this.defaultSkinUrl) return;
 
     const contentRefs = await this.contentStore.countByFilePath(url, textureType);
     const profileRefs = await this.store.countProfilesByTextureUrl(url);
-    if (contentRefs + profileRefs > 0) {
-      this.logger.debug(
-        { url, contentRefs, profileRefs },
-        "Файл текстуры ещё используется другими ссылками",
-      );
-      return;
-    }
-
-    try {
-      unlinkSync(localPath);
-      this.logger.debug({ url }, "Файл текстуры удалён");
-    } catch (error) {
-      this.logger.error({ err: error, path: localPath }, "Не удалось удалить файл текстуры");
-    }
-  }
-
-  private resolveOwnTexturePath(url: string): string | undefined {
-    if (url === this.defaultSkinUrl) return undefined;
-    if (!url.startsWith(`${this.config.BASE_URL}/`)) return undefined;
-    const localPath = `public/${url.replace(`${this.config.BASE_URL}/`, "")}`;
-    const hosted =
-      localPath.startsWith("public/textures/") || localPath.startsWith("public/capes/");
-    return hosted ? localPath : undefined;
+    await releaseContentFile({
+      logger: this.logger,
+      baseUrl: this.config.BASE_URL,
+      url,
+      directories: TEXTURE_DIRECTORIES,
+      referenceCount: contentRefs + profileRefs,
+    });
   }
 
   private async authenticateTextureAccess(authorization?: string): Promise<TextureAccessPrincipal> {
@@ -608,9 +602,8 @@ export class YggdrasilService {
     try {
       const host = new URL(this.config.BASE_URL).hostname;
       skinDomains.push(host);
-      if (host.includes(".")) {
-        skinDomains.push(host.slice(host.indexOf(".")));
-      }
+      const wildcardDomain = resolveSkinWildcardDomain(host);
+      if (wildcardDomain) skinDomains.push(wildcardDomain);
     } catch (error) {
       this.logger.warn(
         { err: error, baseUrl: this.config.BASE_URL },

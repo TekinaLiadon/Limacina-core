@@ -22,18 +22,20 @@ export class AuthProxyStore implements IAuthStore {
     return false;
   }
 
-  async setApproved(uuid: string, approved: boolean): Promise<void> {
+  async setApproved(uuid: string, approved: boolean): Promise<boolean> {
     this.logger.warn(
       { uuid, approved, upstreamUrl: this.upstreamUrl },
       "setApproved в прокси-режиме не реализован",
     );
+    return true;
   }
 
-  async setBanned(uuid: string, banned: boolean): Promise<void> {
+  async setBanned(uuid: string, banned: boolean): Promise<boolean> {
     this.logger.warn(
       { uuid, banned, upstreamUrl: this.upstreamUrl },
       "setBanned в прокси-режиме не реализован",
     );
+    return true;
   }
 
   async userExists(username: string): Promise<boolean> {
@@ -47,11 +49,12 @@ export class AuthProxyStore implements IAuthStore {
     );
   }
 
-  async updateRole(uuid: string, role: string): Promise<void> {
+  async updateRole(uuid: string, role: string): Promise<boolean> {
     this.logger.warn(
       { uuid, role, upstreamUrl: this.upstreamUrl },
       "updateRole в прокси-режиме не реализован",
     );
+    return true;
   }
 
   async deleteUser(uuid: string): Promise<void> {

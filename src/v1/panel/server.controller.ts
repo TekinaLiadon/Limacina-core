@@ -4,7 +4,8 @@ import type { FastifyReply } from "fastify";
 import { Roles } from "../../common/roles.decorator";
 import { CurrentUser, type RequestUser } from "../../common/current-user.decorator";
 import { SuccessResponseDto } from "../../common/dto/dto";
-import { TechnicalService } from "../../technical/technical.service";
+import { TechnicalRestartService } from "../../technical/technical-restart.service";
+import { TechnicalRebuildService } from "../../technical/technical-rebuild.service";
 import { RebuildStatusDto, RestartServerDto } from "../../technical/dto/dto";
 
 @ApiTags("panel_server")
@@ -12,7 +13,10 @@ import { RebuildStatusDto, RestartServerDto } from "../../technical/dto/dto";
 @Roles("owner")
 @Controller("panel/server")
 export class V1PanelServerController {
-  constructor(private readonly technicalService: TechnicalService) {}
+  constructor(
+    private readonly restartService: TechnicalRestartService,
+    private readonly rebuildService: TechnicalRebuildService,
+  ) {}
 
   @Post("restart")
   @ApiOperation({
@@ -21,10 +25,12 @@ export class V1PanelServerController {
       "Аккуратно останавливает процесс: ответ клиенту уходит до остановки, затем процессу отправляется SIGTERM " +
       "и Nest закрывает соединения graceful (shutdown hooks). Подъём процесса обратно обеспечивает менеджер процессов " +
       "(pm2, autorestart). Вне pm2 (dev, тесты) процесс просто завершится.\n\n" +
-      "С `rebuild: true` запускается фоновый конвейер `git pull --ff-only` → `bun install` → `bun run migrate:up` → " +
-      "`bun run build` (каждый шаг со своим таймаутом), ответ 202 возвращается сразу — статус конвейера отдаёт " +
-      "GET /v1/panel/server/rebuild. При ошибке любого шага конвейер прерывается и сервер продолжает работать; " +
-      "неудачная сборка откатывает бинарник из резервной копии dist/Limacina.previous. Параллельный rebuild — 409.",
+      "С `rebuild: true` запускается фоновый конвейер `git pull --ff-only` → `bun install` → `bun run build` → " +
+      "`bun run migrate:up` (каждый шаг со своим таймаутом), ответ 202 возвращается сразу — статус конвейера отдаёт " +
+      "GET /v1/panel/server/rebuild. Сборка выполняется до миграций: упавшая сборка оставляет БД нетронутой, а упавшие " +
+      "миграции откатывают бинарник из резервной копии dist/Limacina.previous — прод остаётся на согласованной паре " +
+      "«бинарник ↔ схема». При ошибке любого шага конвейер прерывается и сервер продолжает работать. " +
+      "Параллельный rebuild, как и рестарт во время пересборки, — 409.",
   })
   @ApiBody({ type: RestartServerDto, required: false })
   @ApiResponse({
@@ -45,11 +51,11 @@ export class V1PanelServerController {
     @Body() dto?: RestartServerDto,
   ): Promise<SuccessResponseDto> {
     if (dto?.rebuild) {
-      this.technicalService.startRebuild(user);
+      this.rebuildService.startRebuild(user);
       reply.status(HttpStatus.ACCEPTED);
       return { success: true };
     }
-    await this.technicalService.restartServer(user);
+    await this.restartService.restartServer(user);
     return { success: true };
   }
 
@@ -62,6 +68,6 @@ export class V1PanelServerController {
   })
   @ApiResponse({ status: 403, description: "Недостаточно прав (только owner)" })
   getRebuildStatus(): RebuildStatusDto {
-    return this.technicalService.getRebuildStatus();
+    return this.rebuildService.getRebuildStatus();
   }
 }

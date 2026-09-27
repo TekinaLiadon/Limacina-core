@@ -2,13 +2,9 @@ import { BadRequestException } from "@nestjs/common";
 import type { FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import {
-  UPLOAD_TMP_DIR,
-  findUpdaterPlatform,
-  matchUpdaterArtifactSuffix,
-} from "../launcher/launcher-files";
+import { UPLOAD_TMP_DIR, findUpdaterPlatform, matchUpdaterArtifactSuffix } from "./launcher-files";
 import { FileTooLargeError, removeFile, streamPartToFile } from "../utils/multipart-file";
-import type { UpdaterArtifactUpload } from "./launcher-release.service";
+import type { UpdaterArtifactUpload } from "./release-publish.service";
 
 const SIGNATURE_FIELD_SUFFIX = "_sig";
 

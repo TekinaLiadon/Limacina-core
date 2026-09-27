@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { stringify as stringifyToml } from "smol-toml";
 import { writeFileAtomicSync } from "../utils/fs";
-import type { LauncherConfigDto } from "../launcher/dto/dto";
+import type { LauncherConfigDto } from "./dto/dto";
 
 const CONFIG_FILE = "config.toml";
 

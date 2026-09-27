@@ -1,4 +1,4 @@
-import { UPLOAD_TMP_DIR } from "../../launcher/launcher-files";
+import { UPLOAD_TMP_DIR } from "../launcher-files";
 import { afterEach, describe, expect, it } from "bun:test";
 import { BadRequestException } from "@nestjs/common";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";

@@ -1523,6 +1523,20 @@ describe("Yggdrasil эндпоинты", () => {
       expect(pendingRes.body.errorMessage).toBe(wrongPassRes.body.errorMessage);
     });
 
+    it("authenticate забаненного с неверным паролем неотличим от несуществующего юзера", async () => {
+      const bannedRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: BANNED_USERNAME, password: "wrong" })
+        .expect(403);
+
+      const ghostRes = await supertest(app.getHttpServer())
+        .post("/authserver/authenticate")
+        .send({ username: "timing-ghost", password: "wrong" })
+        .expect(403);
+
+      expect(bannedRes.body).toEqual(ghostRes.body);
+    });
+
     it("refresh токеном забаненного — 403 Invalid token", async () => {
       const token = await seedUserToken(BANNED_USERNAME, BANNED_USER_UUID, BANNED_PROFILE_UUID);
 

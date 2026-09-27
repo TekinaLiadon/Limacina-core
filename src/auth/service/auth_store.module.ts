@@ -1,6 +1,6 @@
 import { Module } from "@nestjs/common";
 import { AppConfigModule, AppConfigToken } from "../../config/app-config.provider";
-import { isSqlDriver, type AppConfigType } from "../../config/global-config";
+import { createStoreByDriver, type AppConfigType } from "../../config/global-config";
 import { MemoryDb } from "../../memory/memory-db";
 import { MemoryModule } from "../../memory/memory.module";
 import { AuthMapStore, AuthStoreToken, type IAuthStore } from "./auth_store";
@@ -12,10 +12,10 @@ function createAuthStore(config: AppConfigType, db: MemoryDb): IAuthStore {
     return new AuthProxyStore(config.AUTH_PROXY_URL);
   }
 
-  if (isSqlDriver(config.DB_DRIVER)) {
-    return new AuthPostgresStore();
-  }
-  return new AuthMapStore(db);
+  return createStoreByDriver<IAuthStore>(config.DB_DRIVER, {
+    sql: () => new AuthPostgresStore(),
+    map: () => new AuthMapStore(db),
+  });
 }
 
 @Module({

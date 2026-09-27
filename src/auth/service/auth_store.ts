@@ -22,11 +22,11 @@ export const AuthStoreToken = Symbol("AuthMapStore");
 export interface IAuthStore {
   findByUsername(username: string): Promise<StoredUser | undefined>;
   saveUser(user: StoredUser): Promise<boolean>;
-  setApproved(uuid: string, approved: boolean): Promise<void>;
-  setBanned(uuid: string, banned: boolean): Promise<void>;
+  setApproved(uuid: string, approved: boolean): Promise<boolean>;
+  setBanned(uuid: string, banned: boolean): Promise<boolean>;
   userExists(username: string): Promise<boolean>;
   replacePassword(uuid: string, passwordHash: string, changedAt: Date): Promise<void>;
-  updateRole(uuid: string, role: string): Promise<void>;
+  updateRole(uuid: string, role: string): Promise<boolean>;
   deleteUser(uuid: string): Promise<void>;
   restoreUser(uuid: string): Promise<void>;
   saveRefresh(jti: string, entry: RefreshEntry, expiresAt: Date): Promise<void>;
@@ -76,14 +76,18 @@ export class AuthMapStore implements IAuthStore {
     return true;
   }
 
-  async setApproved(uuid: string, approved: boolean): Promise<void> {
+  async setApproved(uuid: string, approved: boolean): Promise<boolean> {
     const user = this.users.get(uuid);
-    if (user) user.approved = approved;
+    if (!user || user.deleted) return false;
+    user.approved = approved;
+    return true;
   }
 
-  async setBanned(uuid: string, banned: boolean): Promise<void> {
+  async setBanned(uuid: string, banned: boolean): Promise<boolean> {
     const user = this.users.get(uuid);
-    if (user) user.banned = banned;
+    if (!user || user.deleted) return false;
+    user.banned = banned;
+    return true;
   }
 
   async userExists(username: string): Promise<boolean> {
@@ -98,9 +102,11 @@ export class AuthMapStore implements IAuthStore {
     this.deleteTokensOfUser(uuid);
   }
 
-  async updateRole(uuid: string, role: string): Promise<void> {
+  async updateRole(uuid: string, role: string): Promise<boolean> {
     const user = this.users.get(uuid);
-    if (user) user.role = role;
+    if (!user || user.deleted) return false;
+    user.role = role;
+    return true;
   }
 
   async deleteUser(uuid: string): Promise<void> {
