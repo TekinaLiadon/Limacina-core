@@ -186,7 +186,7 @@ export class ReleasePublishService {
         const stagingDir = join(releasesRoot, buildReleaseStagingName(randomUUID()));
         try {
           mkdirSync(stagingDir, { recursive: true });
-          this.cleanServiceDirs(releasesRoot);
+          this.cleanServiceDirs(releasesRoot, version);
           if (existsSync(releaseDir)) {
             this.stageExistingFiles(releaseDir, stagingDir);
           }
@@ -211,8 +211,8 @@ export class ReleasePublishService {
     }
   }
 
-  private cleanServiceDirs(releasesRoot: string): void {
-    recoverReleaseBackups(releasesRoot, this.logger);
+  private cleanServiceDirs(releasesRoot: string, version: string): void {
+    recoverReleaseBackups(releasesRoot, this.logger, version);
     cleanupReleaseServiceDirs(releasesRoot, this.logger, SERVICE_DIR_STALE_MS);
   }
 

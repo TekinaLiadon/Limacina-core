@@ -1,4 +1,5 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, PayloadTooLargeException } from "@nestjs/common";
+import type { MultipartFile } from "@fastify/multipart";
 import type { FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -50,7 +51,7 @@ export async function parseLauncherReleaseRequest(
           throw new BadRequestException(`Повторное поле подписи: ${part.fieldname}`);
         }
         entry.signatureTempPath = await stagePart(
-          part.file,
+          part,
           `${platformKey}.sig`,
           staged,
           MAX_RELEASE_SIGNATURE_BYTES,
@@ -67,7 +68,7 @@ export async function parseLauncherReleaseRequest(
         }
         entry.suffix = suffix;
         entry.artifactTempPath = await stagePart(
-          part.file,
+          part,
           platformKey,
           staged,
           MAX_RELEASE_ARTIFACT_BYTES,
@@ -99,7 +100,7 @@ export async function parseLauncherReleaseRequest(
 }
 
 async function stagePart(
-  stream: NodeJS.ReadableStream,
+  part: MultipartFile,
   nameSuffix: string,
   staged: string[],
   maxBytes: number,
@@ -108,12 +109,15 @@ async function stagePart(
   staged.push(tempPath);
 
   try {
-    await streamPartToFile(stream as AsyncIterable<Uint8Array>, tempPath, maxBytes);
+    await streamPartToFile(part.file as AsyncIterable<Uint8Array>, tempPath, maxBytes);
   } catch (error) {
     if (error instanceof FileTooLargeError) {
       throw new BadRequestException(`Файл ${nameSuffix} превышает лимит ${maxBytes} байт`);
     }
     throw error;
+  }
+  if (part.file.truncated) {
+    throw new PayloadTooLargeException(`Файл ${nameSuffix} превышает лимит ${maxBytes} байт`);
   }
   return tempPath;
 }

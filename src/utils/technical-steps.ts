@@ -12,7 +12,7 @@ export function buildStepEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proce
 
 const STEP_ENV = buildStepEnv();
 
-function truncateOutput(output: string): string {
+export function truncateOutput(output: string): string {
   if (output.length <= STEP_OUTPUT_LIMIT) return output;
   return `${output.slice(0, STEP_OUTPUT_LIMIT)}…[обрезано]`;
 }
@@ -71,14 +71,14 @@ export async function terminateActiveSteps(graceMs: number = KILL_GRACE_MS): Pro
   await Promise.all([...activeStepProcesses].map((proc) => terminateProcessTree(proc, graceMs)));
 }
 
-interface CommandRun {
+export interface CommandRun {
   exitCode: number;
   stdout: string;
   stderr: string;
   timedOut: boolean;
 }
 
-async function runCommand(
+export async function runCommand(
   command: string[],
   cwd: string,
   timeoutMs: number,

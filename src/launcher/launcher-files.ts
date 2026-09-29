@@ -10,6 +10,8 @@ export const RESERVED_VERSION_MESSAGE = "Версия 0.0.0 зарезервир
 
 export const PUBLIC_DIR = "public";
 
+export const MULTIPART_FILE_SIZE_LIMIT_BYTES = 50 * 1024 * 1024;
+
 export const UPLOAD_TMP_DIR = join("tmp", "upload-tmp");
 
 export const OLD_VERSIONS_DIR = "old";

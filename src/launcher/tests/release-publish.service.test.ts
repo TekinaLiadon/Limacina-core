@@ -174,9 +174,11 @@ describe("ReleasePublishService — публикация релиза", (): void
 
     expect(existsSync(join(RELEASES_ROOT, "4.4.3"))).toBe(false);
     expect(
-      readdirSync(RELEASES_ROOT).some(
-        (entry) => isReleaseStagingEntry(entry) || isReleaseBackupEntry(entry),
-      ),
+      existsSync(RELEASES_ROOT)
+        ? readdirSync(RELEASES_ROOT).some(
+            (entry) => isReleaseStagingEntry(entry) || isReleaseBackupEntry(entry),
+          )
+        : false,
     ).toBe(false);
   });
 
@@ -271,7 +273,7 @@ describe("ReleasePublishService — публикация релиза", (): void
     }
   });
 
-  it("бэкап без каталога версии восстанавливается до чистки (crash-окно swapReleaseDir)", async () => {
+  it("публикация своей версии не восстанавливает чужие crash-бэкапы — полный recover делает свип при старте (TASK-411.8)", async () => {
     const backupName = `.old-4.4.13-${randomUUID()}`;
     mkdirSync(join(RELEASES_ROOT, backupName), { recursive: true });
     writeFileSync(
@@ -283,11 +285,10 @@ describe("ReleasePublishService — публикация релиза", (): void
     try {
       await service.publish("4.4.10", [stageUpload("windows-x86_64", ".exe", "a", "s")]);
 
-      expect(
-        readFileSync(join(RELEASES_ROOT, "4.4.13", "Limacina-4.4.13-windows-x86_64.exe"), "utf-8"),
-      ).toBe("backup-payload");
-      expect(existsSync(join(RELEASES_ROOT, backupName))).toBe(false);
+      expect(existsSync(join(RELEASES_ROOT, "4.4.13"))).toBe(false);
+      expect(existsSync(join(RELEASES_ROOT, backupName))).toBe(true);
     } finally {
+      rmSync(join(RELEASES_ROOT, backupName), { recursive: true, force: true });
       rmSync(join(RELEASES_ROOT, "4.4.13"), { recursive: true, force: true });
     }
   });

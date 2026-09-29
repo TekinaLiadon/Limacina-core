@@ -32,6 +32,7 @@ import {
   textureFileIssue,
 } from "../utils/texture";
 import { lastById } from "../utils/collection";
+import { withPathLock } from "../utils/path-lock";
 
 export const MAX_MODEL_BYTES = 256 * 1024;
 
@@ -44,7 +45,6 @@ const hasBinaryBytes = (file: Uint8Array): boolean =>
 export class UserContentService {
   private readonly logger = new Logger(UserContentService.name);
   private readonly defaultSkinUrl: string;
-  private readonly pathLocks = new Map<string, Promise<unknown>>();
 
   constructor(
     @Inject(UserContentStoreToken) private readonly store: IUserContentStore,
@@ -130,7 +130,7 @@ export class UserContentService {
       extension,
     );
 
-    return this.withPathLock(location.url, async () => {
+    return withPathLock(location.url, async () => {
       let item: Awaited<ReturnType<IUserContentStore["saveWithinLimit"]>>;
       try {
         item = await this.store.saveWithinLimit(
@@ -169,24 +169,6 @@ export class UserContentService {
     });
   }
 
-  private async withPathLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
-    const previous = this.pathLocks.get(filePath) ?? Promise.resolve();
-    let release!: () => void;
-    const current = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const chain = previous.then(() => current);
-    this.pathLocks.set(filePath, chain);
-
-    await previous;
-    try {
-      return await fn();
-    } finally {
-      release();
-      if (this.pathLocks.get(filePath) === chain) this.pathLocks.delete(filePath);
-    }
-  }
-
   private async rollbackUpload(id: number, type: ContentType, url: string): Promise<void> {
     try {
       const removed = await this.store.deleteByIdAndCountRemaining(id, type);
@@ -219,18 +201,20 @@ export class UserContentService {
       throw new BadRequestException("Нельзя выбрать дефолтный скин как активный");
     }
 
-    const previousActiveId = await this.findActiveSkinId(ownerUuid);
+    await withPathLock(`active-skin:${ownerUuid}`, async () => {
+      const previousActiveId = await this.findActiveSkinId(ownerUuid);
 
-    await this.store.updateActiveSkin(ownerUuid, skinId);
-    try {
-      await this.syncProfileTexture(ownerUuid, {
-        skinUrl: item.filePath,
-        skinModel: item.skinModel ?? null,
-      });
-    } catch (error) {
-      await this.restoreActiveSkin(ownerUuid, skinId, previousActiveId);
-      throw error;
-    }
+      await this.store.updateActiveSkin(ownerUuid, skinId);
+      try {
+        await this.syncProfileTexture(ownerUuid, {
+          skinUrl: item.filePath,
+          skinModel: item.skinModel ?? null,
+        });
+      } catch (error) {
+        await this.restoreActiveSkin(ownerUuid, skinId, previousActiveId);
+        throw error;
+      }
+    });
 
     this.logger.debug({ ownerUuid, skinId }, "Active skin changed");
   }
@@ -404,15 +388,15 @@ export class UserContentService {
       throw new BadRequestException("Нельзя удалить дефолтный скин");
     }
 
-    return this.withPathLock(item.filePath, async () => {
+    return withPathLock(item.filePath, async () => {
       const removed = await this.store.deleteByIdAndCountRemaining(id, type);
       if (!removed) return;
+
+      await this.syncProfileAfterDelete(ownerUuid, type, item.active);
 
       const profileRefs = this.profileStore
         ? await this.profileStore.countProfilesByTextureUrl(item.filePath)
         : 0;
-
-      await this.syncProfileAfterDelete(ownerUuid, type, item.active);
 
       await releaseContentFile({
         logger: this.logger,

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -52,6 +52,38 @@ describe("multipart-file", () => {
     }
 
     await expect(streamPartToFile(failing(), tempPath)).rejects.toThrow("stream broken");
+    expect(existsSync(tempPath)).toBe(false);
+  });
+
+  it("streamPartToFile закрывает writer (Bun FileSink) на error-пути (TASK-411.6)", async () => {
+    const tempPath = join(tmpRoot, "leaked.zip");
+    mkdirSync(tmpRoot, { recursive: true });
+    let endCalls = 0;
+    const fakeSink = {
+      write: (): void => {},
+      end: async (): Promise<void> => {
+        endCalls++;
+      },
+    };
+    const bunFileSpy = spyOn(Bun, "file").mockImplementation(
+      () =>
+        ({
+          writer: () => fakeSink,
+        }) as unknown as ReturnType<typeof Bun.file>,
+    );
+
+    async function* failing(): AsyncIterable<Uint8Array> {
+      yield new Uint8Array([1]);
+      throw new Error("stream broken");
+    }
+
+    try {
+      await expect(streamPartToFile(failing(), tempPath)).rejects.toThrow("stream broken");
+    } finally {
+      bunFileSpy.mockRestore();
+    }
+
+    expect(endCalls).toBe(1);
     expect(existsSync(tempPath)).toBe(false);
   });
 

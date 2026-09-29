@@ -119,6 +119,25 @@ describe("release-service-dirs — восстановление после crash
       rmSync(join(TEST_ROOT, "5.0.2"), { recursive: true, force: true });
     }
   });
+
+  it("recover под локом версии восстанавливает только свои бэкапы (TASK-411.8)", (): void => {
+    const ownBackup = buildReleaseBackupName("5.1.0", randomUUID());
+    const foreignBackup = buildReleaseBackupName("5.1.1", randomUUID());
+    mkdirSync(join(TEST_ROOT, ownBackup), { recursive: true });
+    mkdirSync(join(TEST_ROOT, foreignBackup), { recursive: true });
+
+    try {
+      recoverReleaseBackups(TEST_ROOT, logger, "5.1.0");
+
+      expect(existsSync(join(TEST_ROOT, "5.1.0"))).toBe(true);
+      expect(existsSync(join(TEST_ROOT, ownBackup))).toBe(false);
+      expect(existsSync(join(TEST_ROOT, foreignBackup))).toBe(true);
+      expect(existsSync(join(TEST_ROOT, "5.1.1"))).toBe(false);
+    } finally {
+      rmSync(join(TEST_ROOT, "5.1.0"), { recursive: true, force: true });
+      rmSync(join(TEST_ROOT, foreignBackup), { recursive: true, force: true });
+    }
+  });
 });
 
 describe("release-service-dirs — чистка служебных каталогов", (): void => {

@@ -2,7 +2,8 @@ import { setupTestEnv } from "../../../utils/tests/test-env";
 
 setupTestEnv();
 
-import { describe, expect, it, spyOn } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { existsSync, unlinkSync } from "node:fs";
 import { HttpException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { MemoryDb } from "../../../memory/memory-db";
@@ -13,6 +14,8 @@ import {
 import { YggdrasilMapStore, type IYggdrasilTokenStore, type TokenEntry } from "../yggdrasil_store";
 import type { IUserContentStore } from "../../../user-content/user_content_store";
 import type { AppConfigType } from "../../../config/global-config";
+import { buildTestPng } from "../../../utils/tests/test-png";
+import { buildContentLocation } from "../../../utils/content-files";
 import { YggdrasilService } from "../yggdrasil.service";
 
 const SEED_PASSWORD = "refresh-pass";
@@ -152,6 +155,93 @@ describe("YggdrasilService.refresh — атомарность замены то�
     const fulfilled = results.filter((r) => r.status === "fulfilled");
     expect(fulfilled).toHaveLength(1);
   });
+});
+
+describe("YggdrasilService.uploadTexture — сериализация мутаций текстур (TASK-411.15)", (): void => {
+  const TEXTURE_USERNAME = "textureuser";
+  const TEXTURE_UUID = "d0000000000000000000000000000001";
+  const writtenFiles: string[] = [];
+
+  const textureLocation = (bytes: Uint8Array): { url: string; path: string } =>
+    buildContentLocation("http://localhost:3005", "textures", TEXTURE_USERNAME, bytes, "png");
+
+  const makeTextureStore = async (): Promise<YggdrasilMapStore> =>
+    new YggdrasilMapStore(new MemoryDb(), {
+      users: [
+        {
+          username: TEXTURE_USERNAME,
+          uuid: TEXTURE_UUID,
+          passwordHash: await Bun.password.hash(SEED_PASSWORD),
+          approved: true,
+        },
+      ],
+      profiles: [{ uuid: TEXTURE_UUID, userId: TEXTURE_UUID, username: TEXTURE_USERNAME }],
+    });
+
+  afterAll((): void => {
+    for (const filePath of writtenFiles) {
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+
+  it("параллельные PUT одного профиля не осиротевают файлы текстур", async (): Promise<void> => {
+    const bytesA = new Uint8Array(buildTestPng({ variant: 211 }));
+    const bytesB = new Uint8Array(buildTestPng({ variant: 212 }));
+    writtenFiles.push(textureLocation(bytesA).path, textureLocation(bytesB).path);
+
+    const store = await makeTextureStore();
+    const service = makeService(store, new YggdrasilMapTokenStore(new MemoryDb()));
+    const auth = await service.authenticate({
+      username: TEXTURE_USERNAME,
+      password: SEED_PASSWORD,
+    });
+    const authorization = `Bearer ${auth.accessToken}`;
+
+    await Promise.allSettled([
+      service.uploadTexture(TEXTURE_UUID, "skin", Buffer.from(bytesA), undefined, authorization),
+      service.uploadTexture(TEXTURE_UUID, "skin", Buffer.from(bytesB), undefined, authorization),
+    ]);
+
+    const profile = await store.findProfileByUuid(TEXTURE_UUID);
+    const finalUrl = profile?.skinUrl;
+    const isKnownTexture =
+      finalUrl === textureLocation(bytesA).url || finalUrl === textureLocation(bytesB).url;
+    expect(isKnownTexture).toBe(true);
+
+    const finalPath =
+      finalUrl === textureLocation(bytesA).url
+        ? textureLocation(bytesA).path
+        : textureLocation(bytesB).path;
+    const orphanPath =
+      finalUrl === textureLocation(bytesA).url
+        ? textureLocation(bytesB).path
+        : textureLocation(bytesA).path;
+    expect(existsSync(finalPath)).toBe(true);
+    expect(existsSync(orphanPath)).toBe(false);
+  }, 30_000);
+
+  it("параллельные PUT и DELETE оставляют профиль и файлы согласованными", async (): Promise<void> => {
+    const bytes = new Uint8Array(buildTestPng({ variant: 213 }));
+    writtenFiles.push(textureLocation(bytes).path);
+
+    const store = await makeTextureStore();
+    const service = makeService(store, new YggdrasilMapTokenStore(new MemoryDb()));
+    const auth = await service.authenticate({
+      username: TEXTURE_USERNAME,
+      password: SEED_PASSWORD,
+    });
+    const authorization = `Bearer ${auth.accessToken}`;
+    await service.uploadTexture(TEXTURE_UUID, "skin", Buffer.from(bytes), undefined, authorization);
+
+    await Promise.allSettled([
+      service.deleteTexture(TEXTURE_UUID, "skin", authorization),
+      service.deleteTexture(TEXTURE_UUID, "skin", authorization),
+    ]);
+
+    const profile = await store.findProfileByUuid(TEXTURE_UUID);
+    expect(profile?.skinUrl).toBeNull();
+    expect(existsSync(textureLocation(bytes).path)).toBe(false);
+  }, 30_000);
 });
 
 const NEUTRAL_CREDENTIALS_ERROR = "Invalid credentials. Invalid username or password.";

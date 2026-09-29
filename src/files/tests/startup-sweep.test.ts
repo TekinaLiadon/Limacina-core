@@ -37,7 +37,6 @@ describe("StartupSweepService — свип служебных файлов пр�
       mkdirSync(PLATFORM_DIR, { recursive: true });
       platformDirCreated = true;
     }
-    writeFileSync(join(PLATFORM_DIR, ".Limacina-9.9.9-linux-x86_64.zip.replaced"), "backup");
   });
 
   afterAll((): void => {
@@ -45,6 +44,15 @@ describe("StartupSweepService — свип служебных файлов пр�
     rmSync(join(RELEASES_ROOT, `.staging-sweep-${suffix}`), { recursive: true, force: true });
     rmSync(join(RELEASES_ROOT, `.lock-9.9.9-sweep-${suffix}`), { recursive: true, force: true });
     rmSync(join(RELEASES_ROOT, `junk-${suffix}.old-x`), { recursive: true, force: true });
+    for (const name of [
+      ".Limacina-9.9.9-linux-x86_64.zip.replaced",
+      "Limacina-9.9.9-linux-x86_64.zip",
+      ".Limacina-9.9.8-linux-x86_64.zip.replaced",
+      "Limacina-9.9.8-linux-x86_64.zip",
+      ".junk-sweep.replaced",
+    ]) {
+      rmSync(join(PLATFORM_DIR, name), { force: true });
+    }
     if (platformDirCreated) {
       rmSync(PLATFORM_PARENT, { recursive: true, force: true });
     }
@@ -53,14 +61,44 @@ describe("StartupSweepService — свип служебных файлов пр�
     }
   });
 
-  it("убирает временные загрузки, служебные каталоги релизов и replaced-бэкапы", (): void => {
+  it("убирает временные загрузки и служебные каталоги релизов", (): void => {
     service.onApplicationBootstrap();
 
     expect(existsSync(UPLOAD_TMP_DIR)).toBe(false);
     expect(existsSync(join(RELEASES_ROOT, `.staging-sweep-${suffix}`))).toBe(false);
     expect(existsSync(join(RELEASES_ROOT, `.lock-9.9.9-sweep-${suffix}`))).toBe(false);
     expect(existsSync(join(RELEASES_ROOT, `junk-${suffix}.old-x`))).toBe(false);
+  });
+
+  it("восстанавливает zip лаунчера из replaced-бэкапа после crash-окна обновления (TASK-411.3)", (): void => {
+    writeFileSync(join(PLATFORM_DIR, ".Limacina-9.9.9-linux-x86_64.zip.replaced"), "crash-backup");
+
+    service.onApplicationBootstrap();
+
+    expect(readFileSync(join(PLATFORM_DIR, "Limacina-9.9.9-linux-x86_64.zip"), "utf-8")).toBe(
+      "crash-backup",
+    );
     expect(existsSync(join(PLATFORM_DIR, ".Limacina-9.9.9-linux-x86_64.zip.replaced"))).toBe(false);
+  });
+
+  it("удаляет replaced-бэкап, когда целевой zip на месте", (): void => {
+    writeFileSync(join(PLATFORM_DIR, "Limacina-9.9.8-linux-x86_64.zip"), "live-zip");
+    writeFileSync(join(PLATFORM_DIR, ".Limacina-9.9.8-linux-x86_64.zip.replaced"), "stale-backup");
+
+    service.onApplicationBootstrap();
+
+    expect(readFileSync(join(PLATFORM_DIR, "Limacina-9.9.8-linux-x86_64.zip"), "utf-8")).toBe(
+      "live-zip",
+    );
+    expect(existsSync(join(PLATFORM_DIR, ".Limacina-9.9.8-linux-x86_64.zip.replaced"))).toBe(false);
+  });
+
+  it("удаляет нераспознанные replaced-файлы", (): void => {
+    writeFileSync(join(PLATFORM_DIR, ".junk-sweep.replaced"), "junk");
+
+    service.onApplicationBootstrap();
+
+    expect(existsSync(join(PLATFORM_DIR, ".junk-sweep.replaced"))).toBe(false);
   });
 
   it("восстанавливает каталог релиза из бэкапа после crash-окна swapReleaseDir (TASK-267.10)", (): void => {

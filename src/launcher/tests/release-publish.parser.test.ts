@@ -4,7 +4,7 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 setupTestEnv();
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, PayloadTooLargeException } from "@nestjs/common";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import type { FastifyRequest } from "fastify";
 import { Readable } from "node:stream";
@@ -168,5 +168,26 @@ describe("parseLauncherReleaseRequest (стриминг артефактов и 
     await parseLauncherReleaseRequest(request);
 
     expect(capturedOptions).toEqual({ limits: { fileSize: MAX_RELEASE_ARTIFACT_BYTES } });
+  });
+
+  it("усечённый артефакт (busboy обрезал ровно на лимите) отклоняется как 413 (TASK-411.6)", async () => {
+    mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
+    const truncatedFile = Object.assign(Readable.from([Buffer.from("installer-bytes")]), {
+      truncated: true,
+    });
+    const request = buildFakeRequest([
+      { type: "field", fieldname: "version", value: "1.2.3" },
+      { type: "file", fieldname: "windows-x86_64", filename: "setup.exe", file: truncatedFile },
+      filePart("windows-x86_64_sig", "setup.exe.sig", "sig-bytes"),
+    ]);
+
+    const error = await parseLauncherReleaseRequest(request).then(
+      (): BadRequestException | undefined => undefined,
+      (thrown: unknown) => thrown,
+    );
+
+    expect(error).toBeInstanceOf(PayloadTooLargeException);
+    expect((error as PayloadTooLargeException).getStatus()).toBe(413);
+    expect(readdirSync(UPLOAD_TMP_DIR)).toEqual([]);
   });
 });

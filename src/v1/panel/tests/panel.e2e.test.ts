@@ -1678,18 +1678,21 @@ describe("V1 panel эндпоинты", (): void => {
         .expect(400);
     });
 
-    it("обновляет версию лаунчера", async () => {
-      const res = await supertest(app.getHttpServer())
+    it("PATCH без файлов отклоняется и не публикует версию без артефактов (TASK-411.7)", async () => {
+      const versionBefore = existsSync(VERSION_FILE)
+        ? readFileSync(VERSION_FILE, "utf-8")
+        : undefined;
+
+      await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher")
         .set("Authorization", `Bearer ${ownerToken}`)
         .field("version", "9.9.9")
-        .expect(200);
+        .expect(400);
 
-      expect(res.body.version).toBe("9.9.9");
-      expect(res.body.updated).toEqual([]);
-
-      const data = JSON.parse(readFileSync(VERSION_FILE, "utf-8")) as { version: string };
-      expect(data.version).toBe("9.9.9");
+      const versionAfter = existsSync(VERSION_FILE)
+        ? readFileSync(VERSION_FILE, "utf-8")
+        : undefined;
+      expect(versionAfter).toBe(versionBefore);
     });
 
     it("загрузка zip через multipart стримится в temp и не оставляет временных файлов (TASK-20)", async () => {

@@ -13,15 +13,18 @@ const bunSql: SqlClient = ((await import("bun")) as unknown as { sql: SqlClient 
 
 let sqlClientOverride: SqlClient | undefined;
 let dialectOverride: SqlDialectName | undefined;
+let cachedDialect: SqlDialect | undefined;
 
 export function overrideSqlClient(client: SqlClient, dialect?: SqlDialectName): void {
   sqlClientOverride = client;
   dialectOverride = dialect;
+  cachedDialect = undefined;
 }
 
 export function resetSqlClient(): void {
   sqlClientOverride = undefined;
   dialectOverride = undefined;
+  cachedDialect = undefined;
 }
 
 export function currentSqlClient(): SqlClient {
@@ -31,7 +34,8 @@ export function currentSqlClient(): SqlClient {
 export function currentDialect(): SqlDialect {
   if (dialectOverride) return DIALECTS[dialectOverride];
   if (sqlClientOverride) return DIALECTS.postgres;
-  return detectDialect();
+  cachedDialect ??= detectDialect();
+  return cachedDialect;
 }
 
 export function sqlDialect(): SqlDialectName {

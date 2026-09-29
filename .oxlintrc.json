@@ -26,5 +26,5 @@
     "import/no-named-as-default": "warn",
     "import/no-named-as-default-member": "warn"
   },
-  "ignorePatterns": ["dist/", "node_modules/", "public/"]
+  "ignorePatterns": ["dist/", "node_modules/", "public/", "tmp/"]
 }

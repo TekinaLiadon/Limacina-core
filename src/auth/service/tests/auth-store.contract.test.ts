@@ -183,6 +183,25 @@ contractDescribeEach("контракт IAuthStore", (driver) => {
     expect(await ctx.store.findRefresh(jti)).toBeUndefined();
   });
 
+  it("replacePassword с keepRefreshJti сохраняет указанный токен и отзывает остальные (TASK-411.13)", async () => {
+    const user = await ctx.makeUser();
+    const keptJti = generateUuid();
+    const revokedJti = generateUuid();
+    for (const jti of [keptJti, revokedJti]) {
+      await ctx.store.saveRefresh(
+        jti,
+        { userId: user.uuid, username: user.username },
+        futureExpiry(),
+      );
+    }
+
+    await ctx.store.replacePassword(user.uuid, "kept-hash", new Date(), keptJti);
+
+    expect(await ctx.store.findRefresh(keptJti)).toBeDefined();
+    expect(await ctx.store.findRefresh(revokedJti)).toBeUndefined();
+    expect((await ctx.store.findByUsername(user.username))?.passwordHash).toBe("kept-hash");
+  });
+
   it("claimRefresh атомарно забирает запись: повторный вызов пуст", async () => {
     const user = await ctx.makeUser();
     const jti = generateUuid();

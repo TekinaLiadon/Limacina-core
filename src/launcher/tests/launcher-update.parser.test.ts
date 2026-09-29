@@ -1,6 +1,6 @@
-import { UPLOAD_TMP_DIR } from "../launcher-files";
+import { UPLOAD_TMP_DIR, MULTIPART_FILE_SIZE_LIMIT_BYTES } from "../launcher-files";
 import { afterEach, describe, expect, it } from "bun:test";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, PayloadTooLargeException } from "@nestjs/common";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import type { FastifyRequest } from "fastify";
 import { Readable } from "node:stream";
@@ -18,7 +18,24 @@ function buildFakeRequest(parts: FakePart[]): FastifyRequest {
   async function* iterateParts() {
     for (const part of parts) yield part;
   }
-  return { parts: () => iterateParts() } as unknown as FastifyRequest;
+  return { parts: (_options?: unknown) => iterateParts() } as unknown as FastifyRequest;
+}
+
+function buildCapturingFakeRequest(parts: FakePart[]): {
+  request: FastifyRequest;
+  capturedOptions: () => unknown;
+} {
+  let captured: unknown;
+  async function* iterateParts() {
+    for (const part of parts) yield part;
+  }
+  const request = {
+    parts: (options?: unknown) => {
+      captured = options;
+      return iterateParts();
+    },
+  } as unknown as FastifyRequest;
+  return { request, capturedOptions: () => captured };
 }
 
 function filePart(fieldname: string, content: string): FakePart {
@@ -89,6 +106,51 @@ describe("parseLauncherUpdateRequest (TASK-20: стриминг в temp-файл
     await expect(parseLauncherUpdateRequest(request)).rejects.toThrow(
       "Повторное файловое поле: linux_x86_64",
     );
+
+    expect(readdirSync(UPLOAD_TMP_DIR)).toEqual([]);
+  });
+
+  it("передаёт плагину multipart явный лимит размера части (TASK-411.6)", async () => {
+    const { request, capturedOptions } = buildCapturingFakeRequest([]);
+
+    await parseLauncherUpdateRequest(request);
+
+    expect(capturedOptions()).toEqual({ limits: { fileSize: MULTIPART_FILE_SIZE_LIMIT_BYTES } });
+  });
+
+  it("усечённая busboy-часть (truncated) отклоняется как 413, temp подчищен (TASK-411.6)", async () => {
+    mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
+    const truncatedFile = Object.assign(Readable.from([Buffer.from("truncated-zip")]), {
+      truncated: true,
+    });
+    const request = buildFakeRequest([
+      { type: "field", fieldname: "version", value: "1.2.3" },
+      { type: "file", fieldname: "linux_x86_64", file: truncatedFile },
+    ]);
+
+    const error = await parseLauncherUpdateRequest(request).then(
+      (): BadRequestException | undefined => undefined,
+      (thrown: unknown) => thrown,
+    );
+
+    expect(error).toBeInstanceOf(PayloadTooLargeException);
+    expect((error as PayloadTooLargeException).getStatus()).toBe(413);
+    expect(readdirSync(UPLOAD_TMP_DIR)).toEqual([]);
+  });
+
+  it("обрыв итератора частей (лимит плагина) подчищает уже записанные temp (TASK-411.6)", async () => {
+    mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
+    const limitError = Object.assign(new Error("request file too large"), {
+      statusCode: 413,
+      code: "FST_REQ_FILE_TOO_LARGE",
+    });
+    async function* iterateParts() {
+      yield filePart("linux_x86_64", "zip");
+      throw limitError;
+    }
+    const request = { parts: () => iterateParts() } as unknown as FastifyRequest;
+
+    await expect(parseLauncherUpdateRequest(request)).rejects.toBe(limitError);
 
     expect(readdirSync(UPLOAD_TMP_DIR)).toEqual([]);
   });

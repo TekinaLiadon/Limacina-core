@@ -47,6 +47,7 @@ import {
 import { buildDefaultSkinUrl, isSkinModel, textureFileIssue } from "../../utils/texture";
 import { sanitizePng } from "../../utils/png";
 import { lastById } from "../../utils/collection";
+import { withPathLock } from "../../utils/path-lock";
 
 type TextureAccessPrincipal =
   | { kind: "token"; entry: TokenEntry }
@@ -399,30 +400,50 @@ export class YggdrasilService {
   ): Promise<void> {
     const principal = await this.authenticateTextureAccess(authorization);
     const normalizedUuid = uuid.replace(/-/g, "");
-    const profile = await this.store.findProfileByUuid(normalizedUuid);
-    if (!profile) throw this.createError({ info: uuid }, "invalid uuid", "Invalid token.");
-
-    this.assertTextureOwnership(principal, profile);
     this.validateTextureFile(file, textureType);
     const skinModel = this.normalizeSkinModel(model);
-
     const stored = sanitizePng(file);
-    const previousUrl = textureType === "skin" ? profile.skinUrl : profile.capeUrl;
-    const target = this.computeTextureTarget(stored, profile.username, normalizedUuid);
 
-    const textures: YggdrasilTextures = this.createTextures(textureType, skinModel, target.url);
-    await this.store.updateProfileTexture(normalizedUuid, textures);
-    try {
-      await Bun.write(target.path, new Uint8Array(stored));
-    } catch (error) {
-      this.logger.error(
-        { err: error, path: target.path },
-        "Не удалось записать файл текстуры — откат текстуры в сторе",
-      );
-      await this.rollbackProfileTexture(profile, textureType);
-      throw error;
-    }
-    await this.releaseTextureFile(previousUrl, textureType);
+    await withPathLock(this.textureMutationLockKey(normalizedUuid, textureType), async () => {
+      const profile = await this.store.findProfileByUuid(normalizedUuid);
+      if (!profile) throw this.createError({ info: uuid }, "invalid uuid", "Invalid token.");
+
+      this.assertTextureOwnership(principal, profile);
+
+      const previousUrl = textureType === "skin" ? profile.skinUrl : profile.capeUrl;
+      const target = this.computeTextureTarget(stored, profile.username, normalizedUuid);
+      const textures: YggdrasilTextures = this.createTextures(textureType, skinModel, target.url);
+
+      await this.withTextureFileLocks([previousUrl, target.url], async () => {
+        await this.store.updateProfileTexture(normalizedUuid, textures);
+        try {
+          await Bun.write(target.path, new Uint8Array(stored));
+        } catch (error) {
+          this.logger.error(
+            { err: error, path: target.path },
+            "Не удалось записать файл текстуры — откат текстуры в сторе",
+          );
+          await this.rollbackProfileTexture(profile, textureType);
+          throw error;
+        }
+        await this.releaseTextureFile(previousUrl, textureType);
+      });
+    });
+  }
+
+  private textureMutationLockKey(uuid: string, textureType: "skin" | "cape"): string {
+    return `yggdrasil-texture:${uuid}:${textureType}`;
+  }
+
+  private async withTextureFileLocks<T>(
+    urls: Array<string | null | undefined>,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const lockKeys = [...new Set(urls.filter((url): url is string => !!url))].sort();
+    if (lockKeys.length === 0) return fn();
+    return withPathLock(lockKeys[0]!, () =>
+      lockKeys.length > 1 ? withPathLock(lockKeys[1]!, fn) : fn(),
+    );
   }
 
   private normalizeSkinModel(model?: string): string | null {
@@ -494,15 +515,20 @@ export class YggdrasilService {
   ): Promise<void> {
     const principal = await this.authenticateTextureAccess(authorization);
     const normalizedUuid = uuid.replace(/-/g, "");
-    const profile = await this.store.findProfileByUuid(normalizedUuid);
-    if (!profile) throw this.createError({ info: uuid }, "invalid uuid", "Invalid token.");
 
-    this.assertTextureOwnership(principal, profile);
+    await withPathLock(this.textureMutationLockKey(normalizedUuid, textureType), async () => {
+      const profile = await this.store.findProfileByUuid(normalizedUuid);
+      if (!profile) throw this.createError({ info: uuid }, "invalid uuid", "Invalid token.");
 
-    const previousUrl = textureType === "skin" ? profile.skinUrl : profile.capeUrl;
-    const textures: YggdrasilTextures = this.createTextures(textureType);
-    await this.store.updateProfileTexture(normalizedUuid, textures);
-    await this.releaseTextureFile(previousUrl, textureType);
+      this.assertTextureOwnership(principal, profile);
+
+      const previousUrl = textureType === "skin" ? profile.skinUrl : profile.capeUrl;
+      const textures: YggdrasilTextures = this.createTextures(textureType);
+      await this.withTextureFileLocks([previousUrl], async () => {
+        await this.store.updateProfileTexture(normalizedUuid, textures);
+        await this.releaseTextureFile(previousUrl, textureType);
+      });
+    });
   }
 
   private async releaseTextureFile(

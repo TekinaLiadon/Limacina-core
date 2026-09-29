@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, rmSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, renameSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { Injectable, Logger, type OnApplicationBootstrap } from "@nestjs/common";
 import {
@@ -6,12 +6,15 @@ import {
   RELEASES_DIR,
   SUPPORTED_PLATFORMS,
   UPLOAD_TMP_DIR,
+  parseLauncherZipName,
 } from "../launcher/launcher-files";
 import {
   cleanupReleaseServiceDirs,
   isZipReplacedEntry,
+  parseReplacedZipName,
   recoverReleaseBackups,
 } from "../launcher/release-service-dirs";
+import { cleanupPanelBackups, recoverPanelBackups } from "../technical/panel-deploy-dirs";
 
 @Injectable()
 export class StartupSweepService implements OnApplicationBootstrap {
@@ -21,6 +24,7 @@ export class StartupSweepService implements OnApplicationBootstrap {
     this.sweepUploadTmp();
     this.sweepReleaseServiceDirs();
     this.sweepReplacedZips();
+    this.sweepPanelDeployBackups();
   }
 
   private sweepUploadTmp(): void {
@@ -48,15 +52,20 @@ export class StartupSweepService implements OnApplicationBootstrap {
     cleanupReleaseServiceDirs(releasesRoot, this.logger);
   }
 
+  private sweepPanelDeployBackups(): void {
+    recoverPanelBackups(PUBLIC_DIR, this.logger);
+    cleanupPanelBackups(PUBLIC_DIR, this.logger);
+  }
+
   private sweepReplacedZips(): void {
     for (const [os, archs] of Object.entries(SUPPORTED_PLATFORMS)) {
       for (const arch of archs) {
-        this.sweepReplacedZipDir(join(PUBLIC_DIR, os, arch));
+        this.sweepReplacedZipDir(join(PUBLIC_DIR, os, arch), os, arch);
       }
     }
   }
 
-  private sweepReplacedZipDir(dir: string): void {
+  private sweepReplacedZipDir(dir: string, os: string, arch: string): void {
     if (!existsSync(dir)) return;
 
     let entries: string[];
@@ -74,6 +83,8 @@ export class StartupSweepService implements OnApplicationBootstrap {
       if (!isZipReplacedEntry(entry)) continue;
 
       const fullPath = join(dir, entry);
+      if (this.restoreReplacedZip(dir, entry, os, arch)) continue;
+
       try {
         unlinkSync(fullPath);
         this.logger.warn({ file: entry }, "Свип резервной копии zip при старте");
@@ -84,5 +95,25 @@ export class StartupSweepService implements OnApplicationBootstrap {
         );
       }
     }
+  }
+
+  private restoreReplacedZip(dir: string, entry: string, os: string, arch: string): boolean {
+    const originalName = parseReplacedZipName(entry);
+    if (!originalName || !parseLauncherZipName(originalName, os, arch)) return false;
+    if (existsSync(join(dir, originalName))) return false;
+
+    try {
+      renameSync(join(dir, entry), join(dir, originalName));
+      this.logger.warn(
+        { backup: entry, restored: originalName },
+        "zip лаунчера восстановлен из резервной копии после crash-окна обновления",
+      );
+    } catch (error) {
+      this.logger.error(
+        { err: error, backup: join(dir, entry) },
+        "Не удалось восстановить zip лаунчера из резервной копии",
+      );
+    }
+    return true;
   }
 }

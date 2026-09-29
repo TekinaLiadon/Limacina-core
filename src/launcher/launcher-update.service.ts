@@ -41,6 +41,9 @@ export class LauncherUpdateService {
 
   update(version: string, files: LauncherPlatformFile[]): LauncherUpdateResponseDto {
     try {
+      if (files.length === 0) {
+        throw new BadRequestException("Нужен хотя бы один zip-файл платформы");
+      }
       const targetVersion = version || this.requireCurrentVersion();
       this.validateVersion(targetVersion);
 

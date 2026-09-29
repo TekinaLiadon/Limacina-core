@@ -25,7 +25,12 @@ export interface IAuthStore {
   setApproved(uuid: string, approved: boolean): Promise<boolean>;
   setBanned(uuid: string, banned: boolean): Promise<boolean>;
   userExists(username: string): Promise<boolean>;
-  replacePassword(uuid: string, passwordHash: string, changedAt: Date): Promise<void>;
+  replacePassword(
+    uuid: string,
+    passwordHash: string,
+    changedAt: Date,
+    keepRefreshJti?: string,
+  ): Promise<void>;
   updateRole(uuid: string, role: string): Promise<boolean>;
   deleteUser(uuid: string): Promise<void>;
   restoreUser(uuid: string): Promise<void>;
@@ -94,12 +99,17 @@ export class AuthMapStore implements IAuthStore {
     return this.findLiveUserCaseInsensitive(username) !== undefined;
   }
 
-  async replacePassword(uuid: string, passwordHash: string, changedAt: Date): Promise<void> {
+  async replacePassword(
+    uuid: string,
+    passwordHash: string,
+    changedAt: Date,
+    keepRefreshJti?: string,
+  ): Promise<void> {
     const user = this.users.get(uuid);
     if (!user) return;
     user.passwordHash = passwordHash;
     user.passwordChangedAt = changedAt;
-    this.deleteTokensOfUser(uuid);
+    this.deleteTokensOfUser(uuid, keepRefreshJti);
   }
 
   async updateRole(uuid: string, role: string): Promise<boolean> {
@@ -181,8 +191,9 @@ export class AuthMapStore implements IAuthStore {
     }
   }
 
-  private deleteTokensOfUser(userId: string): void {
+  private deleteTokensOfUser(userId: string, keepJti?: string): void {
     for (const [key, val] of this.tokens) {
+      if (key === keepJti) continue;
       if (val.userId === userId) this.tokens.delete(key);
     }
   }

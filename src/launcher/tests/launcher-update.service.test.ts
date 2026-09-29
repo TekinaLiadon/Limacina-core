@@ -184,6 +184,18 @@ describe("LauncherUpdateService — архивирование старых ве
 
     resetToBaseline();
   });
+
+  it("PATCH без файловых полей отклоняется и не трогает version.json (TASK-411.7)", () => {
+    const versionBefore = existsSync(VERSION_FILE)
+      ? readFileSync(VERSION_FILE, "utf-8")
+      : undefined;
+
+    expect(() => service.update("9.9.9", [])).toThrow(BadRequestException);
+
+    const versionAfter = existsSync(VERSION_FILE) ? readFileSync(VERSION_FILE, "utf-8") : undefined;
+    expect(versionAfter).toBe(versionBefore);
+    expect(existsSync(zipPath("9.9.9"))).toBe(false);
+  });
 });
 
 describe("LauncherUpdateService — macos/arm64", (): void => {

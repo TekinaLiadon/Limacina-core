@@ -18,7 +18,7 @@
         "@scalar/nestjs-api-reference": "^1.2.17",
         "@tsconfig/node-lts": "^24.0.1",
         "@typescript/native-preview": "^7.0.0-dev.20260707.2",
-        "bunsql-native-migrate": "0.4.1",
+        "bunsql-native-migrate": "0.4.2",
         "chokidar": "^5.0.0",
         "nestjs-pino": "^4.6.1",
         "passport": "^0.7.0",
@@ -298,7 +298,7 @@
 
     "bun-types": ["bun-types@1.4.2", "", { "dependencies": { "@types/node": "*" } }, "sha512-bxV1FgK7yBIzjRe5zBozIM4Bem11ZJcCXSrjWRG3YWLt8yFDePu4cLjpebO8OvPeIE9trbyPF4fuj3Cia4Fj3w=="],
 
-    "bunsql-native-migrate": ["bunsql-native-migrate@0.4.1", "", { "bin": { "bunsql-native-migrate": "src/cli/main.ts" } }, "sha512-n2dYrDy5739O/ly2Y4OWr2B2AA5vJz1k2wYSf/Lwrg7aWEQRUAPYtgRv5fjA3rn2Qbyx4+WIw+QyIVNfHKFQHQ=="],
+    "bunsql-native-migrate": ["bunsql-native-migrate@0.4.2", "", { "bin": { "bunsql-native-migrate": "src/cli/main.ts" } }, "sha512-ftNHDR4NJROJfWVF1wCboxc0AjZ8KhLw4LwTT0ifdSIXepvVVYJzAzJJW7WWyK1ZUG47g0svHfd3pUvWBEN7Rg=="],
 
     "call-bind-apply-helpers": ["call-bind-apply-helpers@1.0.2", "", { "dependencies": { "es-errors": "^1.3.0", "function-bind": "^1.1.2" } }, ""],
 

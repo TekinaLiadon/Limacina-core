@@ -132,7 +132,12 @@ export class AuthPostgresStore implements IAuthStore {
     return rows.length > 0;
   }
 
-  async replacePassword(uuid: string, passwordHash: string, changedAt: Date): Promise<void> {
+  async replacePassword(
+    uuid: string,
+    passwordHash: string,
+    changedAt: Date,
+    keepRefreshJti?: string,
+  ): Promise<void> {
     await executeInTransaction([
       updateQuery()
         .from(TABLES.users)
@@ -140,7 +145,12 @@ export class AuthPostgresStore implements IAuthStore {
         .set("password_changed_at", changedAt)
         .where("uuid = $1", uuid)
         .build(),
-      deleteQuery().from(TABLES.refresh_tokens).where("user_id = $1", uuid).build(),
+      keepRefreshJti
+        ? deleteQuery()
+            .from(TABLES.refresh_tokens)
+            .where("user_id = $1 AND jti <> $2", uuid, keepRefreshJti)
+            .build()
+        : deleteQuery().from(TABLES.refresh_tokens).where("user_id = $1", uuid).build(),
     ]);
   }
 
