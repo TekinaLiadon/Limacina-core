@@ -203,19 +203,34 @@ describe("AuthPostgresStore (мок SQL-клиента)", () => {
   });
 
   it("setApproved/setBanned/updateRole обновляют по uuid", async () => {
+    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [{ "?column?": 1 }] : []));
+
+    expect(await store.setApproved("uuid-1", false)).toBe(true);
+    expect(await store.setBanned("uuid-1", true)).toBe(true);
+    expect(await store.updateRole("uuid-1", "admin")).toBe(true);
+
+    const calls = lastCalls(6);
+    expect(calls[0]?.sql).toContain("UPDATE users SET approved = $1");
+    expect(calls[0]?.sql).toContain("deleted = false");
+    expect(calls[0]?.values).toEqual([false, "uuid-1"]);
+    expect(calls[1]?.sql).toContain("SELECT");
+    expect(calls[2]?.sql).toContain("UPDATE users SET banned = $1");
+    expect(calls[2]?.values).toEqual([true, "uuid-1"]);
+    expect(calls[3]?.sql).toContain("SELECT");
+    expect(calls[4]?.sql).toContain("UPDATE users SET role = $1");
+    expect(calls[4]?.values).toEqual(["admin", "uuid-1"]);
+    expect(calls[5]?.sql).toContain("SELECT");
+  });
+
+  it("setApproved отсутствующего пользователя не применяется (TASK-267.13)", async () => {
     fake.onSql(() => []);
 
-    await store.setApproved("uuid-1", false);
-    await store.setBanned("uuid-1", true);
-    await store.updateRole("uuid-1", "admin");
+    expect(await store.setApproved("uuid-miss", true)).toBe(false);
 
-    const calls = lastCalls(3);
-    expect(calls[0]?.sql).toContain("UPDATE users SET approved = $1");
-    expect(calls[0]?.values).toEqual([false, "uuid-1"]);
-    expect(calls[1]?.sql).toContain("UPDATE users SET banned = $1");
-    expect(calls[1]?.values).toEqual([true, "uuid-1"]);
-    expect(calls[2]?.sql).toContain("UPDATE users SET role = $1");
-    expect(calls[2]?.values).toEqual(["admin", "uuid-1"]);
+    const [update, select] = lastCalls(2);
+    expect(update?.sql).toContain("UPDATE users SET approved = $1");
+    expect(select?.sql).toContain("SELECT");
+    expect(select?.sql).toContain("deleted = false");
   });
 
   it("deleteUser/restoreUser переключают флаг deleted", async () => {

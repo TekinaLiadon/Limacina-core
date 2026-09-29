@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { timingSafeEqual } from "node:crypto";
-import { AuthStoreToken, type IAuthStore, type StoredUser } from "./auth_store";
+import { AuthStoreToken, type IAuthStore, type RefreshEntry, type StoredUser } from "./auth_store";
 import { createAuthUser } from "./create-auth-user";
 import { AppConfigToken } from "../../config/app-config.provider";
 import type { AppConfigType } from "../../config/global-config";
@@ -32,7 +32,7 @@ export class AuthService {
     });
 
     try {
-      const tokens = await this.createTokens(user.uuid, user.username, user.role);
+      const { tokens } = await this.createTokens(user.uuid, user.username, user.role);
       return { tokens, uuid: user.uuid, username: user.username, role: user.role };
     } catch (error) {
       await this.rollbackRegistration(user.uuid);
@@ -58,7 +58,12 @@ export class AuthService {
     if (!claimed) {
       throw new UnauthorizedException("Refresh токен инвалидирован");
     }
-    return this.buildAuthResponse(user);
+    try {
+      return await this.buildAuthResponse(user);
+    } catch (error) {
+      await this.restoreRefreshToken(payload.jti, entry);
+      throw error;
+    }
   }
 
   async invalidate(refreshToken: string): Promise<void> {
@@ -87,13 +92,46 @@ export class AuthService {
       throw new UnauthorizedException("Неверный текущий пароль");
     }
 
-    await this.replacePassword(user.uuid, newPassword);
-    return this.buildAuthResponse(user);
+    const { tokens, refreshJti } = await this.createTokens(user.uuid, user.username, user.role);
+    try {
+      await this.replacePassword(user.uuid, newPassword, refreshJti);
+    } catch (error) {
+      await this.deleteRefreshQuietly(refreshJti);
+      throw error;
+    }
+    return { tokens, uuid: user.uuid, username: user.username, role: user.role };
   }
 
-  private async replacePassword(uuid: string, newPassword: string): Promise<void> {
+  private async replacePassword(
+    uuid: string,
+    newPassword: string,
+    keepRefreshJti: string,
+  ): Promise<void> {
     const passwordHash = await Bun.password.hash(newPassword);
-    await this.authStore.replacePassword(uuid, passwordHash, new Date());
+    await this.authStore.replacePassword(uuid, passwordHash, new Date(), keepRefreshJti);
+  }
+
+  private async restoreRefreshToken(jti: string, entry: RefreshEntry): Promise<void> {
+    try {
+      await this.authStore.saveRefresh(
+        jti,
+        entry,
+        new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000),
+      );
+    } catch (error) {
+      this.logger.error(
+        { err: error, jti },
+        "Не удалось восстановить refresh-токен после сбоя выпуска пары",
+      );
+    }
+  }
+
+  private async deleteRefreshQuietly(jti: string): Promise<void> {
+    try {
+      await this.authStore.deleteRefresh(jti);
+    } catch (error) {
+      this.logger.error({ err: error, jti }, "Не удалось удалить предваривший выпуск токен");
+    }
   }
 
   private async rollbackRegistration(uuid: string): Promise<void> {
@@ -153,7 +191,7 @@ export class AuthService {
   }
 
   private async buildAuthResponse(user: StoredUser): Promise<AuthResponseDto> {
-    const tokens = await this.createTokens(user.uuid, user.username, user.role);
+    const { tokens } = await this.createTokens(user.uuid, user.username, user.role);
     return { tokens, uuid: user.uuid, username: user.username, role: user.role };
   }
 
@@ -168,16 +206,20 @@ export class AuthService {
     return user;
   }
 
-  private async createTokens(uuid: string, username: string, role: string): Promise<UserTokensDto> {
+  private async createTokens(
+    uuid: string,
+    username: string,
+    role: string,
+  ): Promise<{ tokens: UserTokensDto; refreshJti: string }> {
     const access_token = await this.jwtService.signAsync(
       { sub: uuid, username, role, typ: "access", jti: generateUuid() },
       {
         expiresIn: ACCESS_TOKEN_TTL_SECONDS,
       },
     );
-    const jti = generateUuid();
+    const refreshJti = generateUuid();
     const refresh_token = await this.jwtService.signAsync(
-      { sub: uuid, username, jti, role, typ: "refresh" },
+      { sub: uuid, username, jti: refreshJti, role, typ: "refresh" },
       {
         secret: this.config.JWT_REFRESH,
         expiresIn: REFRESH_TOKEN_TTL_SECONDS,
@@ -185,11 +227,11 @@ export class AuthService {
     );
 
     await this.authStore.saveRefresh(
-      jti,
+      refreshJti,
       { userId: uuid, username },
       new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000),
     );
 
-    return { access_token, refresh_token };
+    return { tokens: { access_token, refresh_token }, refreshJti };
   }
 }

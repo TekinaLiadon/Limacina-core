@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join } from "path";
+import { join, sep } from "path";
 import type { INestApplication } from "@nestjs/common";
 import { bootstrap } from "./main";
+import { UPLOAD_TMP_DIR } from "./launcher/launcher-files";
 import { setupTestEnv } from "./utils/tests/test-env";
 
 setupTestEnv();
@@ -97,6 +98,10 @@ describe("Bootstrap реального AppModule", () => {
     const replacedZip = join(platformDir, ".Limacina-9.9.9-linux-x86_64.zip.replaced");
     const platformDirExisted = existsSync(platformDir);
     writeFileSync(replacedZip, "replaced-payload");
+    mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
+    const uploadLeftover = join(UPLOAD_TMP_DIR, "leftover.exe");
+    writeFileSync(uploadLeftover, "upload-payload");
+    const uploadTmpUrlPath = UPLOAD_TMP_DIR.split(sep).join("/");
 
     try {
       const staging = await fetch(`${baseUrl}/releases/.staging-e2e/artifact.exe`);
@@ -113,6 +118,9 @@ describe("Bootstrap реального AppModule", () => {
       );
       expect(replaced.status).toBe(404);
 
+      const uploadTmpStatic = await fetch(`${baseUrl}/${uploadTmpUrlPath}/leftover.exe`);
+      expect(uploadTmpStatic.status).toBe(404);
+
       const publicDotfile = await fetch(`${baseUrl}/.upload-tmp/leftover.exe`);
       expect(publicDotfile.status).toBe(404);
 
@@ -122,6 +130,8 @@ describe("Bootstrap реального AppModule", () => {
       rmSync(stagingDir, { recursive: true, force: true });
       rmSync(backupDir, { recursive: true, force: true });
       rmSync(replacedZip, { force: true });
+      rmSync(uploadLeftover, { force: true });
+      rmSync(UPLOAD_TMP_DIR, { recursive: true, force: true });
       if (!platformDirExisted) {
         rmSync(join(process.cwd(), "public", "linux"), { recursive: true, force: true });
       }

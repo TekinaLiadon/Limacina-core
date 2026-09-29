@@ -6,6 +6,7 @@ import { LAUNCHER_VERSION_REGEX } from "./launcher-files";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BACKUP_INFIX = ".old-";
 const UUID_LENGTH = 36;
+const REPLACED_SUFFIX = ".replaced";
 
 export function buildReleaseStagingName(uuid: string): string {
   return `.staging-${uuid}`;
@@ -15,12 +16,26 @@ export function buildReleaseLockName(version: string): string {
   return `.lock-${version}`;
 }
 
+export const RELEASE_LOCK_TOKEN_FILENAME = "owner.token";
+
+const STOLEN_INFIX = ".stolen-";
+
+export function buildReleaseStolenLockName(version: string, uuid: string): string {
+  return `${buildReleaseLockName(version)}${STOLEN_INFIX}${uuid}`;
+}
+
 export function buildReleaseBackupName(version: string, uuid: string): string {
   return `${BACKUP_INFIX}${version}-${uuid}`;
 }
 
 export function buildReplacedZipName(zipName: string): string {
-  return `.${zipName}.replaced`;
+  return `.${zipName}${REPLACED_SUFFIX}`;
+}
+
+export function parseReplacedZipName(entry: string): string | null {
+  if (!entry.startsWith(".") || !entry.endsWith(REPLACED_SUFFIX)) return null;
+  const original = entry.slice(1, -REPLACED_SUFFIX.length);
+  return original.length > 0 ? original : null;
 }
 
 export function isReleaseStagingEntry(entry: string): boolean {
@@ -29,6 +44,12 @@ export function isReleaseStagingEntry(entry: string): boolean {
 
 export function isReleaseLockEntry(entry: string): boolean {
   return entry.startsWith(".lock-");
+}
+
+export function isReleaseStolenLockEntry(entry: string): boolean {
+  const infixIndex = entry.indexOf(STOLEN_INFIX);
+  if (!entry.startsWith(".lock-") || infixIndex < 0) return false;
+  return UUID_PATTERN.test(entry.slice(infixIndex + STOLEN_INFIX.length));
 }
 
 export function isReleaseBackupEntry(entry: string): boolean {
@@ -63,12 +84,17 @@ export function parseReleaseBackupEntry(entry: string): string | null {
   return LAUNCHER_VERSION_REGEX.test(base) ? base : null;
 }
 
-export function recoverReleaseBackups(releasesRoot: string, logger: Logger): void {
+export function recoverReleaseBackups(
+  releasesRoot: string,
+  logger: Logger,
+  version?: string,
+): void {
   for (const entry of listEntries(releasesRoot)) {
     if (!isReleaseBackupEntry(entry)) continue;
 
     const base = parseReleaseBackupEntry(entry);
     if (!base || existsSync(join(releasesRoot, base))) continue;
+    if (version !== undefined && base !== version) continue;
 
     const backupPath = join(releasesRoot, entry);
     try {

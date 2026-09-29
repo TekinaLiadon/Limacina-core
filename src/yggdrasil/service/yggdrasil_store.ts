@@ -1,5 +1,17 @@
 import { Injectable, Optional } from "@nestjs/common";
-import { MemoryDb, type MemoryUserRecord } from "../../memory/memory-db";
+import {
+  MemoryDb,
+  type MemoryUserRecord,
+  type SessionEntry,
+  type TokenEntry,
+} from "../../memory/memory-db";
+
+export type {
+  SessionEntry,
+  TokenEntry,
+  YggdrasilSessionRecord,
+  YggdrasilTokenRecord,
+} from "../../memory/memory-db";
 
 export interface YggdrasilTextures {
   skinUrl?: string | null;
@@ -13,35 +25,12 @@ export interface YggdrasilProfile extends YggdrasilTextures {
   username: string;
 }
 
-export interface TokenEntry {
-  profileId: string | null;
-  username: string;
-  clientToken: string;
-  userId: string;
-}
-
-export interface SessionEntry {
-  profileId: string;
-  username: string;
-}
-
 export interface YggdrasilUserCredentials {
   uuid: string;
   passwordHash: string;
   banned: boolean;
   approved: boolean;
   passwordChangedAt?: Date | undefined;
-}
-
-export interface YggdrasilTokenRecord {
-  entry: TokenEntry;
-  issuedAt: number;
-  expiresAt: number;
-}
-
-export interface YggdrasilSessionRecord {
-  entry: SessionEntry;
-  expiresAt: number;
 }
 
 export interface YggdrasilSeedUser {

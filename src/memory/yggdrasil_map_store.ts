@@ -1,14 +1,12 @@
 import { Injectable } from "@nestjs/common";
+import type { MemoryDb, SessionEntry, TokenEntry } from "./memory-db";
 import {
   MAX_TOKENS_PER_USER,
   SESSION_TTL_MS,
   TOKEN_TTL_MS,
   type IYggdrasilSessionStore,
   type IYggdrasilTokenStore,
-  type SessionEntry,
-  type TokenEntry,
 } from "../yggdrasil/service/yggdrasil_store";
-import type { MemoryDb } from "./memory-db";
 
 @Injectable()
 export class YggdrasilMapTokenStore implements IYggdrasilTokenStore {

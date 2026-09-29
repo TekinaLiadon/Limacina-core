@@ -125,19 +125,34 @@ describe("AdminPostgresStore (мок SQL-клиента)", () => {
   });
 
   it("setApproved/setBanned/setRole обновляют живого пользователя", async () => {
+    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [userRow()] : []));
+
+    expect(await store.setApproved("pgadm_user", false)).toBe(true);
+    expect(await store.setBanned("pgadm_user", true)).toBe(true);
+    expect(await store.setRole("pgadm_user", "admin")).toBe(true);
+
+    const calls = lastCalls(6);
+    expect(calls[0]?.sql).toContain("UPDATE users SET approved = $1");
+    expect(calls[0]?.sql).toContain("deleted = false");
+    expect(calls[0]?.values).toEqual([false, "pgadm_user"]);
+    expect(calls[1]?.sql).toContain("SELECT");
+    expect(calls[2]?.sql).toContain("UPDATE users SET banned = $1");
+    expect(calls[2]?.values).toEqual([true, "pgadm_user"]);
+    expect(calls[3]?.sql).toContain("SELECT");
+    expect(calls[4]?.sql).toContain("UPDATE users SET role = $1");
+    expect(calls[4]?.values).toEqual(["admin", "pgadm_user"]);
+    expect(calls[5]?.sql).toContain("SELECT");
+  });
+
+  it("setApproved не применяет отсутствующего пользователя (TASK-267.13)", async () => {
     fake.onSql(() => []);
 
-    await store.setApproved("pgadm_user", false);
-    await store.setBanned("pgadm_user", true);
-    await store.setRole("pgadm_user", "admin");
+    expect(await store.setApproved("unknown", true)).toBe(false);
 
-    const calls = lastCalls(3);
-    expect(calls[0]?.sql).toContain("UPDATE users SET approved = $1");
-    expect(calls[0]?.values).toEqual([false, "pgadm_user"]);
-    expect(calls[1]?.sql).toContain("UPDATE users SET banned = $1");
-    expect(calls[1]?.values).toEqual([true, "pgadm_user"]);
-    expect(calls[2]?.sql).toContain("UPDATE users SET role = $1");
-    expect(calls[2]?.values).toEqual(["admin", "pgadm_user"]);
+    const [update, select] = lastCalls(2);
+    expect(update?.sql).toContain("UPDATE users SET approved = $1");
+    expect(select?.sql).toContain("SELECT");
+    expect(select?.sql).toContain("deleted = false");
   });
 
   it("deleteUser возвращает пользователя при успешном удалении", async () => {

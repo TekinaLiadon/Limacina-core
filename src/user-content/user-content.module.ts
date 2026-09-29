@@ -4,17 +4,11 @@ import {
   UserContentMapStore,
   UserContentStoreToken,
   UserContentPostgresStore,
+  type IUserContentStore,
 } from "./user_content_store";
 import { AppConfigModule, AppConfigToken } from "../config/app-config.provider";
-import { isSqlDriver, type AppConfigType } from "../config/global-config";
+import { createStoreByDriver, type AppConfigType } from "../config/global-config";
 import { YggdrasilProfileStoreModule } from "../yggdrasil/service/yggdrasil_store.module";
-
-const useFactory = (db: string) => {
-  if (isSqlDriver(db)) {
-    return new UserContentPostgresStore();
-  }
-  return new UserContentMapStore();
-};
 
 @Module({
   imports: [AppConfigModule, YggdrasilProfileStoreModule],
@@ -22,7 +16,11 @@ const useFactory = (db: string) => {
     UserContentService,
     {
       provide: UserContentStoreToken,
-      useFactory: (config: AppConfigType) => useFactory(config.DB_DRIVER),
+      useFactory: (config: AppConfigType) =>
+        createStoreByDriver<IUserContentStore>(config.DB_DRIVER, {
+          sql: () => new UserContentPostgresStore(),
+          map: () => new UserContentMapStore(),
+        }),
       inject: [AppConfigToken],
     },
   ],

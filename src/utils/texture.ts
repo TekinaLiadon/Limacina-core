@@ -49,3 +49,19 @@ export function textureDimensionsErrorMessage(file: Uint8Array, kind: TextureKin
   const sizes = allowed.map((size) => `${size.width}x${size.height}`).join(", ");
   return `dimensions ${width}x${height} (allowed: ${sizes})`;
 }
+
+export type TextureFileIssue =
+  | { kind: "size"; bytes: number; maxBytes: number }
+  | { kind: "structure"; message: string }
+  | { kind: "dimensions"; message: string };
+
+export function textureFileIssue(file: Uint8Array, kind: TextureKind): TextureFileIssue | null {
+  if (file.length > MAX_TEXTURE_BYTES) {
+    return { kind: "size", bytes: file.length, maxBytes: MAX_TEXTURE_BYTES };
+  }
+  const structureMessage = pngStructureErrorMessage(file);
+  if (structureMessage) return { kind: "structure", message: structureMessage };
+  const dimensionsMessage = textureDimensionsErrorMessage(file, kind);
+  if (dimensionsMessage) return { kind: "dimensions", message: dimensionsMessage };
+  return null;
+}

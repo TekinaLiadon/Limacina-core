@@ -1,5 +1,8 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, NotImplementedException } from "@nestjs/common";
 import type { IAuthStore, RefreshEntry, StoredUser } from "./auth_store";
+
+const UNSUPPORTED_MESSAGE =
+  "Прокси-режим авторизации не поддерживает мутации — режим не реализован";
 
 @Injectable()
 export class AuthProxyStore implements IAuthStore {
@@ -22,18 +25,14 @@ export class AuthProxyStore implements IAuthStore {
     return false;
   }
 
-  async setApproved(uuid: string, approved: boolean): Promise<void> {
-    this.logger.warn(
-      { uuid, approved, upstreamUrl: this.upstreamUrl },
-      "setApproved в прокси-режиме не реализован",
-    );
+  async setApproved(uuid: string, approved: boolean): Promise<boolean> {
+    this.warnUnsupported("setApproved", { uuid, approved });
+    throw new NotImplementedException(UNSUPPORTED_MESSAGE);
   }
 
-  async setBanned(uuid: string, banned: boolean): Promise<void> {
-    this.logger.warn(
-      { uuid, banned, upstreamUrl: this.upstreamUrl },
-      "setBanned в прокси-режиме не реализован",
-    );
+  async setBanned(uuid: string, banned: boolean): Promise<boolean> {
+    this.warnUnsupported("setBanned", { uuid, banned });
+    throw new NotImplementedException(UNSUPPORTED_MESSAGE);
   }
 
   async userExists(username: string): Promise<boolean> {
@@ -41,31 +40,23 @@ export class AuthProxyStore implements IAuthStore {
   }
 
   async replacePassword(uuid: string, _passwordHash: string, _changedAt: Date): Promise<void> {
-    this.logger.warn(
-      { uuid, upstreamUrl: this.upstreamUrl },
-      "replacePassword в прокси-режиме не реализован",
-    );
+    this.warnUnsupported("replacePassword", { uuid });
+    throw new NotImplementedException(UNSUPPORTED_MESSAGE);
   }
 
-  async updateRole(uuid: string, role: string): Promise<void> {
-    this.logger.warn(
-      { uuid, role, upstreamUrl: this.upstreamUrl },
-      "updateRole в прокси-режиме не реализован",
-    );
+  async updateRole(uuid: string, role: string): Promise<boolean> {
+    this.warnUnsupported("updateRole", { uuid, role });
+    throw new NotImplementedException(UNSUPPORTED_MESSAGE);
   }
 
   async deleteUser(uuid: string): Promise<void> {
-    this.logger.warn(
-      { uuid, upstreamUrl: this.upstreamUrl },
-      "deleteUser в прокси-режиме не реализован",
-    );
+    this.warnUnsupported("deleteUser", { uuid });
+    throw new NotImplementedException(UNSUPPORTED_MESSAGE);
   }
 
   async restoreUser(uuid: string): Promise<void> {
-    this.logger.warn(
-      { uuid, upstreamUrl: this.upstreamUrl },
-      "restoreUser в прокси-режиме не реализован",
-    );
+    this.warnUnsupported("restoreUser", { uuid });
+    throw new NotImplementedException(UNSUPPORTED_MESSAGE);
   }
 
   async saveRefresh(jti: string, _entry: RefreshEntry, _expiresAt: Date): Promise<void> {
@@ -91,9 +82,14 @@ export class AuthProxyStore implements IAuthStore {
   }
 
   async deleteRefreshByUserId(userId: string): Promise<void> {
+    this.warnUnsupported("deleteRefreshByUserId", { userId });
+    throw new NotImplementedException(UNSUPPORTED_MESSAGE);
+  }
+
+  private warnUnsupported(operation: string, details: Record<string, unknown>): void {
     this.logger.warn(
-      { userId, upstreamUrl: this.upstreamUrl },
-      "deleteRefreshByUserId в прокси-режиме не реализован",
+      { operation, ...details, upstreamUrl: this.upstreamUrl },
+      `${operation} в прокси-режиме не реализован`,
     );
   }
 

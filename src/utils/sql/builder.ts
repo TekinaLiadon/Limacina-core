@@ -8,6 +8,7 @@ import {
   createWhereState,
   type WhereState,
 } from "./fragments";
+import { renumberSqlPlaceholders } from "./placeholders";
 import type { BuiltQuery, OrderDirection, SelectBuilder, SqlValue, TableName } from "./types";
 
 interface WithBuild {
@@ -38,6 +39,20 @@ interface UpdateSet {
 interface DeleteBuilder {
   where: (condition: string, ...args: SqlValue[]) => WithBuild;
   build: () => BuiltQuery;
+}
+
+function assertNonNegativeInteger(value: number, name: string): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${name}: ожидается неотрицательное целое число, получено ${value}`);
+  }
+}
+
+function assertHasWhere(parts: string[], statement: string): void {
+  if (parts.length === 0) {
+    throw new Error(
+      `${statement} без where() запрещён — условие должно ограничивать область изменения`,
+    );
+  }
 }
 
 function appendReturning(baseSql: string, columns: string[]): string {
@@ -123,10 +138,12 @@ export function selectQuery(...columns: string[]): {
           return builder;
         },
         limit: (n: number) => {
+          assertNonNegativeInteger(n, "limit");
           limitValue = n;
           return builder;
         },
         offset: (n: number) => {
+          assertNonNegativeInteger(n, "offset");
           offsetValue = n;
           return builder;
         },
@@ -180,6 +197,7 @@ export function updateQuery(): {
       const whereState: WhereState = createWhereState();
 
       const buildUpdate = (): BuiltQuery => {
+        assertHasWhere(whereState.parts, "UPDATE");
         const whereClause = buildWhereClause(whereState);
         const sqlStr = `UPDATE ${table} SET ${setClauses.join(", ")}${whereClause}`;
         return { sql: sqlStr, values: [...values, ...whereState.values] };
@@ -194,11 +212,7 @@ export function updateQuery(): {
           set: addSet,
           where: (condition: string, ...args: SqlValue[]) => {
             const offset = values.length;
-            const renumbered = condition.replace(
-              /'(?:[^']|'')*'|\$(\d+)/g,
-              (match, placeholder?: string) =>
-                placeholder === undefined ? match : `$${Number(placeholder) + offset}`,
-            );
+            const renumbered = renumberSqlPlaceholders(condition, offset);
             addWhere(whereState, renumbered, ...args);
 
             return {
@@ -230,7 +244,10 @@ export function deleteQuery(): {
     from: (table: TableName) => {
       const state = createWhereState();
 
-      const buildDelete = (): BuiltQuery => buildWithWhere(`DELETE FROM ${table}`, state);
+      const buildDelete = (): BuiltQuery => {
+        assertHasWhere(state.parts, "DELETE");
+        return buildWithWhere(`DELETE FROM ${table}`, state);
+      };
 
       return {
         where: (condition: string, ...args: SqlValue[]) => {

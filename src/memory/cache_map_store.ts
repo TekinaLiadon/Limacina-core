@@ -79,10 +79,20 @@ export class CacheMapStore implements ICacheStore {
   }
 
   private evictFilledSlots(): void {
+    if (this.db.cacheEntries.size < this.maxEntries) return;
+    this.purgeExpiredEntries();
     while (this.db.cacheEntries.size >= this.maxEntries) {
       const oldestKey = this.db.cacheEntries.keys().next().value;
       if (oldestKey === undefined) break;
       this.db.cacheEntries.delete(oldestKey);
+    }
+  }
+
+  private purgeExpiredEntries(): void {
+    for (const [key, entry] of this.db.cacheEntries) {
+      if (entryExpired(entry)) {
+        this.db.cacheEntries.delete(key);
+      }
     }
   }
 }

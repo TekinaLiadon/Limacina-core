@@ -225,6 +225,53 @@ describe("updateQuery", () => {
     );
     expect(q.values).toEqual(["jane", true]);
   });
+
+  it("не трогает доллар-числа внутри доллар-квотированных литералов (TASK-269.22)", () => {
+    const q = updateQuery()
+      .from(TABLES.users)
+      .set("username", "jane")
+      .where("note = $$цена $2 и $3$$ AND approved = $1", true)
+      .build();
+    expect(q.sql).toBe(
+      "UPDATE users SET username = $1 WHERE note = $$цена $2 и $3$$ AND approved = $2",
+    );
+    expect(q.values).toEqual(["jane", true]);
+  });
+
+  it("не трогает доллар-числа внутри $tag$-литералов (TASK-269.22)", () => {
+    const q = updateQuery()
+      .from(TABLES.users)
+      .set("username", "jane")
+      .where("note = $fn$сумма $3$fn$ AND approved = $1", true)
+      .build();
+    expect(q.sql).toBe(
+      "UPDATE users SET username = $1 WHERE note = $fn$сумма $3$fn$ AND approved = $2",
+    );
+    expect(q.values).toEqual(["jane", true]);
+  });
+
+  it("update без where отклоняется (TASK-269.22)", () => {
+    expect(() => updateQuery().from(TABLES.users).set("username", "jane").build()).toThrow("where");
+  });
+
+  it("limit отклоняет отрицательные, дробные и бесконечные значения (TASK-269.22)", () => {
+    expect(() => selectQuery("id").from(TABLES.users).limit(-1)).toThrow("limit");
+    expect(() => selectQuery("id").from(TABLES.users).limit(1.5)).toThrow("limit");
+    expect(() => selectQuery("id").from(TABLES.users).limit(Number.POSITIVE_INFINITY)).toThrow(
+      "limit",
+    );
+    expect(() => selectQuery("id").from(TABLES.users).limit(Number.NaN)).toThrow("limit");
+  });
+
+  it("offset отклоняет невалидные значения (TASK-269.22)", () => {
+    expect(() => selectQuery("id").from(TABLES.users).offset(-10)).toThrow("offset");
+    expect(() => selectQuery("id").from(TABLES.users).offset(0.25)).toThrow("offset");
+  });
+
+  it("limit 0 и offset 0 допустимы", () => {
+    const q = selectQuery("id").from(TABLES.users).limit(0).offset(0).build();
+    expect(q.sql).toBe("SELECT id FROM users LIMIT 0 OFFSET 0");
+  });
 });
 
 describe("deleteQuery", () => {
@@ -234,10 +281,8 @@ describe("deleteQuery", () => {
     expect(q.values).toEqual(["u1"]);
   });
 
-  it("delete без where удаляет все строки таблицы", () => {
-    const q = deleteQuery().from(TABLES.refresh_tokens).build();
-    expect(q.sql).toBe("DELETE FROM refresh_tokens");
-    expect(q.values).toEqual([]);
+  it("delete без where отклоняется (TASK-269.22)", () => {
+    expect(() => deleteQuery().from(TABLES.refresh_tokens).build()).toThrow("where");
   });
 });
 

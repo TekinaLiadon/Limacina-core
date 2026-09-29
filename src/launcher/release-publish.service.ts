@@ -8,6 +8,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join } from "node:path";
@@ -29,14 +30,16 @@ import {
   VERSION_FORMAT_MESSAGE,
   buildUpdaterArtifactName,
   findUpdaterPlatform,
-} from "../launcher/launcher-files";
+} from "./launcher-files";
 import {
+  RELEASE_LOCK_TOKEN_FILENAME,
   buildReleaseBackupName,
   buildReleaseLockName,
   buildReleaseStagingName,
+  buildReleaseStolenLockName,
   cleanupReleaseServiceDirs,
   recoverReleaseBackups,
-} from "../launcher/release-service-dirs";
+} from "./release-service-dirs";
 
 const PUBLISH_LOCK_TIMEOUT_MS = 10_000;
 const PUBLISH_LOCK_STALE_MS = 5 * 60_000;
@@ -49,9 +52,101 @@ export interface UpdaterArtifactUpload {
   signatureTempPath: string;
 }
 
+export async function acquirePublishLock(
+  releasesRoot: string,
+  version: string,
+  timeoutMs: number,
+  logger: Logger,
+): Promise<string> {
+  const lockDir = join(releasesRoot, buildReleaseLockName(version));
+  const tokenPath = join(lockDir, RELEASE_LOCK_TOKEN_FILENAME);
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    try {
+      mkdirSync(lockDir);
+    } catch {
+      if (Date.now() > deadline) {
+        throw new ConflictException(
+          `Публикация версии ${version} уже выполняется, повторите позже`,
+        );
+      }
+      stealStaleLock(releasesRoot, version, lockDir, logger);
+      await Bun.sleep(100);
+      continue;
+    }
+
+    const token = randomUUID();
+    writeFileSync(tokenPath, token);
+    return token;
+  }
+}
+
+export function releasePublishLock(
+  releasesRoot: string,
+  version: string,
+  token: string,
+  logger: Logger,
+): void {
+  const lockDir = join(releasesRoot, buildReleaseLockName(version));
+  if (readLockToken(lockDir) !== token) {
+    logger.warn(
+      { lockDir },
+      "Лок публикации релиза принадлежит другой публикации — снятие чужого лока отклонено",
+    );
+    return;
+  }
+
+  try {
+    rmSync(lockDir, { recursive: true, force: true });
+  } catch (error) {
+    logger.error({ err: error, version }, "Не удалось снять лок публикации релиза");
+  }
+}
+
+export function ensurePublishLockOwned(releasesRoot: string, version: string, token: string): void {
+  const lockDir = join(releasesRoot, buildReleaseLockName(version));
+  if (readLockToken(lockDir) === token) return;
+
+  throw new ConflictException(
+    `Публикация версии ${version} прервана: лок публикации перехвачен другой публикацией`,
+  );
+}
+
+function stealStaleLock(
+  releasesRoot: string,
+  version: string,
+  lockDir: string,
+  logger: Logger,
+): void {
+  let stale = false;
+  try {
+    stale = Date.now() - statSync(lockDir).mtimeMs > PUBLISH_LOCK_STALE_MS;
+  } catch {
+    return;
+  }
+  if (!stale) return;
+
+  const stolenDir = join(releasesRoot, buildReleaseStolenLockName(version, randomUUID()));
+  try {
+    renameSync(lockDir, stolenDir);
+    logger.warn({ lockDir, stolenDir }, "Перехвачен протухший лок публикации релиза");
+  } catch (error) {
+    logger.warn({ err: error, lockDir }, "Не удалось перехватить протухший лок публикации релиза");
+  }
+}
+
+function readLockToken(lockDir: string): string | undefined {
+  try {
+    return readFileSync(join(lockDir, RELEASE_LOCK_TOKEN_FILENAME), "utf-8");
+  } catch {
+    return undefined;
+  }
+}
+
 @Injectable()
-export class LauncherReleaseService {
-  private readonly logger = new Logger(LauncherReleaseService.name);
+export class ReleasePublishService {
+  private readonly logger = new Logger(ReleasePublishService.name);
 
   constructor(@Optional() private readonly lockTimeoutMs: number = PUBLISH_LOCK_TIMEOUT_MS) {}
 
@@ -80,23 +175,32 @@ export class LauncherReleaseService {
       const releaseDir = join(releasesRoot, version);
       mkdirSync(releasesRoot, { recursive: true });
 
-      await this.acquirePublishLock(version);
-      const stagingDir = join(releasesRoot, buildReleaseStagingName(randomUUID()));
+      const token = await acquirePublishLock(
+        releasesRoot,
+        version,
+        this.lockTimeoutMs,
+        this.logger,
+      );
       try {
-        mkdirSync(stagingDir, { recursive: true });
-        this.cleanServiceDirs(releasesRoot);
-        if (existsSync(releaseDir)) {
-          this.stageExistingFiles(releaseDir, stagingDir);
+        ensurePublishLockOwned(releasesRoot, version, token);
+        const stagingDir = join(releasesRoot, buildReleaseStagingName(randomUUID()));
+        try {
+          mkdirSync(stagingDir, { recursive: true });
+          this.cleanServiceDirs(releasesRoot, version);
+          if (existsSync(releaseDir)) {
+            this.stageExistingFiles(releaseDir, stagingDir);
+          }
+          for (const artifact of artifacts) {
+            this.commitPlatform(stagingDir, version, artifact);
+          }
+          ensurePublishLockOwned(releasesRoot, version, token);
+          this.swapReleaseDir(releaseDir, stagingDir);
+        } catch (error) {
+          this.removeDirQuietly(stagingDir);
+          throw error;
         }
-        for (const artifact of artifacts) {
-          this.commitPlatform(stagingDir, version, artifact);
-        }
-        this.swapReleaseDir(releaseDir, stagingDir);
-      } catch (error) {
-        this.removeDirQuietly(stagingDir);
-        throw error;
       } finally {
-        this.releasePublishLock(version);
+        releasePublishLock(releasesRoot, version, token, this.logger);
       }
 
       const published = artifacts.map((artifact) => artifact.platformKey);
@@ -107,49 +211,8 @@ export class LauncherReleaseService {
     }
   }
 
-  private lockDir(version: string): string {
-    return join(PUBLIC_DIR, RELEASES_DIR, buildReleaseLockName(version));
-  }
-
-  private async acquirePublishLock(version: string): Promise<void> {
-    const lockDir = this.lockDir(version);
-    const deadline = Date.now() + this.lockTimeoutMs;
-
-    while (true) {
-      try {
-        mkdirSync(lockDir);
-        return;
-      } catch {
-        if (Date.now() > deadline) {
-          throw new ConflictException(
-            `Публикация версии ${version} уже выполняется, повторите позже`,
-          );
-        }
-        let stale = false;
-        try {
-          stale = Date.now() - statSync(lockDir).mtimeMs > PUBLISH_LOCK_STALE_MS;
-        } catch {
-          stale = false;
-        }
-        if (stale) {
-          this.logger.warn({ lockDir }, "Захвачен протухший лок публикации релиза");
-          this.releasePublishLock(version);
-        }
-        await Bun.sleep(100);
-      }
-    }
-  }
-
-  private releasePublishLock(version: string): void {
-    try {
-      rmSync(this.lockDir(version), { recursive: true, force: true });
-    } catch (error) {
-      this.logger.error({ err: error, version }, "Не удалось снять лок публикации релиза");
-    }
-  }
-
-  private cleanServiceDirs(releasesRoot: string): void {
-    recoverReleaseBackups(releasesRoot, this.logger);
+  private cleanServiceDirs(releasesRoot: string, version: string): void {
+    recoverReleaseBackups(releasesRoot, this.logger, version);
     cleanupReleaseServiceDirs(releasesRoot, this.logger, SERVICE_DIR_STALE_MS);
   }
 

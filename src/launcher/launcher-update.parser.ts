@@ -1,8 +1,13 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, PayloadTooLargeException } from "@nestjs/common";
+import type { MultipartFile } from "@fastify/multipart";
 import type { FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { SUPPORTED_PLATFORMS, UPLOAD_TMP_DIR } from "../launcher/launcher-files";
+import {
+  MULTIPART_FILE_SIZE_LIMIT_BYTES,
+  SUPPORTED_PLATFORMS,
+  UPLOAD_TMP_DIR,
+} from "./launcher-files";
 import { removeFile, streamPartToFile } from "../utils/multipart-file";
 import type { LauncherPlatformFile } from "./launcher-update.service";
 
@@ -26,7 +31,9 @@ export async function parseLauncherUpdateRequest(
     const files: LauncherPlatformFile[] = [];
     const seenFields = new Set<string>();
 
-    for await (const part of request.parts()) {
+    for await (const part of request.parts({
+      limits: { fileSize: MULTIPART_FILE_SIZE_LIMIT_BYTES },
+    })) {
       if (part.type === "field" && part.fieldname === "version") {
         version = part.value as string;
         continue;
@@ -45,8 +52,9 @@ export async function parseLauncherUpdateRequest(
       seenFields.add(part.fieldname);
 
       const tempPath = join(UPLOAD_TMP_DIR, `${randomUUID()}.zip`);
-      await streamPartToFile(part.file, tempPath);
       staged.push(tempPath);
+      await streamPartToFile(part.file, tempPath);
+      assertPartNotTruncated(part);
       files.push({ ...platform, tempPath });
     }
 
@@ -55,4 +63,11 @@ export async function parseLauncherUpdateRequest(
     for (const tempPath of staged) removeFile(tempPath);
     throw error;
   }
+}
+
+function assertPartNotTruncated(part: MultipartFile): void {
+  if (!part.file.truncated) return;
+  throw new PayloadTooLargeException(
+    `Файл слишком большой: максимум ${MULTIPART_FILE_SIZE_LIMIT_BYTES} байт`,
+  );
 }

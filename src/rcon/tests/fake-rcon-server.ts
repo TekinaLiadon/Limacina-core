@@ -36,9 +36,15 @@ export function rconRespond(socket: Socket, type: number, body: string, id: numb
   socket.write(encodeRconPacket({ id, type, body }));
 }
 
-export function rconAuthHandler(authBody = ""): RconHandler {
+export interface RconAuthHandlerOptions {
+  authOk?: boolean;
+}
+
+export function rconAuthHandler(options: RconAuthHandlerOptions = {}): RconHandler {
+  const authOk = options.authOk ?? true;
   return (packet, socket) => {
-    if (packet.type === RCON_AUTH) rconRespond(socket, RCON_AUTH_RESPONSE, authBody, packet.id);
+    if (packet.type === RCON_AUTH)
+      rconRespond(socket, RCON_AUTH_RESPONSE, "", authOk ? packet.id : -1);
     if (packet.type === RCON_RESPONSE_VALUE)
       rconRespond(socket, RCON_RESPONSE_VALUE, packet.body, packet.id);
   };

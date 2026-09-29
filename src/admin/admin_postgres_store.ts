@@ -177,7 +177,7 @@ export class AdminPostgresStore implements IAdminStore {
     };
   }
 
-  async setApproved(username: string, approved: boolean): Promise<void> {
+  async setApproved(username: string, approved: boolean): Promise<boolean> {
     const query = updateColumnQuery(
       TABLES.users,
       "approved",
@@ -185,10 +185,11 @@ export class AdminPostgresStore implements IAdminStore {
       "username = $1 AND deleted = false",
       username,
     );
-    await execute(query.sql, query.values);
+    const { count } = await execute(query.sql, query.values);
+    return this.appliedToLiveUser(count, username);
   }
 
-  async setBanned(username: string, banned: boolean): Promise<void> {
+  async setBanned(username: string, banned: boolean): Promise<boolean> {
     const query = updateColumnQuery(
       TABLES.users,
       "banned",
@@ -196,10 +197,11 @@ export class AdminPostgresStore implements IAdminStore {
       "username = $1 AND deleted = false",
       username,
     );
-    await execute(query.sql, query.values);
+    const { count } = await execute(query.sql, query.values);
+    return this.appliedToLiveUser(count, username);
   }
 
-  async setRole(username: string, role: string): Promise<void> {
+  async setRole(username: string, role: string): Promise<boolean> {
     const query = updateColumnQuery(
       TABLES.users,
       "role",
@@ -207,7 +209,13 @@ export class AdminPostgresStore implements IAdminStore {
       "username = $1 AND deleted = false",
       username,
     );
-    await execute(query.sql, query.values);
+    const { count } = await execute(query.sql, query.values);
+    return this.appliedToLiveUser(count, username);
+  }
+
+  private async appliedToLiveUser(affected: number, username: string): Promise<boolean> {
+    if (affected > 0) return true;
+    return (await this.findByUsername(username)) !== undefined;
   }
 
   async deleteUser(username: string): Promise<AdminUser | undefined> {

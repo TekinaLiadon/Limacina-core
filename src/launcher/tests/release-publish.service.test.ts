@@ -1,4 +1,4 @@
-import { UPLOAD_TMP_DIR } from "../../launcher/launcher-files";
+import { UPLOAD_TMP_DIR } from "../launcher-files";
 import { setupTestEnv } from "../../utils/tests/test-env";
 
 setupTestEnv();
@@ -17,9 +17,22 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { BadRequestException, ConflictException } from "@nestjs/common";
-import { LauncherReleaseService, type UpdaterArtifactUpload } from "../launcher-release.service";
-import { isReleaseBackupEntry, isReleaseStagingEntry } from "../../launcher/release-service-dirs";
+import { BadRequestException, ConflictException, Logger } from "@nestjs/common";
+import {
+  ReleasePublishService,
+  acquirePublishLock,
+  ensurePublishLockOwned,
+  releasePublishLock,
+  type UpdaterArtifactUpload,
+} from "../release-publish.service";
+import {
+  RELEASE_LOCK_TOKEN_FILENAME,
+  buildReleaseStolenLockName,
+  cleanupReleaseServiceDirs,
+  isReleaseBackupEntry,
+  isReleaseStagingEntry,
+  isReleaseStolenLockEntry,
+} from "../release-service-dirs";
 
 const RELEASES_ROOT = join("public", "releases");
 const RELEASES_BACKUP = join("public", "releases.bak");
@@ -68,8 +81,8 @@ function ageDirectory(dir: string): void {
   utimesSync(dir, past, past);
 }
 
-describe("LauncherReleaseService — публикация релиза", (): void => {
-  let service: LauncherReleaseService;
+describe("ReleasePublishService — публикация релиза", (): void => {
+  let service: ReleasePublishService;
   let releasesRootExisted = false;
 
   beforeAll((): void => {
@@ -77,7 +90,7 @@ describe("LauncherReleaseService — публикация релиза", (): voi
     if (releasesRootExisted) {
       renameSync(RELEASES_ROOT, RELEASES_BACKUP);
     }
-    service = new LauncherReleaseService();
+    service = new ReleasePublishService();
   });
 
   afterAll((): void => {
@@ -161,9 +174,11 @@ describe("LauncherReleaseService — публикация релиза", (): voi
 
     expect(existsSync(join(RELEASES_ROOT, "4.4.3"))).toBe(false);
     expect(
-      readdirSync(RELEASES_ROOT).some(
-        (entry) => isReleaseStagingEntry(entry) || isReleaseBackupEntry(entry),
-      ),
+      existsSync(RELEASES_ROOT)
+        ? readdirSync(RELEASES_ROOT).some(
+            (entry) => isReleaseStagingEntry(entry) || isReleaseBackupEntry(entry),
+          )
+        : false,
     ).toBe(false);
   });
 
@@ -191,7 +206,7 @@ describe("LauncherReleaseService — публикация релиза", (): voi
 
   it("занятый лок даёт 409 и не забирает чужой свежий лок", async () => {
     mkdirSync(join(RELEASES_ROOT, ".lock-4.4.5"), { recursive: true });
-    const impatient = new LauncherReleaseService(150);
+    const impatient = new ReleasePublishService(150);
 
     await expect(
       impatient.publish("4.4.5", [stageUpload("windows-x86_64", ".exe", "a", "s")]),
@@ -204,7 +219,7 @@ describe("LauncherReleaseService — публикация релиза", (): voi
     mkdirSync(lockDir, { recursive: true });
     ageDirectory(lockDir);
     chmodSync(RELEASES_ROOT, 0o555);
-    const impatient = new LauncherReleaseService(150);
+    const impatient = new ReleasePublishService(150);
 
     try {
       await expect(
@@ -258,7 +273,7 @@ describe("LauncherReleaseService — публикация релиза", (): voi
     }
   });
 
-  it("бэкап без каталога версии восстанавливается до чистки (crash-окно swapReleaseDir)", async () => {
+  it("публикация своей версии не восстанавливает чужие crash-бэкапы — полный recover делает свип при старте (TASK-411.8)", async () => {
     const backupName = `.old-4.4.13-${randomUUID()}`;
     mkdirSync(join(RELEASES_ROOT, backupName), { recursive: true });
     writeFileSync(
@@ -270,11 +285,10 @@ describe("LauncherReleaseService — публикация релиза", (): voi
     try {
       await service.publish("4.4.10", [stageUpload("windows-x86_64", ".exe", "a", "s")]);
 
-      expect(
-        readFileSync(join(RELEASES_ROOT, "4.4.13", "Limacina-4.4.13-windows-x86_64.exe"), "utf-8"),
-      ).toBe("backup-payload");
-      expect(existsSync(join(RELEASES_ROOT, backupName))).toBe(false);
+      expect(existsSync(join(RELEASES_ROOT, "4.4.13"))).toBe(false);
+      expect(existsSync(join(RELEASES_ROOT, backupName))).toBe(true);
     } finally {
+      rmSync(join(RELEASES_ROOT, backupName), { recursive: true, force: true });
       rmSync(join(RELEASES_ROOT, "4.4.13"), { recursive: true, force: true });
     }
   });
@@ -337,5 +351,95 @@ describe("LauncherReleaseService — публикация релиза", (): voi
     expect(existsSync(join(RELEASES_ROOT, "4.4.7", "Limacina-4.4.7-windows-x86_64.exe"))).toBe(
       true,
     );
+  });
+
+  describe("токен-лок публикации (TASK-321)", (): void => {
+    const lockLogger = new Logger("ReleasePublishLockTest");
+    const lockPathOf = (version: string): string => join(RELEASES_ROOT, `.lock-${version}`);
+    const tokenPathOf = (version: string): string =>
+      join(lockPathOf(version), RELEASE_LOCK_TOKEN_FILENAME);
+
+    const removeStolenTombs = (): void => {
+      for (const entry of readdirSync(RELEASES_ROOT)) {
+        if (!isReleaseStolenLockEntry(entry)) continue;
+        rmSync(join(RELEASES_ROOT, entry), { recursive: true, force: true });
+      }
+    };
+
+    it("при захвате лока в каталог пишется токен владельца", async () => {
+      const token = await acquirePublishLock(RELEASES_ROOT, "4.5.1", 150, lockLogger);
+
+      expect(token.length).toBeGreaterThan(0);
+      expect(readFileSync(tokenPathOf("4.5.1"), "utf-8")).toBe(token);
+
+      releasePublishLock(RELEASES_ROOT, "4.5.1", token, lockLogger);
+      expect(existsSync(lockPathOf("4.5.1"))).toBe(false);
+    });
+
+    it("чужой токен не снимает лок — отвисшая публикация не сносит чужой захват", async () => {
+      const token = await acquirePublishLock(RELEASES_ROOT, "4.5.2", 150, lockLogger);
+
+      releasePublishLock(RELEASES_ROOT, "4.5.2", "hijacker-token", lockLogger);
+      expect(existsSync(lockPathOf("4.5.2"))).toBe(true);
+      expect(readFileSync(tokenPathOf("4.5.2"), "utf-8")).toBe(token);
+
+      releasePublishLock(RELEASES_ROOT, "4.5.2", token, lockLogger);
+      expect(existsSync(lockPathOf("4.5.2"))).toBe(false);
+    });
+
+    it("владелец с перехваченным локом прерывается 409", async () => {
+      const token = await acquirePublishLock(RELEASES_ROOT, "4.5.3", 150, lockLogger);
+
+      writeFileSync(tokenPathOf("4.5.3"), "hijacker-token");
+      expect(() => ensurePublishLockOwned(RELEASES_ROOT, "4.5.3", token)).toThrow(
+        ConflictException,
+      );
+
+      rmSync(lockPathOf("4.5.3"), { recursive: true, force: true });
+      expect(() => ensurePublishLockOwned(RELEASES_ROOT, "4.5.3", token)).toThrow(
+        ConflictException,
+      );
+    });
+
+    it("протухший лок захватывается атомарным rename в stolen-гробницу", async () => {
+      mkdirSync(lockPathOf("4.5.4"), { recursive: true });
+      ageDirectory(lockPathOf("4.5.4"));
+
+      try {
+        const token = await acquirePublishLock(RELEASES_ROOT, "4.5.4", 150, lockLogger);
+
+        expect(readFileSync(tokenPathOf("4.5.4"), "utf-8")).toBe(token);
+        expect(readdirSync(RELEASES_ROOT).some(isReleaseStolenLockEntry)).toBe(true);
+
+        releasePublishLock(RELEASES_ROOT, "4.5.4", token, lockLogger);
+        expect(existsSync(lockPathOf("4.5.4"))).toBe(false);
+      } finally {
+        removeStolenTombs();
+      }
+    });
+
+    it("stolen-гробница не участвует в захвате лока и подчищается как служебный каталог", async () => {
+      const tomb = join(RELEASES_ROOT, buildReleaseStolenLockName("4.5.5", randomUUID()));
+      mkdirSync(tomb, { recursive: true });
+      ageDirectory(tomb);
+
+      const token = await acquirePublishLock(RELEASES_ROOT, "4.5.5", 150, lockLogger);
+      expect(readFileSync(tokenPathOf("4.5.5"), "utf-8")).toBe(token);
+
+      releasePublishLock(RELEASES_ROOT, "4.5.5", token, lockLogger);
+
+      expect(existsSync(tomb)).toBe(true);
+      cleanupReleaseServiceDirs(RELEASES_ROOT, lockLogger);
+      expect(existsSync(tomb)).toBe(false);
+    });
+
+    it("публикация живёт в собственном локе и снимает его по токену (сквозной прогон)", async () => {
+      const result = await service.publish("4.5.6", [
+        stageUpload("windows-x86_64", ".exe", "a", "s"),
+      ]);
+
+      expect(result.version).toBe("4.5.6");
+      expect(existsSync(lockPathOf("4.5.6"))).toBe(false);
+    });
   });
 });

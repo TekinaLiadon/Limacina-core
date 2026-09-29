@@ -26,8 +26,17 @@ export async function streamPartToFile(
     }
     await writer.end();
   } catch (error) {
+    await closeWriterQuietly(writer);
     removeFile(tempPath);
     throw error;
+  }
+}
+
+async function closeWriterQuietly(writer: Bun.FileSink): Promise<void> {
+  try {
+    await writer.end();
+  } catch {
+    return;
   }
 }
 

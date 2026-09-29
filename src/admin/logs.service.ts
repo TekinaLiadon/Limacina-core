@@ -24,8 +24,8 @@ export class LogsService {
     const today = new Date().toISOString().slice(0, 10);
     try {
       const dates = readdirSync(LOGS_DIR)
-        .filter((f) => f.endsWith(".log"))
-        .map((f) => f.replace(".log", ""))
+        .filter((f) => f.endsWith(".log") && LOG_DATE_PATTERN.test(f.slice(0, -4)))
+        .map((f) => f.slice(0, -4))
         .toSorted()
         .toReversed();
       if (!dates.includes(today)) {

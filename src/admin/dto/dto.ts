@@ -275,23 +275,3 @@ export class LogsResponseDto {
   })
   lines!: string[];
 }
-
-export class LauncherUpdateResponseDto {
-  @ApiProperty({ example: "1.2.3" })
-  version!: string;
-
-  @ApiProperty({ type: [String], example: ["linux/x86_64", "macos/arm64", "windows/x86_64"] })
-  updated!: string[];
-}
-
-export class LauncherReleaseResponseDto {
-  @ApiProperty({ example: "1.2.3", description: "Версия опубликованного релиза" })
-  version!: string;
-
-  @ApiProperty({
-    type: [String],
-    example: ["windows-x86_64", "darwin-aarch64"],
-    description: "Платформы релиза, опубликованные этим запросом (ключи tauri-plugin-updater)",
-  })
-  published!: string[];
-}

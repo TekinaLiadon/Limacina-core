@@ -3,9 +3,11 @@ import { buildTestPng } from "./test-png";
 import {
   buildDefaultSkinUrl,
   isSkinModel,
+  MAX_TEXTURE_BYTES,
   pngStructureErrorMessage,
   sha256Hex,
   textureDimensionsErrorMessage,
+  textureFileIssue,
 } from "../texture";
 import { lastById } from "../collection";
 
@@ -69,6 +71,40 @@ describe("texture utils", () => {
     expect(buildDefaultSkinUrl("http://localhost:3005")).toBe(
       "http://localhost:3005/textures/default.png",
     );
+  });
+});
+
+describe("textureFileIssue (TASK-269.24)", () => {
+  it("возвращает null для валидного скина и плаща", () => {
+    expect(textureFileIssue(buildTestPng(), "skin")).toBeNull();
+    expect(textureFileIssue(buildTestPng({ width: 64, height: 32 }), "cape")).toBeNull();
+  });
+
+  it("фиксирует превышение размера до проверки структуры", () => {
+    const oversized = Buffer.alloc(MAX_TEXTURE_BYTES + 1, 0);
+
+    expect(textureFileIssue(oversized, "skin")).toEqual({
+      kind: "size",
+      bytes: MAX_TEXTURE_BYTES + 1,
+      maxBytes: MAX_TEXTURE_BYTES,
+    });
+  });
+
+  it("фиксирует битую структуру PNG", () => {
+    const file = buildTestPng();
+    file[30] = (file[30]! + 1) & 0xff;
+
+    const issue = textureFileIssue(file, "skin");
+    expect(issue?.kind).toBe("structure");
+  });
+
+  it("фиксирует недопустимые размеры", () => {
+    const issue = textureFileIssue(buildTestPng({ width: 128, height: 128 }), "skin");
+
+    expect(issue?.kind).toBe("dimensions");
+    if (issue?.kind === "dimensions") {
+      expect(issue.message).toMatch(/dimensions 128x128/);
+    }
   });
 });
 

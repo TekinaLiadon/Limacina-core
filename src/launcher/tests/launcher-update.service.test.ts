@@ -15,7 +15,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { LauncherUpdateService, type LauncherPlatformFile } from "../launcher-update.service";
-import { OLD_VERSIONS_DIR, UPLOAD_TMP_DIR } from "../../launcher/launcher-files";
+import { OLD_VERSIONS_DIR, UPLOAD_TMP_DIR } from "../launcher-files";
 
 const VERSION_FILE = "public/version.json";
 const VERSION_BACKUP = "public/version.json.bak";
@@ -183,6 +183,18 @@ describe("LauncherUpdateService — архивирование старых ве
     expect(existsSync(UPLOAD_TMP_DIR) ? readdirSync(UPLOAD_TMP_DIR) : []).toEqual([]);
 
     resetToBaseline();
+  });
+
+  it("PATCH без файловых полей отклоняется и не трогает version.json (TASK-411.7)", () => {
+    const versionBefore = existsSync(VERSION_FILE)
+      ? readFileSync(VERSION_FILE, "utf-8")
+      : undefined;
+
+    expect(() => service.update("9.9.9", [])).toThrow(BadRequestException);
+
+    const versionAfter = existsSync(VERSION_FILE) ? readFileSync(VERSION_FILE, "utf-8") : undefined;
+    expect(versionAfter).toBe(versionBefore);
+    expect(existsSync(zipPath("9.9.9"))).toBe(false);
   });
 });
 

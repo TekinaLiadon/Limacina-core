@@ -13,7 +13,7 @@ import { Roles } from "../../common/roles.decorator";
 import { UsernamePipe } from "../../common/username.pipe";
 import { CurrentUser, type RequestUser } from "../../common/current-user.decorator";
 import { SuccessResponseDto, UserSuccessResponseDto } from "../../common/dto/dto";
-import { TechnicalService } from "../../technical/technical.service";
+import { TechnicalBootstrapService } from "../../technical/technical-bootstrap.service";
 import { InitOwnerDto, InitOwnerResponseDto } from "../../technical/dto/dto";
 import {
   ApproveUserDto,
@@ -37,7 +37,7 @@ import type { UsersFilter } from "../../admin/admin_store";
 export class V1PanelUsersController {
   constructor(
     private readonly adminService: AdminService,
-    private readonly technicalService: TechnicalService,
+    private readonly bootstrapService: TechnicalBootstrapService,
   ) {}
 
   @Post("init-owner")
@@ -57,7 +57,7 @@ export class V1PanelUsersController {
   @ApiResponse({ status: 409, description: "Владелец уже создан или юзернейм занят" })
   @ApiResponse({ status: 403, description: "Неверный или недоступный bootstrap-токен" })
   async initOwner(@Body() dto: InitOwnerDto): Promise<InitOwnerResponseDto> {
-    return this.technicalService.initOwner(dto.username, dto.password, dto.token);
+    return this.bootstrapService.initOwner(dto.username, dto.password, dto.token);
   }
 
   @Get()

@@ -125,7 +125,7 @@ class RconConnection {
     while (response.type === RCON_RESPONSE_VALUE) {
       response = await this.readPacket();
     }
-    if (response.type !== RCON_AUTH_RESPONSE || response.body.length > 0) {
+    if (response.type !== RCON_AUTH_RESPONSE || response.id !== 1) {
       throw new Error(RCON_AUTH_MESSAGE);
     }
   }

@@ -297,15 +297,44 @@ describe("UserContentService — unlink с учётом профильных с�
 
   const localPathOf = (url: string): string => `public/${url.replace(`${config.BASE_URL}/`, "")}`;
 
-  it("файл скина не удаляется, пока профиль ссылается на него", async () => {
+  it("удаление активного скина, на который ссылался профиль, физически удаляет файл (TASK-411.5)", async () => {
     const bytes = pngBytes(31);
     const userUuid = "prof-skin-0001";
     const upload = await service.uploadSkin(userUuid, "profskin", bytes);
     trackFile(localPathOf(upload.url));
+    await profileStore.saveProfile({ uuid: userUuid, userId: userUuid, username: "profskin" });
+    await service.setActiveSkin(userUuid, upload.id);
+    expect((await profileStore.findProfileByUuid(userUuid))?.skinUrl).toBe(upload.url);
+
+    await service.delete(userUuid, upload.id, "skin");
+
+    expect(existsSync(localPathOf(upload.url))).toBe(false);
+    expect((await profileStore.findProfileByUuid(userUuid))?.skinUrl).toBeNull();
+  });
+
+  it("удаление плаща, на который ссылался профиль, физически удаляет файл (TASK-411.5)", async () => {
+    const bytes = capeBytes(32);
+    const userUuid = "prof-cape-0001";
+    await profileStore.saveProfile({ uuid: userUuid, userId: userUuid, username: "profcape" });
+    const upload = await service.uploadCape(userUuid, "profcape", bytes);
+    trackFile(localPathOf(upload.url));
+    expect((await profileStore.findProfileByUuid(userUuid))?.capeUrl).toBe(upload.url);
+
+    await service.delete(userUuid, upload.id, "cape");
+
+    expect(existsSync(localPathOf(upload.url))).toBe(false);
+    expect((await profileStore.findProfileByUuid(userUuid))?.capeUrl).toBeNull();
+  });
+
+  it("файл скина не удаляется, пока профиль реально ссылается на него", async () => {
+    const bytes = pngBytes(35);
+    const userUuid = "prof-skin-0002";
+    const upload = await service.uploadSkin(userUuid, "profskin2", bytes);
+    trackFile(localPathOf(upload.url));
     await profileStore.saveProfile({
       uuid: userUuid,
       userId: userUuid,
-      username: "profskin",
+      username: "profskin2",
       skinUrl: upload.url,
     });
 
@@ -315,22 +344,24 @@ describe("UserContentService — unlink с учётом профильных с�
     expect(await store.countByFilePath(upload.url, "skin")).toBe(0);
   });
 
-  it("файл плаща не удаляется, пока профиль ссылается на него", async () => {
-    const bytes = capeBytes(32);
-    const userUuid = "prof-cape-0001";
-    await profileStore.saveProfile({
-      uuid: userUuid,
-      userId: userUuid,
-      username: "profcape",
-    });
-    const upload = await service.uploadCape(userUuid, "profcape", bytes);
+  it("файл не удаляется, пока на него ссылается профиль другого пользователя", async () => {
+    const bytes = pngBytes(34);
+    const ownerUuid = "prof-owner-0001";
+    const otherUuid = "prof-other-0001";
+    const upload = await service.uploadSkin(ownerUuid, "profowner", bytes);
     trackFile(localPathOf(upload.url));
-    expect((await profileStore.findProfileByUuid(userUuid))?.capeUrl).toBe(upload.url);
+    await profileStore.saveProfile({ uuid: ownerUuid, userId: ownerUuid, username: "profowner" });
+    await service.setActiveSkin(ownerUuid, upload.id);
+    await profileStore.saveProfile({
+      uuid: otherUuid,
+      userId: otherUuid,
+      username: "profother",
+      skinUrl: upload.url,
+    });
 
-    await service.delete(userUuid, upload.id, "cape");
+    await service.delete(ownerUuid, upload.id, "skin");
 
     expect(existsSync(localPathOf(upload.url))).toBe(true);
-    expect(await store.countByFilePath(upload.url, "cape")).toBe(0);
   });
 
   it("файл удаляется, когда профильных ссылок на него нет", async () => {
@@ -460,14 +491,38 @@ describe("UserContentService — удаление скинов и активно
     const pendingActivation = racingService.setActiveSkin(userUuid, second.id);
     await started.promise;
 
-    await okService.setActiveSkin(userUuid, third.id);
+    const pendingGood = okService.setActiveSkin(userUuid, third.id);
     gate.resolve();
 
     await expect(pendingActivation).rejects.toThrow("Синхронизация профиля недоступна");
+    await pendingGood;
 
     const skins = await store.findByUserUuid(userUuid, "skin");
     expect(skins.filter((item) => item.active).map((item) => item.id)).toEqual([third.id]);
     expect((await okProfiles.findProfileByUuid(userUuid))?.skinUrl).toBe(third.url);
+  });
+
+  it("интерливинг двух смен даёт согласованные active и skinUrl профиля (TASK-411.16)", async () => {
+    const userUuid = "il-active-0001";
+    const username = "ilactive";
+    const { first, second, third } = await uploadThree(userUuid, username);
+    const profiles = new GatedNextSyncStore();
+    await profiles.saveProfile({ uuid: userUuid, userId: userUuid, username });
+    const gatedService = new UserContentService(store, config, profiles);
+    await gatedService.setActiveSkin(userUuid, first.id);
+
+    profiles.armGate();
+    const changeA = gatedService.setActiveSkin(userUuid, second.id);
+    await profiles.waitGateStarted();
+    const changeB = gatedService.setActiveSkin(userUuid, third.id);
+    profiles.releaseGate();
+
+    await changeA;
+    await changeB;
+
+    const skins = await store.findByUserUuid(userUuid, "skin");
+    expect(skins.filter((item) => item.active).map((item) => item.id)).toEqual([third.id]);
+    expect((await profiles.findProfileByUuid(userUuid))?.skinUrl).toBe(third.url);
   });
 });
 
@@ -598,6 +653,23 @@ describe("UserContentService — сериализация операций на�
   });
 });
 
+describe("UserContentService — тексты ошибок удаления", (): void => {
+  let service: UserContentService;
+
+  beforeAll(() => {
+    const config = GlobalConfig.parseEnvOrExit({ ...process.env });
+    service = new UserContentService(new UserContentMapStore(), config);
+  });
+
+  it("404 называет тип контента в именительном падеже", async () => {
+    await expect(service.delete("notfound-user-0001", 1, "skin")).rejects.toThrow("Скин не найден");
+    await expect(service.delete("notfound-user-0001", 1, "cape")).rejects.toThrow("Плащ не найден");
+    await expect(service.delete("notfound-user-0001", 1, "model")).rejects.toThrow(
+      "Модель не найдена",
+    );
+  });
+});
+
 class GatedTextureSyncStore extends YggdrasilMapStore {
   onSync: (() => Promise<void>) | undefined;
 
@@ -608,6 +680,40 @@ class GatedTextureSyncStore extends YggdrasilMapStore {
   override async updateProfileTexture(): Promise<void> {
     if (this.onSync) await this.onSync();
     throw new Error("Синхронизация профиля недоступна");
+  }
+}
+
+class GatedNextSyncStore extends YggdrasilMapStore {
+  private armed = false;
+  private readonly gateStarted = deferred();
+  private readonly gate = deferred();
+
+  constructor() {
+    super(new MemoryDb());
+  }
+
+  armGate(): void {
+    this.armed = true;
+  }
+
+  releaseGate(): void {
+    this.gate.resolve();
+  }
+
+  async waitGateStarted(): Promise<void> {
+    await this.gateStarted.promise;
+  }
+
+  override async updateProfileTexture(
+    uuid: string,
+    textures: Parameters<YggdrasilMapStore["updateProfileTexture"]>[1],
+  ): Promise<void> {
+    if (this.armed) {
+      this.armed = false;
+      this.gateStarted.resolve();
+      await this.gate.promise;
+    }
+    return super.updateProfileTexture(uuid, textures);
   }
 }
 

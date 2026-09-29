@@ -40,9 +40,9 @@ export interface IAdminStore {
   saveUser(user: AdminUser): Promise<void>;
   searchUsers(filter: UsersFilter): Promise<UsersPage>;
   searchDeletedUsers(filter: UsersFilter): Promise<DeletedUsersPage>;
-  setApproved(username: string, approved: boolean): Promise<void>;
-  setBanned(username: string, banned: boolean): Promise<void>;
-  setRole(username: string, role: string): Promise<void>;
+  setApproved(username: string, approved: boolean): Promise<boolean>;
+  setBanned(username: string, banned: boolean): Promise<boolean>;
+  setRole(username: string, role: string): Promise<boolean>;
   deleteUser(username: string): Promise<AdminUser | undefined>;
   findDeletedByUsername(username: string): Promise<DeletedUser | undefined>;
   restoreUser(username: string): Promise<void>;
@@ -126,19 +126,25 @@ export class AdminMapStore implements IAdminStore {
     return this.searchUserRecords(filter, false, toAdminView);
   }
 
-  async setApproved(username: string, approved: boolean): Promise<void> {
+  async setApproved(username: string, approved: boolean): Promise<boolean> {
     const user = this.liveUser(username);
-    if (user) user.approved = approved;
+    if (!user) return false;
+    user.approved = approved;
+    return true;
   }
 
-  async setBanned(username: string, banned: boolean): Promise<void> {
+  async setBanned(username: string, banned: boolean): Promise<boolean> {
     const user = this.liveUser(username);
-    if (user) user.banned = banned;
+    if (!user) return false;
+    user.banned = banned;
+    return true;
   }
 
-  async setRole(username: string, role: string): Promise<void> {
+  async setRole(username: string, role: string): Promise<boolean> {
     const user = this.liveUser(username);
-    if (user) user.role = role;
+    if (!user) return false;
+    user.role = role;
+    return true;
   }
 
   async deleteUser(username: string): Promise<AdminUser | undefined> {

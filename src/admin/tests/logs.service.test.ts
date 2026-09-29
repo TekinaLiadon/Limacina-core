@@ -8,7 +8,9 @@ function serviceLogger(service: LogsService): { error: (...args: unknown[]) => v
 }
 
 const TEST_DATE = "2099-12-31";
+const FOREIGN_LOG_NAME = "backup-2026";
 const TEST_LOG_FILE = join(process.cwd(), "logs", `${TEST_DATE}.log`);
+const FOREIGN_LOG_FILE = join(process.cwd(), "logs", `${FOREIGN_LOG_NAME}.log`);
 
 function requestLine(id: string, url: string, remoteAddress: string, statusCode: number): string {
   return JSON.stringify({
@@ -44,13 +46,15 @@ const logFileContent = [
 ].join("\n");
 
 describe("LogsService — фильтрация логов запросов", (): void => {
-  beforeAll(() => {
+  beforeAll((): void => {
     mkdirSync(join(process.cwd(), "logs"), { recursive: true });
     writeFileSync(TEST_LOG_FILE, logFileContent);
+    writeFileSync(FOREIGN_LOG_FILE, "foreign log content\n");
   });
 
-  afterAll(() => {
+  afterAll((): void => {
     rmSync(TEST_LOG_FILE, { force: true });
+    rmSync(FOREIGN_LOG_FILE, { force: true });
   });
 
   it("не отдаёт строки без кода статуса", async () => {
@@ -146,5 +150,17 @@ describe("LogsService — фильтрация логов запросов", ():
 
     expect(total).toBe(2);
     expect(lines).toEqual([registrationLine]);
+  });
+
+  it("не включает посторонние *.log в список дат, список согласован с getLines (TASK-269.32)", async () => {
+    const service = new LogsService();
+    const dates = service.listAvailableDates();
+
+    expect(dates).toContain(TEST_DATE);
+    expect(dates).not.toContain(FOREIGN_LOG_NAME);
+
+    for (const date of dates) {
+      await expect(service.getLines(date, 0, 1)).resolves.toBeDefined();
+    }
   });
 });

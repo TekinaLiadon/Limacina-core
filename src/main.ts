@@ -20,6 +20,8 @@ import { RedisRateLimitStore } from "./common/rate-limit-redis-store";
 import { buildCachePrefix } from "./cache/cache.module";
 import { buildAdapterOptions } from "./config/adapter-options";
 import { registerProcessErrorHandlers } from "./config/process-error-handlers";
+import { PANEL_PUBLIC_DIR } from "./technical/panel-deploy-dirs";
+import { MULTIPART_FILE_SIZE_LIMIT_BYTES } from "./launcher/launcher-files";
 
 export async function bootstrap(): Promise<INestApplication> {
   const envConfig = GlobalConfig.parseEnvOrExit();
@@ -45,7 +47,7 @@ export async function bootstrap(): Promise<INestApplication> {
     dotfiles: "ignore",
   });
 
-  const panelDir = join(process.cwd(), "public", "panel");
+  const panelDir = join(process.cwd(), PANEL_PUBLIC_DIR);
   mkdirSync(panelDir, { recursive: true });
   await instance.register(
     async (panelInstance: FastifyInstance) => {
@@ -78,7 +80,9 @@ export async function bootstrap(): Promise<INestApplication> {
     methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE"],
   });
 
-  await instance.register(fastifyMultipart, { limits: { fileSize: 50 * 1024 * 1024 } });
+  await instance.register(fastifyMultipart, {
+    limits: { fileSize: MULTIPART_FILE_SIZE_LIMIT_BYTES },
+  });
 
   const rateLimitStore = createRateLimitStore(envConfig);
   if (rateLimitStore) {

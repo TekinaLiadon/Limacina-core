@@ -47,10 +47,24 @@ describe("SourceRconClient — авторизация", () => {
   });
 
   it("неправильный пароль — RCON недоступен", async () => {
-    running = await startFakeRconServer(rconAuthHandler("Wrong password"));
+    running = await startFakeRconServer(rconAuthHandler({ authOk: false }));
     const client = new SourceRconClient(target(running.port, WRONG_PASSWORD), FAST_TIMEOUTS);
 
     expect(await client.checkAvailable()).toBe(false);
+  });
+
+  it("протокольная неудача аутентификации (id=-1, пустое тело) — различимая ошибка (TASK-411.4)", async () => {
+    running = await startFakeRconServer((packet, socket) => {
+      if (packet.type !== RCON_AUTH) return;
+      rconRespond(socket, RCON_AUTH_RESPONSE, "", -1);
+    });
+    const client = new SourceRconClient(target(running.port, WRONG_PASSWORD), FAST_TIMEOUTS);
+
+    expect(await client.checkAvailable()).toBe(false);
+
+    const result = await client.executeCommand("say hi");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("Неверный пароль RCON");
   });
 
   it("соединение принято, но закрыто до ответа авторизации", async () => {
@@ -130,7 +144,7 @@ describe("SourceRconClient — выполнение команд", () => {
   });
 
   it("неверный пароль при execute — различимая ошибка", async () => {
-    running = await startFakeRconServer(rconAuthHandler("Wrong password"));
+    running = await startFakeRconServer(rconAuthHandler({ authOk: false }));
     const client = new SourceRconClient(target(running.port, WRONG_PASSWORD), FAST_TIMEOUTS);
 
     const result = await client.executeCommand("say hi");

@@ -71,6 +71,26 @@ function getTable(type: ContentType): "user_skins" | "user_capes" | "user_models
   return TABLES.user_models;
 }
 
+function getSelectColumns(type: ContentType): string[] {
+  if (type !== "skin") return ["id", "user_uuid", "file_path"];
+  return ["id", "user_uuid", "file_path", "skin_model", "active"];
+}
+
+function getInsertColumns(type: ContentType): string[] {
+  if (type !== "skin") return ["user_uuid", "file_path"];
+  return ["user_uuid", "file_path", "skin_model", "active"];
+}
+
+function getInsertValues(
+  type: ContentType,
+  userUuid: string,
+  filePath: string,
+  skinModel?: string | null,
+): SqlValue[] {
+  if (type !== "skin") return [userUuid, filePath];
+  return [userUuid, filePath, skinModel ?? null, false];
+}
+
 interface ContentRow extends Record<string, unknown> {
   id: number;
   user_uuid: string;
@@ -115,10 +135,7 @@ export class UserContentPostgresStore implements IUserContentStore {
 
   async findByUserUuid(userUuid: string, type: ContentType): Promise<UserContentItem[]> {
     const table = getTable(type);
-    const columns =
-      type === "skin"
-        ? ["id", "user_uuid", "file_path", "skin_model", "active"]
-        : ["id", "user_uuid", "file_path"];
+    const columns = getSelectColumns(type);
     const q = selectQuery(...columns)
       .from(table)
       .where("user_uuid = $1", userUuid)
@@ -129,10 +146,7 @@ export class UserContentPostgresStore implements IUserContentStore {
 
   async findById(id: number, type: ContentType): Promise<UserContentItem | undefined> {
     const table = getTable(type);
-    const columns =
-      type === "skin"
-        ? ["id", "user_uuid", "file_path", "skin_model", "active"]
-        : ["id", "user_uuid", "file_path"];
+    const columns = getSelectColumns(type);
     const q = selectQuery(...columns)
       .from(table)
       .where("id = $1", id)
@@ -148,18 +162,11 @@ export class UserContentPostgresStore implements IUserContentStore {
     skinModel?: string | null,
   ): Promise<UserContentItem> {
     const table = getTable(type);
-    const q =
-      type === "skin"
-        ? insertQuery("user_uuid", "file_path", "skin_model", "active")
-            .from(table)
-            .values(userUuid, filePath, skinModel ?? null, false)
-            .returning("id", "user_uuid", "file_path", "skin_model", "active")
-            .build()
-        : insertQuery("user_uuid", "file_path")
-            .from(table)
-            .values(userUuid, filePath)
-            .returning("id", "user_uuid", "file_path")
-            .build();
+    const q = insertQuery(...getInsertColumns(type))
+      .from(table)
+      .values(...getInsertValues(type, userUuid, filePath, skinModel))
+      .returning(...getSelectColumns(type))
+      .build();
     const { rows } = await execute<ContentRow>(q.sql, q.values);
     return rowToItem(rows[0]!);
   }
@@ -172,10 +179,7 @@ export class UserContentPostgresStore implements IUserContentStore {
     skinModel?: string | null,
   ): Promise<UserContentItem> {
     const table = getTable(type);
-    const selectColumns =
-      type === "skin"
-        ? ["id", "user_uuid", "file_path", "skin_model", "active"]
-        : ["id", "user_uuid", "file_path"];
+    const selectColumns = getSelectColumns(type);
     const returningColumns = selectColumns.join(", ");
 
     const lock = selectQuery("uuid")
@@ -184,10 +188,8 @@ export class UserContentPostgresStore implements IUserContentStore {
       .forUpdate()
       .build();
 
-    const insertColumns =
-      type === "skin" ? "user_uuid, file_path, skin_model, active" : "user_uuid, file_path";
-    const insertValues =
-      type === "skin" ? [userUuid, filePath, skinModel ?? null, false] : [userUuid, filePath];
+    const insertColumns = getInsertColumns(type).join(", ");
+    const insertValues = getInsertValues(type, userUuid, filePath, skinModel);
     const insertPlaceholders = insertValues.map((_, i) => `$${i + 2}`).join(", ");
     const insertSql =
       `INSERT INTO ${table} (${insertColumns}) ` +
@@ -198,7 +200,7 @@ export class UserContentPostgresStore implements IUserContentStore {
       sqlDialect() === "mariadb"
         ? [
             lock,
-            { sql: insertSql, values: [userUuid, ...insertValues, maxPerUser] as SqlValue[] },
+            { sql: insertSql, values: [userUuid, ...insertValues, maxPerUser] },
             selectQuery(...selectColumns)
               .from(table)
               .where("user_uuid = $1 AND file_path = $2", userUuid, filePath)
@@ -210,7 +212,7 @@ export class UserContentPostgresStore implements IUserContentStore {
             lock,
             {
               sql: `${insertSql} RETURNING ${returningColumns}`,
-              values: [userUuid, ...insertValues, maxPerUser] as SqlValue[],
+              values: [userUuid, ...insertValues, maxPerUser],
             },
           ];
 
@@ -259,10 +261,7 @@ export class UserContentPostgresStore implements IUserContentStore {
     type: ContentType,
   ): Promise<ContentDeletionResult | undefined> {
     const table = getTable(type);
-    const selectColumns =
-      type === "skin"
-        ? ["id", "user_uuid", "file_path", "skin_model", "active"]
-        : ["id", "user_uuid", "file_path"];
+    const selectColumns = getSelectColumns(type);
     const existingQuery = selectQuery(...selectColumns)
       .from(table)
       .where("id = $1", id)

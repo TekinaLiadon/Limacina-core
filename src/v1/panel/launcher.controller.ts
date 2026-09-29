@@ -1,24 +1,27 @@
 import { Body, Controller, Patch, Req } from "@nestjs/common";
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { Roles } from "../../common/roles.decorator";
-import { LauncherUpdateService } from "../../admin/launcher-update.service";
-import { parseLauncherUpdateRequest } from "../../admin/launcher-update.parser";
-import { LauncherReleaseService } from "../../admin/launcher-release.service";
-import { parseLauncherReleaseRequest } from "../../admin/launcher-release.parser";
-import { ConfigUpdateService } from "../../admin/config-update.service";
+import { LauncherUpdateService } from "../../launcher/launcher-update.service";
+import { parseLauncherUpdateRequest } from "../../launcher/launcher-update.parser";
+import { ReleasePublishService } from "../../launcher/release-publish.service";
+import { parseLauncherReleaseRequest } from "../../launcher/release-publish.parser";
+import { ConfigUpdateService } from "../../launcher/config-update.service";
 import { PLATFORM_FIELD_NAMES, UPDATER_PLATFORM_KEYS } from "../../launcher/launcher-files";
-import { LauncherConfigDto } from "../../launcher/dto/dto";
-import { LauncherReleaseResponseDto, LauncherUpdateResponseDto } from "../../admin/dto/dto";
+import {
+  LauncherConfigDto,
+  LauncherReleaseResponseDto,
+  LauncherUpdateResponseDto,
+} from "../../launcher/dto/dto";
 import type { FastifyRequest } from "fastify";
 
 @ApiTags("panel_launcher")
 @ApiBearerAuth()
-@Roles("admin")
+@Roles("owner")
 @Controller("panel/launcher")
 export class V1PanelLauncherController {
   constructor(
     private readonly launcherUpdateService: LauncherUpdateService,
-    private readonly launcherReleaseService: LauncherReleaseService,
+    private readonly launcherReleaseService: ReleasePublishService,
     private readonly configUpdateService: ConfigUpdateService,
   ) {}
 

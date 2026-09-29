@@ -211,12 +211,14 @@ describe("V1 panel/server/rcon — RCON-прокси игрового серве
     });
 
     it("повторный запрос отдаётся из кеша без нового соединения", async () => {
-      const connectionsBefore = fakeServer.connections();
+      const cache = app.get<ICacheStore>(CacheStoreToken, { strict: false });
+      await cache.delete(RCON_STATUS_CACHE_KEY);
       await supertest(app.getHttpServer())
         .get("/v1/panel/server/rcon")
         .set("Authorization", `Bearer ${ownerToken}`)
         .expect(200);
 
+      const connectionsBefore = fakeServer.connections();
       const res = await supertest(app.getHttpServer())
         .get("/v1/panel/server/rcon")
         .set("Authorization", `Bearer ${ownerToken}`)

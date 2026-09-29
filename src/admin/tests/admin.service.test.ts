@@ -3,7 +3,7 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 setupTestEnv();
 
 import { describe, expect, it, spyOn } from "bun:test";
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { AdminService } from "../admin.service";
 import { AdminMapStore } from "../admin_store";
 import { AuthMapStore } from "../../auth/service/auth_store";
@@ -117,6 +117,52 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
 
     expect((await adminStore.findByUsername("rollbacktarget"))?.role).toBe("user");
     updateRole.mockRestore();
+  });
+
+  it("откат неудачной мутации не затирает конкурирующую мутацию другого админа (TASK-267.13)", async (): Promise<void> => {
+    const { adminStore, authStore, service } = await seed();
+    const originalUpdateRole = authStore.updateRole.bind(authStore);
+    const updateRole = spyOn(authStore, "updateRole").mockImplementationOnce(async () => {
+      await adminStore.setRole("rollbacktarget", "admin");
+      await originalUpdateRole("rollback-target-uuid", "admin");
+      throw new Error("auth store down");
+    });
+
+    await expect(service.setRole("rollbacktarget", "moderator", ACTOR)).rejects.toThrow(
+      "auth store down",
+    );
+
+    expect((await adminStore.findByUsername("rollbacktarget"))?.role).toBe("admin");
+    expect((await authStore.findByUsername("rollbacktarget"))?.role).toBe("admin");
+    updateRole.mockRestore();
+  });
+
+  it("мутация не проходит молча при конкурентном удалении пользователя (TASK-267.13)", async (): Promise<void> => {
+    const { adminStore, service } = await seed();
+    const errorSpy = spyOn(
+      (service as unknown as { logger: { error: (...args: unknown[]) => void } }).logger,
+      "error",
+    );
+    const setApproved = spyOn(adminStore, "setApproved").mockImplementationOnce(async () => {
+      await adminStore.deleteUser("rollbacktarget");
+      return false;
+    });
+
+    await expect(service.setApproved("rollbacktarget", false, ACTOR)).rejects.toThrow(
+      NotFoundException,
+    );
+
+    expect(errorSpy).toHaveBeenCalled();
+    setApproved.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it("повторная мутация тем же значением остаётся успешной (TASK-267.13)", async (): Promise<void> => {
+    const { adminStore, service } = await seed();
+
+    await service.setApproved("rollbacktarget", true, ACTOR);
+
+    expect((await adminStore.findByUsername("rollbacktarget"))?.approved).toBe(true);
   });
 
   it("setOwnerRole откатывает роль при сбое auth-стора", async (): Promise<void> => {
