@@ -780,6 +780,15 @@ describe("Yggdrasil эндпоинты", () => {
         .expect(204);
     });
 
+    it("возвращает 404 для невалидного uuid (TASK-411.20)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/sessionserver/session/minecraft/profile/not-a-uuid")
+        .expect(404);
+
+      expect(res.body.error).toBe("IllegalArgumentException");
+      expect(res.body.errorMessage).toContain("Invalid uuid");
+    });
+
     it("по умолчанию отдаёт текстуры без подписи (unsigned=true)", async () => {
       const res = await supertest(app.getHttpServer())
         .get(`/sessionserver/session/minecraft/profile/${TEST_UUID}`)
@@ -994,14 +1003,24 @@ describe("Yggdrasil эндпоинты", () => {
       expect(res.body.message).toContain("непустыми строками");
     });
 
-    it("больше 10 имён обрезается до лимита (TASK-27)", async () => {
-      const names = [...Array.from({ length: 10 }, (_, i) => `nobody-${i}`), TEST_USERNAME];
+    it("ровно 10 имён обрабатывается (TASK-411.20)", async () => {
+      const names = Array.from({ length: 10 }, (_, i) => `nobody-${i}`);
       const res = await supertest(app.getHttpServer())
         .post("/api/profiles/minecraft")
         .send(names)
         .expect(200);
 
       expect(res.body).toEqual([]);
+    });
+
+    it("больше 10 имён отклоняется с 400 вместо усечения (TASK-411.20)", async () => {
+      const names = [...Array.from({ length: 10 }, (_, i) => `nobody-${i}`), TEST_USERNAME];
+      const res = await supertest(app.getHttpServer())
+        .post("/api/profiles/minecraft")
+        .send(names)
+        .expect(400);
+
+      expect(res.body.message).toContain("Максимум 10 имён");
     });
   });
 

@@ -9,7 +9,7 @@ import {
   MinLength,
 } from "class-validator";
 import { validationMessages } from "../../common/validation-messages";
-import { USERNAME_PATTERN } from "../../common/username-policy";
+import { MAX_USERNAME_LENGTH, USERNAME_PATTERN } from "../../common/username-policy";
 import { MIN_PASSWORD_LENGTH } from "../../auth/password-policy";
 export class InitOwnerDto {
   @ApiProperty({
@@ -25,12 +25,14 @@ export class InitOwnerDto {
   @ApiProperty({
     example: "owner",
     description: "Юзернейм владельца: латиница, цифры и _",
-    maxLength: 64,
+    maxLength: MAX_USERNAME_LENGTH,
     pattern: String(USERNAME_PATTERN),
   })
   @IsString({ message: validationMessages.string("username") })
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })
-  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
+  @MaxLength(MAX_USERNAME_LENGTH, {
+    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
+  })
   @Matches(USERNAME_PATTERN, { message: validationMessages.usernamePattern })
   username!: string;
 

@@ -106,15 +106,49 @@ describe("CronService", () => {
     expect(runs).toEqual(["after"]);
   });
 
-  it("после срабатывания таймаута планировщик продолжает работу", async () => {
+  it("тик после таймаута пропускается, пока задача-зомби не завершилась", async () => {
     const service = new CronService(50);
+    let releaseZombie!: () => void;
+    const zombieGate = new Promise<void>((resolve) => {
+      releaseZombie = resolve;
+    });
     const runs: string[] = [];
     service.registerTasks(
-      { name: "hang", run: () => new Promise<void>(() => {}) },
+      { name: "hang", run: () => zombieGate },
       { name: "counter", run: () => void runs.push("run") },
     );
 
     await service.runAll();
+    await service.runAll();
+
+    expect(runs).toEqual(["run"]);
+
+    releaseZombie();
+    await Bun.sleep(10);
+    await service.runAll();
+
+    expect(runs).toEqual(["run", "run"]);
+  });
+
+  it("зомби-задача, упавшая после таймаута, не роняет прогон и снимает блокировку", async () => {
+    const service = new CronService(50);
+    let failZombie!: () => void;
+    const zombieGate = new Promise<void>((_, reject) => {
+      failZombie = () => reject(new Error("zombie failed"));
+    });
+    const runs: string[] = [];
+    service.registerTasks(
+      { name: "hang", run: () => zombieGate },
+      { name: "counter", run: () => void runs.push("run") },
+    );
+
+    await service.runAll();
+    await service.runAll();
+
+    expect(runs).toEqual(["run"]);
+
+    failZombie();
+    await Bun.sleep(10);
     await service.runAll();
 
     expect(runs).toEqual(["run", "run"]);

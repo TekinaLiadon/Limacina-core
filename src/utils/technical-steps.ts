@@ -1,4 +1,5 @@
 import { InternalServerErrorException, Logger } from "@nestjs/common";
+import { join } from "node:path";
 
 const STEP_OUTPUT_LIMIT = 2000;
 const STEP_OUTPUT_CAPTURE_LIMIT = 4096;
@@ -120,6 +121,65 @@ export async function runCommand(
   }
 }
 
+export interface StepRunOptions {
+  logger: Logger;
+  step: string;
+  command: string[];
+  timeoutMs: number;
+  cwd: string;
+  killGraceMs?: number;
+  logSubject: string;
+  logFields?: Record<string, unknown>;
+  failurePrefix: string;
+  failureSuffix: string;
+  createFailure: (message: string, cause?: unknown) => Error;
+}
+
+export async function runStepWithOptions(options: StepRunOptions): Promise<void> {
+  const { logger, step, command, timeoutMs, cwd } = options;
+  const baseLogFields = { step, command: command.join(" "), ...options.logFields };
+
+  let run: CommandRun;
+  try {
+    run = await runCommand(command, cwd, timeoutMs, options.killGraceMs ?? KILL_GRACE_MS);
+  } catch (error) {
+    logger.error({ ...baseLogFields, err: error }, `Шаг ${options.logSubject} не запущен: ${step}`);
+    throw options.createFailure(
+      `${options.failurePrefix} на шаге ${step}: команда не запущена${options.failureSuffix}`,
+      error,
+    );
+  }
+
+  if (run.timedOut) {
+    logger.error(
+      {
+        ...baseLogFields,
+        timeoutMs,
+        stdout: truncateOutput(run.stdout),
+        stderr: truncateOutput(run.stderr),
+      },
+      `Шаг ${options.logSubject} прерван по таймауту: ${step}`,
+    );
+    throw options.createFailure(
+      `${options.failurePrefix} на шаге ${step}: превышен таймаут ${timeoutMs} мс${options.failureSuffix}`,
+    );
+  }
+
+  if (run.exitCode !== 0) {
+    logger.error(
+      {
+        ...baseLogFields,
+        exitCode: run.exitCode,
+        stdout: truncateOutput(run.stdout),
+        stderr: truncateOutput(run.stderr),
+      },
+      `Шаг ${options.logSubject} не выполнен: ${step}`,
+    );
+    throw options.createFailure(`${options.failurePrefix} на шаге ${step}${options.failureSuffix}`);
+  }
+  logger.log({ step }, `Шаг ${options.logSubject} выполнен`);
+}
+
 export async function runStep(
   logger: Logger,
   step: string,
@@ -127,51 +187,18 @@ export async function runStep(
   timeoutMs: number,
   killGraceMs = KILL_GRACE_MS,
 ): Promise<void> {
-  let run: CommandRun;
-  try {
-    run = await runCommand(command, process.cwd(), timeoutMs, killGraceMs);
-  } catch (error) {
-    logger.error(
-      { err: error, step, command: command.join(" ") },
-      `Шаг перезапуска не запущен: ${step}`,
-    );
-    throw new InternalServerErrorException(
-      `Пересборка не удалась на шаге ${step}: команда не запущена, перезапуск отменён`,
-    );
-  }
-
-  if (run.timedOut) {
-    logger.error(
-      {
-        step,
-        timeoutMs,
-        command: command.join(" "),
-        stdout: truncateOutput(run.stdout),
-        stderr: truncateOutput(run.stderr),
-      },
-      `Шаг перезапуска прерван по таймауту: ${step}`,
-    );
-    throw new InternalServerErrorException(
-      `Пересборка не удалась на шаге ${step}: превышен таймаут ${timeoutMs} мс, перезапуск отменён`,
-    );
-  }
-
-  if (run.exitCode !== 0) {
-    logger.error(
-      {
-        step,
-        exitCode: run.exitCode,
-        command: command.join(" "),
-        stdout: truncateOutput(run.stdout),
-        stderr: truncateOutput(run.stderr),
-      },
-      `Шаг перезапуска не выполнен: ${step}`,
-    );
-    throw new InternalServerErrorException(
-      `Пересборка не удалась на шаге ${step}, перезапуск отменён`,
-    );
-  }
-  logger.log({ step }, "Шаг перезапуска выполнен");
+  await runStepWithOptions({
+    logger,
+    step,
+    command,
+    timeoutMs,
+    killGraceMs,
+    cwd: process.cwd(),
+    logSubject: "перезапуска",
+    failurePrefix: "Пересборка не удалась",
+    failureSuffix: ", перезапуск отменён",
+    createFailure: (message) => new InternalServerErrorException(message),
+  });
 }
 
 export async function currentRevision(
@@ -205,4 +232,15 @@ export async function currentRevision(
 
 export function buildInstallCommand(frozenLockfile: boolean): string[] {
   return frozenLockfile ? ["bun", "install", "--frozen-lockfile"] : ["bun", "install"];
+}
+
+export const LOCKFILE_NAMES = ["bun.lock", "bun.lockb"];
+
+export async function hasLockfile(dir: string): Promise<boolean> {
+  for (const lockfileName of LOCKFILE_NAMES) {
+    if (await Bun.file(join(dir, lockfileName)).exists()) {
+      return true;
+    }
+  }
+  return false;
 }

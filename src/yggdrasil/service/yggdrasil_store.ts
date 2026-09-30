@@ -177,6 +177,7 @@ export class YggdrasilMapStore implements IYggdrasilStore {
   async countProfilesByTextureUrl(url: string): Promise<number> {
     let count = 0;
     for (const profile of this.profilesByUuid.values()) {
+      if (!this.visibleProfile(profile)) continue;
       if (profile.skinUrl === url || profile.capeUrl === url) count++;
     }
     return count;

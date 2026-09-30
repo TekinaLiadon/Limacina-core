@@ -2,13 +2,8 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query, Res } from "@
 import type { FastifyReply } from "fastify";
 import { ApiOperation, ApiResponse, ApiQuery, ApiTags } from "@nestjs/swagger";
 import { Public } from "../../common/public.decorator";
-import {
-  FileDto,
-  fileListResponseSchema,
-  FileListResponseDto,
-  FilesListQueryDto,
-} from "../../files/dto/dto";
-import { FilesService, type FilesPage } from "../../files/files.service";
+import { FileDto, fileListResponseSchema, FilesListQueryDto } from "../../files/dto/dto";
+import { FilesService, MODS_FOLDER, type FilesPage } from "../../files/files.service";
 
 const TOTAL_COUNT_HEADER = {
   description: "Общее число записей по фильтру (для пагинации)",
@@ -39,7 +34,7 @@ export class V1LauncherFilesController {
   getList(
     @Query() query: FilesListQueryDto,
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): FileListResponseDto {
+  ): Record<string, string> {
     return this.respondWithFilesPage(this.filesService.getList(query.offset, query.limit), reply);
   }
 
@@ -61,14 +56,14 @@ export class V1LauncherFilesController {
   getModsList(
     @Query() query: FilesListQueryDto,
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): FileListResponseDto {
+  ): Record<string, string> {
     return this.respondWithFilesPage(
-      this.filesService.getExtraList("mods", query.offset, query.limit),
+      this.filesService.getExtraList(MODS_FOLDER, query.offset, query.limit),
       reply,
     );
   }
 
-  private respondWithFilesPage(page: FilesPage, reply: FastifyReply): FileListResponseDto {
+  private respondWithFilesPage(page: FilesPage, reply: FastifyReply): Record<string, string> {
     reply.header("X-Total-Count", page.total);
     return page.files;
   }

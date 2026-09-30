@@ -30,7 +30,11 @@ export async function parseLauncherReleaseRequest(
 
     for await (const part of request.parts({ limits: { fileSize: MAX_RELEASE_ARTIFACT_BYTES } })) {
       if (part.type === "field") {
-        if (part.fieldname === "version") version = part.value as string;
+        if (part.fieldname !== "version") continue;
+        if (typeof part.value !== "string") {
+          throw new BadRequestException("Поле version должно быть строкой");
+        }
+        version = part.value;
         continue;
       }
 
@@ -109,7 +113,7 @@ async function stagePart(
   staged.push(tempPath);
 
   try {
-    await streamPartToFile(part.file as AsyncIterable<Uint8Array>, tempPath, maxBytes);
+    await streamPartToFile(part.file, tempPath, maxBytes);
   } catch (error) {
     if (error instanceof FileTooLargeError) {
       throw new BadRequestException(`Файл ${nameSuffix} превышает лимит ${maxBytes} байт`);

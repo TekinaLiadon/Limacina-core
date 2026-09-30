@@ -1,7 +1,8 @@
-import { existsSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { existsSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { Logger } from "@nestjs/common";
 import { PUBLIC_DIR } from "../launcher/launcher-files";
+import { listDirEntriesQuietly } from "../utils/fs";
 
 export const PANEL_DIR_NAME = "panel";
 export const PANEL_PUBLIC_DIR = join(PUBLIC_DIR, PANEL_DIR_NAME);
@@ -50,7 +51,7 @@ export function recoverPanelBackups(publicRoot: string, logger: Logger): void {
   const panelDir = join(publicRoot, PANEL_DIR_NAME);
   if (existsSync(panelDir)) return;
 
-  for (const entry of listEntries(publicRoot)) {
+  for (const entry of listDirEntriesQuietly(publicRoot)) {
     if (!isPanelBackupEntry(entry)) continue;
 
     const backupPath = join(publicRoot, entry);
@@ -73,7 +74,7 @@ export function recoverPanelBackups(publicRoot: string, logger: Logger): void {
 export function cleanupPanelBackups(publicRoot: string, logger: Logger): void {
   if (!existsSync(join(publicRoot, PANEL_DIR_NAME))) return;
 
-  for (const entry of listEntries(publicRoot)) {
+  for (const entry of listDirEntriesQuietly(publicRoot)) {
     if (!isPanelBackupEntry(entry)) continue;
 
     const backupPath = join(publicRoot, entry);
@@ -86,13 +87,5 @@ export function cleanupPanelBackups(publicRoot: string, logger: Logger): void {
         "Не удалось удалить служебный каталог деплоя панели",
       );
     }
-  }
-}
-
-function listEntries(publicRoot: string): string[] {
-  try {
-    return readdirSync(publicRoot);
-  } catch {
-    return [];
   }
 }

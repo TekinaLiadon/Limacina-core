@@ -155,6 +155,30 @@ describe("AdminPostgresStore (мок SQL-клиента)", () => {
     expect(select?.sql).toContain("deleted = false");
   });
 
+  it("условная запись с expectedRole включает роль в условие UPDATE (TASK-411.22)", async () => {
+    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [userRow()] : [{ id: 1 }]));
+
+    expect(await store.setBanned("pgadm_user", true, "user")).toBe(true);
+
+    const [update] = lastCalls(1);
+    expect(update?.sql).toContain("UPDATE users SET banned = $1");
+    expect(update?.sql).toContain("username = $2 AND deleted = false AND role = $3");
+    expect(update?.values).toEqual([true, "pgadm_user", "user"]);
+  });
+
+  it("условная запись отклоняет пользователя с разошедшейся ролью (TASK-411.22)", async () => {
+    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [userRow({ role: "admin" })] : []));
+
+    expect(await store.setBanned("pgadm_user", true, "user")).toBe(false);
+  });
+
+  it("deleteUser с expectedRole отказывает при разошедшейся роли (TASK-411.22)", async () => {
+    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [userRow({ role: "admin" })] : []));
+
+    expect(await store.deleteUser("pgadm_user", "user")).toBeUndefined();
+    expect(lastCalls(1)[0]?.sql).toContain("SELECT");
+  });
+
   it("deleteUser возвращает пользователя при успешном удалении", async () => {
     fake.onSql(({ sql }) => (sql.includes("SELECT") ? [userRow()] : []));
 

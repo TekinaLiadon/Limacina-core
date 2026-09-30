@@ -146,6 +146,23 @@ contractDescribeEach("контракт IAuthStore", (driver) => {
     expect(await ctx.store.updateRole(user.uuid, "admin")).toBe(false);
   });
 
+  it("условная запись с expectedRole отклоняет изменившуюся роль (TASK-411.22)", async () => {
+    const user = await ctx.makeUser();
+
+    expect(await ctx.store.setApproved(user.uuid, false, "moderator")).toBe(false);
+    expect(await ctx.store.setBanned(user.uuid, true, "moderator")).toBe(false);
+    expect(await ctx.store.updateRole(user.uuid, "moderator", "moderator")).toBe(false);
+
+    const untouched = await ctx.store.findByUsername(user.username);
+    expect(untouched?.approved).toBe(user.approved);
+    expect(untouched?.banned).toBe(user.banned);
+    expect(untouched?.role).toBe(user.role);
+
+    expect(await ctx.store.setApproved(user.uuid, false, user.role)).toBe(true);
+    expect(await ctx.store.setBanned(user.uuid, true, user.role)).toBe(true);
+    expect(await ctx.store.updateRole(user.uuid, "admin", user.role)).toBe(true);
+  });
+
   it("setBanned переключает бан в обе стороны", async () => {
     const user = await ctx.makeUser();
 

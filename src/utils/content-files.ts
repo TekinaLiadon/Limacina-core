@@ -1,5 +1,5 @@
 import { Logger } from "@nestjs/common";
-import { unlinkSync } from "node:fs";
+import { unlink } from "node:fs/promises";
 import { sha256Hex } from "./texture";
 
 export const TEXTURE_DIRECTORIES = ["textures", "capes"] as const;
@@ -62,7 +62,7 @@ export async function releaseContentFile(release: ContentFileRelease): Promise<b
     return false;
   }
   try {
-    unlinkSync(localPath);
+    await unlink(localPath);
     logger.debug({ url, localPath }, "Файл контента удалён");
     return true;
   } catch (error) {

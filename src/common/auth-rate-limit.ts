@@ -1,12 +1,14 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { AUTH_LOGIN_ROUTE, AUTH_PASSWORD_ROUTE, AUTH_REGISTRATION_ROUTE } from "./auth-routes";
+import { sendTooManyRequests } from "./rate-limit-reply";
 import {
   MemorySlidingWindowStore,
   SlidingWindowRateLimiter,
   type SlidingWindowStore,
 } from "./sliding-window-rate-limiter";
 
-const AUTH_LOGIN_ROUTES = new Set(["/v1/common/auth/login", "/v1/common/auth/registration"]);
-const PASSWORD_CHANGE_ROUTE = "/v1/common/auth/password";
+const AUTH_LOGIN_ROUTES = new Set([AUTH_LOGIN_ROUTE, AUTH_REGISTRATION_ROUTE]);
+const PASSWORD_CHANGE_ROUTE = AUTH_PASSWORD_ROUTE;
 const SIGNOUT_ENDPOINT = "/authserver/signout";
 
 const LOGIN_ATTEMPTS_MESSAGE = "Слишком много попыток входа";
@@ -50,18 +52,6 @@ function buildBearerTokenDigest(request: FastifyRequest): string | undefined {
   return new Bun.CryptoHasher("sha256").update(header.slice("Bearer ".length)).digest("hex");
 }
 
-async function sendTooManyAttempts(
-  reply: FastifyReply,
-  message: string,
-  retryAfterMs: number,
-): Promise<void> {
-  await reply.code(429).send({
-    statusCode: 429,
-    error: "Too Many Requests",
-    message: `${message}. Повторите через ${Math.max(Math.ceil(retryAfterMs / 1000), 1)} с.`,
-  });
-}
-
 export async function registerAuthRateLimit(
   instance: FastifyInstance,
   options: AuthRateLimitOptions,
@@ -88,7 +78,7 @@ export async function registerAuthRateLimit(
       const ipHit = await ipLimiter.hit(buildIpKey(request));
       const denied = usernameHit.allowed ? ipHit : usernameHit;
       if (!denied.allowed) {
-        await sendTooManyAttempts(reply, LOGIN_ATTEMPTS_MESSAGE, denied.retryAfterMs);
+        await sendTooManyRequests(reply, LOGIN_ATTEMPTS_MESSAGE, denied.retryAfterMs);
       }
       return;
     }
@@ -101,7 +91,7 @@ export async function registerAuthRateLimit(
       const ipHit = await ipLimiter.hit(buildIpKey(request));
       const denied = tokenHit.allowed ? ipHit : tokenHit;
       if (!denied.allowed) {
-        await sendTooManyAttempts(reply, PASSWORD_ATTEMPTS_MESSAGE, denied.retryAfterMs);
+        await sendTooManyRequests(reply, PASSWORD_ATTEMPTS_MESSAGE, denied.retryAfterMs);
       }
     }
   });

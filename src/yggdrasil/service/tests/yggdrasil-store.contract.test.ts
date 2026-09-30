@@ -11,6 +11,7 @@ import {
 } from "../yggdrasil_store";
 import { MemoryDb } from "../../../memory/memory-db";
 import { YggdrasilPostgresStore } from "../yggdrasil_postgres_store";
+import { AuthPostgresStore } from "../../../auth/service/auth_postgres_store";
 import { generateUuid } from "../../../utils/uuid";
 import {
   cleanupTrackedUsers,
@@ -22,9 +23,11 @@ import { contractDescribeEach } from "../../../utils/tests/driver-contract";
 interface YggdrasilDriverContext {
   store: IYggdrasilStore;
   makeUsers: (specs?: Partial<YggdrasilSeedUser>[]) => Promise<YggdrasilSeedUser[]>;
+  softDeleteUser: (uuid: string) => Promise<void>;
 }
 
 const mapContext = (): YggdrasilDriverContext => {
+  let db: MemoryDb;
   let store: IYggdrasilStore | undefined;
   const seeds: YggdrasilSeedUser[] = [];
   const makeUsers = async (
@@ -39,7 +42,8 @@ const mapContext = (): YggdrasilDriverContext => {
         ...spec,
       });
     }
-    store = new YggdrasilMapStore(new MemoryDb(), { users: seeds });
+    db = new MemoryDb();
+    store = new YggdrasilMapStore(db, { users: seeds });
     return seeds;
   };
   return {
@@ -48,11 +52,18 @@ const mapContext = (): YggdrasilDriverContext => {
       return store;
     },
     makeUsers,
+    softDeleteUser: async (uuid: string): Promise<void> => {
+      const user = db.users.get(uuid);
+      if (!user) return;
+      user.deleted = true;
+      user.deletedAt = new Date();
+    },
   };
 };
 
 const postgresContext = (): YggdrasilDriverContext => {
   const store = new YggdrasilPostgresStore();
+  const authStore = new AuthPostgresStore();
   const makeUsers = async (
     specs: Partial<YggdrasilSeedUser>[] = [],
   ): Promise<YggdrasilSeedUser[]> => {
@@ -70,7 +81,11 @@ const postgresContext = (): YggdrasilDriverContext => {
     }
     return users;
   };
-  return { store, makeUsers };
+  return {
+    store,
+    makeUsers,
+    softDeleteUser: (uuid: string): Promise<void> => authStore.deleteUser(uuid),
+  };
 };
 
 const profileOf = (user: YggdrasilSeedUser): YggdrasilProfile => ({
@@ -200,6 +215,38 @@ contractDescribeEach("контракт IYggdrasilStore", (driver) => {
     expect(
       await ctx.store.countProfilesByTextureUrl("http://localhost:3005/textures/missing.png"),
     ).toBe(0);
+  });
+
+  it("countProfilesByTextureUrl не считает профили удалённых пользователей (TASK-411.20)", async () => {
+    const [first, second] = await ctx.makeUsers([{}, {}]);
+    await saveProfile(ctx.store, first!);
+    await saveProfile(ctx.store, second!);
+
+    const sharedUrl = "http://localhost:3005/textures/deleted-owner.png";
+    await ctx.store.updateProfileTexture(first!.uuid, { skinUrl: sharedUrl });
+    await ctx.store.updateProfileTexture(second!.uuid, { capeUrl: sharedUrl });
+    expect(await ctx.store.countProfilesByTextureUrl(sharedUrl)).toBe(2);
+
+    await ctx.softDeleteUser(second!.uuid);
+
+    expect(await ctx.store.countProfilesByTextureUrl(sharedUrl)).toBe(1);
+  });
+
+  it("saveProfile повторным вызовом обновляет текстуры профиля (upsert) (TASK-411.20)", async () => {
+    const [user] = await ctx.makeUsers([{}]);
+    await saveProfile(ctx.store, user!);
+    await ctx.store.saveProfile({
+      uuid: user!.uuid,
+      userId: user!.uuid,
+      username: user!.username,
+      skinUrl: "http://localhost:3005/textures/second.png",
+      skinModel: "classic",
+    });
+
+    const profile = await ctx.store.findProfileByUuid(user!.uuid);
+    expect(profile?.skinUrl).toBe("http://localhost:3005/textures/second.png");
+    expect(profile?.skinModel).toBe("classic");
+    expect(profile?.capeUrl ?? null).toBeNull();
   });
 
   it("findUserByUsername отдаёт креды со статусом banned/approved", async () => {

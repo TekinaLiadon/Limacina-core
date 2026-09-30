@@ -28,7 +28,7 @@ export function buildDefaultSkinUrl(baseUrl: string): string {
 
 export function sha256Hex(file: Uint8Array): string {
   const hasher = new Bun.CryptoHasher("sha256");
-  hasher.update(new Uint8Array(file));
+  hasher.update(file);
   return hasher.digest("hex");
 }
 

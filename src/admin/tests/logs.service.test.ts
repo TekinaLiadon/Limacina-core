@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import * as nodeFs from "node:fs";
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LogsService } from "../logs.service";
@@ -109,7 +110,7 @@ describe("LogsService — фильтрация логов запросов", ():
     errorSpy.mockRestore();
   });
 
-  it("логирует ошибку чтения на error, кроме ENOENT (TASK-217.9)", async () => {
+  it("логирует ошибку чтения на error один раз за запрос, кроме ENOENT (TASK-217.9, TASK-411.22)", async () => {
     const service = new LogsService();
     const errorSpy = spyOn(serviceLogger(service), "error");
     chmodSync(TEST_LOG_FILE, 0o000);
@@ -120,8 +121,29 @@ describe("LogsService — фильтрация логов запросов", ():
       chmodSync(TEST_LOG_FILE, 0o644);
     }
 
-    expect(errorSpy).toHaveBeenCalledTimes(2);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
     errorSpy.mockRestore();
+  });
+
+  it("total и страница собираются одним проходом файла (TASK-411.22)", async () => {
+    const service = new LogsService();
+    let openCount = 0;
+    const realCreateReadStream = nodeFs.createReadStream.bind(nodeFs);
+    const spy = spyOn(nodeFs, "createReadStream").mockImplementation(
+      (...args: Parameters<typeof realCreateReadStream>) => {
+        openCount++;
+        return realCreateReadStream(...args);
+      },
+    );
+
+    try {
+      const { lines, total } = await service.getLines(TEST_DATE, 1, 1, { url: "/common/auth" });
+      expect(total).toBe(2);
+      expect(lines).toEqual([registrationLine]);
+      expect(openCount).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("комбинирует фильтры", async () => {

@@ -16,7 +16,7 @@ import { streamFileToReply } from "../utils/file-stream";
 import { LauncherConfigDto, type LauncherVersionsDto } from "./dto/dto";
 import type { FastifyReply } from "fastify";
 import {
-  LAUNCHER_VERSION_REGEX,
+  CONFIG_FILE,
   OLD_VERSIONS_DIR,
   PUBLIC_DIR,
   SUPPORTED_PLATFORMS,
@@ -24,10 +24,9 @@ import {
   compareVersions,
   isSupportedPlatform,
   parseLauncherZipName,
+  validateLauncherVersion,
 } from "./launcher-files";
 import { VERSION_FILE, readLauncherVersion } from "./version-file";
-
-const CONFIG_FILE = "config.toml";
 
 export const PLATFORM_RESCAN_INTERVAL_MS = 30_000;
 
@@ -354,9 +353,7 @@ export class LauncherService implements OnModuleDestroy {
   }
 
   private findVersionZip(dir: string, os: string, arch: string, version: string): string | null {
-    if (!LAUNCHER_VERSION_REGEX.test(version)) {
-      throw new BadRequestException("Версия должна быть в формате x.x.x (например 1.2.3)");
-    }
+    validateLauncherVersion(version);
 
     return this.findZip(dir, buildLauncherZipName(version, os, arch));
   }

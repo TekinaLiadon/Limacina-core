@@ -233,6 +233,23 @@ describe("AuthPostgresStore (мок SQL-клиента)", () => {
     expect(select?.sql).toContain("deleted = false");
   });
 
+  it("условная запись с expectedRole включает роль в условие UPDATE (TASK-411.22)", async () => {
+    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [{ role: "user" }] : [{ id: 1 }]));
+
+    expect(await store.updateRole("uuid-1", "admin", "user")).toBe(true);
+
+    const [update] = lastCalls(1);
+    expect(update?.sql).toContain("UPDATE users SET role = $1");
+    expect(update?.sql).toContain("uuid = $2 AND deleted = false AND role = $3");
+    expect(update?.values).toEqual(["admin", "uuid-1", "user"]);
+  });
+
+  it("условная запись отклоняет пользователя с разошедшейся ролью (TASK-411.22)", async () => {
+    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [{ role: "admin" }] : []));
+
+    expect(await store.setBanned("uuid-1", true, "user")).toBe(false);
+  });
+
   it("deleteUser/restoreUser переключают флаг deleted", async () => {
     fake.onSql(() => []);
 

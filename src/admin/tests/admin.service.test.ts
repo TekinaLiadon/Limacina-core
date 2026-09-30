@@ -165,6 +165,53 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     expect((await adminStore.findByUsername("rollbacktarget"))?.approved).toBe(true);
   });
 
+  it("гонка с повышением роли цели отменяет мутацию статуса (TASK-411.22)", async (): Promise<void> => {
+    const { adminStore, authStore, service } = await seed();
+    const originalSetApproved = adminStore.setApproved.bind(adminStore);
+    const setApproved = spyOn(adminStore, "setApproved").mockImplementationOnce(
+      async (username: string, approved: boolean, expectedRole?: string) => {
+        await adminStore.setRole("rollbacktarget", "admin");
+        await authStore.updateRole("rollback-target-uuid", "admin");
+        return originalSetApproved(username, approved, expectedRole);
+      },
+    );
+
+    await expect(service.setApproved("rollbacktarget", false, ACTOR)).rejects.toThrow(
+      NotFoundException,
+    );
+
+    const target = await adminStore.findByUsername("rollbacktarget");
+    expect(target?.approved).toBe(true);
+    expect(target?.role).toBe("admin");
+    expect((await authStore.findByUsername("rollbacktarget"))?.approved).toBe(true);
+    setApproved.mockRestore();
+  });
+
+  it("гонка с повышением роли цели отменяет удаление (TASK-411.22)", async (): Promise<void> => {
+    const { adminStore, service } = await seed();
+    const originalDeleteUser = adminStore.deleteUser.bind(adminStore);
+    const deleteUser = spyOn(adminStore, "deleteUser").mockImplementationOnce(
+      async (username: string, expectedRole?: string) => {
+        await adminStore.setRole("rollbacktarget", "admin");
+        return originalDeleteUser(username, expectedRole);
+      },
+    );
+
+    await expect(service.deleteUser("rollbacktarget", ACTOR)).rejects.toThrow(NotFoundException);
+
+    expect(await adminStore.findByUsername("rollbacktarget")).toBeDefined();
+    deleteUser.mockRestore();
+  });
+
+  it("мутация проходит, когда роль цели совпадает со снимком (TASK-411.22)", async (): Promise<void> => {
+    const { adminStore, authStore, service } = await seed();
+
+    await service.setBanned("rollbacktarget", true, ACTOR);
+
+    expect((await adminStore.findByUsername("rollbacktarget"))?.banned).toBe(true);
+    expect((await authStore.findByUsername("rollbacktarget"))?.banned).toBe(true);
+  });
+
   it("setOwnerRole откатывает роль при сбое auth-стора", async (): Promise<void> => {
     const { adminStore, authStore, service } = await seed();
     const updateRole = spyOn(authStore, "updateRole").mockRejectedValue(

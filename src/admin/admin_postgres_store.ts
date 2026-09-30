@@ -2,13 +2,13 @@ import { Injectable } from "@nestjs/common";
 import {
   selectQuery,
   updateQuery,
-  updateColumnQuery,
   setSoftDeletedQuery,
   insertQuery,
   execute,
   toBoolean,
   TABLES,
   type SelectBuilder,
+  type SqlValue,
 } from "../utils/sql";
 import type {
   IAdminStore,
@@ -177,50 +177,55 @@ export class AdminPostgresStore implements IAdminStore {
     };
   }
 
-  async setApproved(username: string, approved: boolean): Promise<boolean> {
-    const query = updateColumnQuery(
-      TABLES.users,
-      "approved",
-      approved,
-      "username = $1 AND deleted = false",
-      username,
-    );
-    const { count } = await execute(query.sql, query.values);
-    return this.appliedToLiveUser(count, username);
+  async setApproved(username: string, approved: boolean, expectedRole?: string): Promise<boolean> {
+    return this.updateLiveUser("approved", approved, username, expectedRole);
   }
 
-  async setBanned(username: string, banned: boolean): Promise<boolean> {
-    const query = updateColumnQuery(
-      TABLES.users,
-      "banned",
-      banned,
-      "username = $1 AND deleted = false",
-      username,
-    );
-    const { count } = await execute(query.sql, query.values);
-    return this.appliedToLiveUser(count, username);
+  async setBanned(username: string, banned: boolean, expectedRole?: string): Promise<boolean> {
+    return this.updateLiveUser("banned", banned, username, expectedRole);
   }
 
-  async setRole(username: string, role: string): Promise<boolean> {
-    const query = updateColumnQuery(
-      TABLES.users,
-      "role",
-      role,
-      "username = $1 AND deleted = false",
-      username,
-    );
-    const { count } = await execute(query.sql, query.values);
-    return this.appliedToLiveUser(count, username);
+  async setRole(username: string, role: string, expectedRole?: string): Promise<boolean> {
+    return this.updateLiveUser("role", role, username, expectedRole);
   }
 
-  private async appliedToLiveUser(affected: number, username: string): Promise<boolean> {
+  private async updateLiveUser(
+    column: string,
+    value: boolean | string,
+    username: string,
+    expectedRole?: string,
+  ): Promise<boolean> {
+    const guardValues: SqlValue[] =
+      expectedRole !== undefined ? [username, expectedRole] : [username];
+    const query = updateQuery()
+      .from(TABLES.users)
+      .set(column, value)
+      .where(
+        expectedRole !== undefined
+          ? "username = $1 AND deleted = false AND role = $2"
+          : "username = $1 AND deleted = false",
+        ...guardValues,
+      )
+      .build();
+    const { count } = await execute(query.sql, query.values);
+    return this.appliedToLiveUser(count, username, expectedRole);
+  }
+
+  private async appliedToLiveUser(
+    affected: number,
+    username: string,
+    expectedRole?: string,
+  ): Promise<boolean> {
     if (affected > 0) return true;
-    return (await this.findByUsername(username)) !== undefined;
+    const user = await this.findByUsername(username);
+    if (!user) return false;
+    return expectedRole === undefined || user.role === expectedRole;
   }
 
-  async deleteUser(username: string): Promise<AdminUser | undefined> {
+  async deleteUser(username: string, expectedRole?: string): Promise<AdminUser | undefined> {
     const user = await this.findByUsername(username);
     if (!user) return undefined;
+    if (expectedRole !== undefined && user.role !== expectedRole) return undefined;
 
     const query = setSoftDeletedQuery(TABLES.users, "username = $1", username, true);
     await execute(query.sql, query.values);

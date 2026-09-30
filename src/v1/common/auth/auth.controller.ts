@@ -3,6 +3,12 @@ import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from "@nes
 import { Public } from "../../../common/public.decorator";
 import { CurrentUser, type RequestUser } from "../../../common/current-user.decorator";
 import { SuccessResponseDto } from "../../../common/dto/dto";
+import {
+  AUTH_BASE_PATH,
+  AUTH_LOGIN_SEGMENT,
+  AUTH_PASSWORD_SEGMENT,
+  AUTH_REGISTRATION_SEGMENT,
+} from "../../../common/auth-routes";
 import { AuthService } from "../../../auth/service/auth.service";
 import {
   AuthDto,
@@ -13,11 +19,11 @@ import {
 } from "../../../auth/dto/dto";
 
 @ApiTags("common_auth")
-@Controller("common/auth")
+@Controller(AUTH_BASE_PATH)
 export class V1AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  @Post("registration")
+  @Post(AUTH_REGISTRATION_SEGMENT)
   @Public()
   @ApiOperation({ summary: "Регистрация нового пользователя" })
   @ApiBody({ type: RegisterDto })
@@ -36,7 +42,7 @@ export class V1AuthController {
     return this.authService.register(dto.username, dto.password);
   }
 
-  @Post("login")
+  @Post(AUTH_LOGIN_SEGMENT)
   @Public()
   @ApiOperation({ summary: "Авторизация пользователя" })
   @ApiBody({ type: AuthDto })
@@ -96,7 +102,7 @@ export class V1AuthController {
     return { success: true };
   }
 
-  @Patch("password")
+  @Patch(AUTH_PASSWORD_SEGMENT)
   @ApiBearerAuth()
   @ApiOperation({
     summary: "Смена собственного пароля",

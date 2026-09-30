@@ -37,8 +37,14 @@ class DisabledRconClient implements RconClient {
   }
 }
 
+export function isRconConfigured(
+  config: AppConfigType,
+): config is AppConfigType & { RCON_HOST: string; RCON_PASSWORD: string } {
+  return Boolean(config.RCON_HOST && config.RCON_PASSWORD);
+}
+
 export function createRconClient(config: AppConfigType): RconClient {
-  if (!config.RCON_HOST || !config.RCON_PASSWORD) return new DisabledRconClient();
+  if (!isRconConfigured(config)) return new DisabledRconClient();
 
   const target: RconTarget = {
     host: config.RCON_HOST,
@@ -63,13 +69,14 @@ function normalizeCommand(raw: string): string {
 export class RconService {
   private readonly logger = new Logger(RconService.name);
   private readonly configured: boolean;
+  private pendingCheck: Promise<boolean> | undefined;
 
   constructor(
     @Inject(AppConfigToken) config: AppConfigType,
     @Inject(CacheStoreToken) private readonly cache: ICacheStore,
     @Inject(RconClientToken) private readonly client: RconClient,
   ) {
-    this.configured = !!(config.RCON_HOST && config.RCON_PASSWORD);
+    this.configured = isRconConfigured(config);
     if (!this.configured && (config.RCON_HOST || config.RCON_PASSWORD)) {
       this.logger.warn(PARTIAL_CONFIG_MESSAGE);
     }
@@ -81,9 +88,20 @@ export class RconService {
     const cached = await this.cache.get<RconStatusDto>(RCON_STATUS_CACHE_KEY);
     if (cached) return cached;
 
-    const status: RconStatusDto = { enabled: await this.client.checkAvailable() };
-    await this.cache.set(RCON_STATUS_CACHE_KEY, status, RCON_STATUS_CACHE_TTL_MS);
-    return status;
+    if (this.pendingCheck) return { enabled: await this.pendingCheck };
+
+    this.pendingCheck = this.checkAndCache();
+    try {
+      return { enabled: await this.pendingCheck };
+    } finally {
+      this.pendingCheck = undefined;
+    }
+  }
+
+  private async checkAndCache(): Promise<boolean> {
+    const enabled = await this.client.checkAvailable();
+    await this.cache.set(RCON_STATUS_CACHE_KEY, { enabled }, RCON_STATUS_CACHE_TTL_MS);
+    return enabled;
   }
 
   getCommands(): RconCommandsDto {

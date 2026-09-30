@@ -60,8 +60,13 @@ class TestJwtStrategy extends PassportStrategy(Strategy) {
 function echoHandler(password: string, received: string[]): RconHandler {
   return (packet, socket) => {
     if (packet.type === RCON_AUTH) {
-      const authBody = packet.body === password ? "" : "Wrong password";
-      rconRespond(socket, RCON_AUTH_RESPONSE, authBody, packet.id);
+      const authOk = packet.body === password;
+      rconRespond(
+        socket,
+        RCON_AUTH_RESPONSE,
+        authOk ? "" : "Wrong password",
+        authOk ? packet.id : -1,
+      );
       return;
     }
     if (packet.type === RCON_EXECCOMMAND) {

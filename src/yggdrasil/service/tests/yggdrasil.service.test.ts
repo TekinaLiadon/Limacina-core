@@ -4,7 +4,7 @@ setupTestEnv();
 
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
-import { HttpException } from "@nestjs/common";
+import { HttpException, HttpStatus } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { MemoryDb } from "../../../memory/memory-db";
 import {
@@ -396,5 +396,100 @@ describe("YggdrasilService.getMetadata — skinDomains (TASK-269.34)", (): void 
   it("хост без точки не получает wildcard", () => {
     const metadata = makeMetadataService("http://localhost:3005").getMetadata();
     expect(metadata.skinDomains).toEqual(["localhost"]);
+  });
+});
+
+describe("YggdrasilService — валидация uuid профиля (TASK-411.20)", (): void => {
+  const UUID_USERNAME = "uuiduser";
+  const UUID_USER = "d0000000000000000000000000000099";
+  const FOREIGN_UUID = "e0000000000000000000000000000099";
+
+  const rejectionOf = async (promise: Promise<unknown>): Promise<HttpException> =>
+    promise.then(
+      () => {
+        throw new Error("ожидался reject, а метод завершился успешно");
+      },
+      (error: HttpException) => error,
+    );
+
+  const makeUuidStore = async (): Promise<YggdrasilMapStore> =>
+    new YggdrasilMapStore(new MemoryDb(), {
+      users: [
+        {
+          username: UUID_USERNAME,
+          uuid: UUID_USER,
+          passwordHash: await Bun.password.hash(SEED_PASSWORD),
+          approved: true,
+        },
+      ],
+      profiles: [{ uuid: UUID_USER, userId: UUID_USER, username: UUID_USERNAME }],
+    });
+
+  const authorizedService = async (): Promise<{
+    service: YggdrasilService;
+    authorization: string;
+  }> => {
+    const store = await makeUuidStore();
+    const service = makeService(store, new YggdrasilMapTokenStore(new MemoryDb()));
+    const auth = await service.authenticate({ username: UUID_USERNAME, password: SEED_PASSWORD });
+    return { service, authorization: `Bearer ${auth.accessToken}` };
+  };
+
+  it("getProfile с невалидным uuid даёт 404 IllegalArgumentException вместо молчаливого 204", async (): Promise<void> => {
+    const store = await makeUuidStore();
+    const service = makeService(store, new YggdrasilMapTokenStore(new MemoryDb()));
+
+    const error = await rejectionOf(service.getProfile("not-a-uuid", false));
+
+    expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
+    expect(error.getResponse()).toMatchObject({
+      error: "IllegalArgumentException",
+      errorMessage: "Invalid uuid.",
+    });
+  });
+
+  it("getProfile с uuid в верхнем регистре и дефисами нормализуется", async (): Promise<void> => {
+    const store = await makeUuidStore();
+    const service = makeService(store, new YggdrasilMapTokenStore(new MemoryDb()));
+
+    const dashed = `${UUID_USER.slice(0, 8)}-${UUID_USER.slice(8, 12)}-${UUID_USER.slice(12, 16)}-${UUID_USER.slice(16, 20)}-${UUID_USER.slice(20)}`;
+    const profile = await service.getProfile(dashed.toUpperCase(), false);
+
+    expect(profile?.id).toBe(UUID_USER);
+  });
+
+  it("uploadTexture с невалидным uuid даёт 400 IllegalArgumentException вместо 403 Invalid token", async (): Promise<void> => {
+    const { service, authorization } = await authorizedService();
+
+    const error = await rejectionOf(
+      service.uploadTexture("nothex", "skin", Buffer.from("png"), undefined, authorization),
+    );
+
+    expect(error.getStatus()).toBe(HttpStatus.BAD_REQUEST);
+    expect(error.getResponse()).toMatchObject({
+      error: "IllegalArgumentException",
+      errorMessage: "Invalid uuid.",
+    });
+  });
+
+  it("deleteTexture с невалидным uuid даёт 400 IllegalArgumentException", async (): Promise<void> => {
+    const { service, authorization } = await authorizedService();
+
+    const error = await rejectionOf(service.deleteTexture("zzzzzzzz", "skin", authorization));
+
+    expect(error.getStatus()).toBe(HttpStatus.BAD_REQUEST);
+    expect(error.getResponse()).toMatchObject({ error: "IllegalArgumentException" });
+  });
+
+  it("валидный, но чужой uuid в uploadTexture сохраняет протокольный 403 Invalid token", async (): Promise<void> => {
+    const { service, authorization } = await authorizedService();
+    const png = new Uint8Array(buildTestPng({ variant: 215 }));
+
+    const error = await rejectionOf(
+      service.uploadTexture(FOREIGN_UUID, "skin", Buffer.from(png), undefined, authorization),
+    );
+
+    expect(error.getStatus()).toBe(HttpStatus.FORBIDDEN);
+    expect(error.getResponse()).toMatchObject({ errorMessage: "Invalid token." });
   });
 });

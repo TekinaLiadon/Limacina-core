@@ -12,6 +12,7 @@ import type { AppConfigType } from "../config/global-config";
 import {
   buildInstallCommand,
   currentRevision,
+  hasLockfile,
   runStep,
   terminateActiveSteps,
 } from "../utils/technical-steps";
@@ -25,7 +26,6 @@ const MIGRATE_TIMEOUT_MS = 60_000;
 const BUILD_TIMEOUT_MS = 120_000;
 const BINARY_PATH = "dist/Limacina";
 const BINARY_BACKUP_PATH = "dist/Limacina.previous";
-const LOCKFILE_PATHS = ["bun.lockb", "bun.lock"];
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -144,22 +144,13 @@ export class TechnicalRebuildService implements OnApplicationShutdown {
   }
 
   async installDependencies(): Promise<void> {
-    const frozenLockfile = await this.hasLockfile();
+    const frozenLockfile = await hasLockfile(process.cwd());
     await runStep(
       this.logger,
       "bun install",
       buildInstallCommand(frozenLockfile),
       INSTALL_TIMEOUT_MS,
     );
-  }
-
-  private async hasLockfile(): Promise<boolean> {
-    for (const lockfilePath of LOCKFILE_PATHS) {
-      if (await Bun.file(lockfilePath).exists()) {
-        return true;
-      }
-    }
-    return false;
   }
 
   async runMigrations(): Promise<void> {

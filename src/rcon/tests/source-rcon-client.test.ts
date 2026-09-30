@@ -4,8 +4,8 @@ setupTestEnv();
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { createServer, type Socket } from "node:net";
+import { DEFAULT_RCON_PORT } from "../../config/global-config";
 import {
-  DEFAULT_RCON_PORT,
   RCON_AUTH,
   RCON_AUTH_RESPONSE,
   RCON_EXECCOMMAND,
@@ -17,6 +17,7 @@ import {
   rconAuthHandler,
   rconExecHandler,
   rconRespond,
+  rconVanillaHandler,
   startFakeRconServer,
   type FakeRconServer,
 } from "./fake-rcon-server";
@@ -116,6 +117,18 @@ describe("SourceRconClient — выполнение команд", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.output).toContain("Unknown or incomplete command");
+  });
+
+  it("vanilla-сервер не отвечает на маркер type 0 и рвёт соединение — вывод команды сохраняется (TASK-437)", async () => {
+    const output = "There are 0 of a max of 20 players online";
+    running = await startFakeRconServer(rconVanillaHandler(output));
+    const client = new SourceRconClient(target(running.port), FAST_TIMEOUTS);
+
+    const result = await client.executeCommand("list");
+
+    if (!result.ok) expect(result.error).not.toBe("Соединение с RCON закрыто до получения ответа");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.output).toBe(output);
   });
 
   it("собирает мультипакетный вывод", async () => {

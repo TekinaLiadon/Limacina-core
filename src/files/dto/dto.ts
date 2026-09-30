@@ -29,10 +29,6 @@ export class FilesListQueryDto {
   limit?: number;
 }
 
-export class FileListResponseDto {
-  [filePath: string]: string;
-}
-
 export const fileListResponseSchema = {
   type: "object",
   additionalProperties: { type: "string" },

@@ -155,16 +155,32 @@ describe("UserContentPostgresStore (мок SQL-клиента)", () => {
     expect(insert?.sql).toContain("INSERT INTO user_skins");
   });
 
-  it("updateActiveSkin деактивирует и активирует в одной транзакции", async () => {
-    fake.onSql(() => []);
+  it("updateActiveSkin деактивирует и активирует в одной транзакции с гардом владельца", async () => {
+    fake.onSql(({ sql }) => {
+      if (sql.includes("SELECT id FROM user_skins")) return [{ id: 42 }];
+      if (sql.includes("id = $2 AND user_uuid = $3")) return [{ id: 42 }];
+      return [];
+    });
 
-    await store.updateActiveSkin("uuid-1", 42);
+    expect(await store.updateActiveSkin("uuid-1", 42)).toBeTrue();
 
-    const [deactivate, activate] = lastCalls(2);
+    const [target, deactivate, activate] = lastCalls(3);
+    expect(target?.sql).toContain("SELECT id FROM user_skins WHERE id = $1 AND user_uuid = $2");
+    expect(target?.values).toEqual([42, "uuid-1"]);
     expect(deactivate?.sql).toContain("UPDATE user_skins SET active = $1");
     expect(deactivate?.values).toEqual([false, "uuid-1"]);
-    expect(activate?.sql).toContain("WHERE id = $2");
-    expect(activate?.values).toEqual([true, 42]);
+    expect(activate?.sql).toContain("WHERE id = $2 AND user_uuid = $3");
+    expect(activate?.values).toEqual([true, 42, "uuid-1"]);
+  });
+
+  it("updateActiveSkin чужого или несуществующего скина — false без записи (TASK-411.21)", async () => {
+    fake.onSql(() => []);
+    const before = fake.sqlCalls.length;
+
+    expect(await store.updateActiveSkin("uuid-1", 42)).toBeFalse();
+
+    expect(fake.sqlCalls.length).toBe(before + 1);
+    expect(lastCalls(1)[0]?.sql).toContain("WHERE id = $1 AND user_uuid = $2");
   });
 
   it("deleteByIdAndCountRemaining удаляет и считает остаток после удаления", async () => {

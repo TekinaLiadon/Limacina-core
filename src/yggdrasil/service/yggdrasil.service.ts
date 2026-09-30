@@ -30,7 +30,6 @@ import {
   type TokenEntry,
 } from "./yggdrasil_store";
 import { issuedBeforePasswordChange, type JwtAccessPayload } from "../../common/jwt.strategy";
-import { MAX_PROFILE_NAMES } from "../batch-profiles.pipe";
 import {
   UserContentStoreToken,
   type IUserContentStore,
@@ -74,6 +73,7 @@ function buildUploadableTexturesProperty(): TextureProperty {
 }
 
 const IPV4_HOST_PATTERN = /^(\d{1,3})(\.\d{1,3}){3}$/;
+const PROFILE_UUID_PATTERN = /^[0-9a-f]{32}$/;
 
 function resolveSkinWildcardDomain(host: string): string | null {
   if (host.includes(":") || IPV4_HOST_PATTERN.test(host)) return null;
@@ -369,7 +369,7 @@ export class YggdrasilService {
   }
 
   async getProfile(uuid: string, signed: boolean): Promise<SessionProfileDto | null> {
-    const normalized = uuid.replace(/-/g, "");
+    const normalized = this.normalizeProfileUuid(uuid, HttpStatus.NOT_FOUND);
     const profile = await this.store.findProfileByUuid(normalized);
     if (!profile) return null;
 
@@ -381,8 +381,7 @@ export class YggdrasilService {
   }
 
   async batchProfiles(names: string[]): Promise<GameProfileDto[]> {
-    const limited = names.slice(0, MAX_PROFILE_NAMES);
-    const profiles = await this.store.findProfilesByUsernames(limited);
+    const profiles = await this.store.findProfilesByUsernames(names);
 
     return profiles.map((p) => ({
       id: p.uuid,
@@ -399,7 +398,7 @@ export class YggdrasilService {
     authorization?: string,
   ): Promise<void> {
     const principal = await this.authenticateTextureAccess(authorization);
-    const normalizedUuid = uuid.replace(/-/g, "");
+    const normalizedUuid = this.normalizeProfileUuid(uuid, HttpStatus.BAD_REQUEST);
     this.validateTextureFile(file, textureType);
     const skinModel = this.normalizeSkinModel(model);
     const stored = sanitizePng(file);
@@ -444,6 +443,20 @@ export class YggdrasilService {
     return withPathLock(lockKeys[0]!, () =>
       lockKeys.length > 1 ? withPathLock(lockKeys[1]!, fn) : fn(),
     );
+  }
+
+  private normalizeProfileUuid(uuid: string, status: HttpStatus): string {
+    const normalized = uuid.replace(/-/g, "").toLowerCase();
+    if (!PROFILE_UUID_PATTERN.test(normalized)) {
+      throw this.createError(
+        { info: uuid },
+        "invalid uuid",
+        "Invalid uuid.",
+        "IllegalArgumentException",
+        status,
+      );
+    }
+    return normalized;
   }
 
   private normalizeSkinModel(model?: string): string | null {
@@ -514,7 +527,7 @@ export class YggdrasilService {
     authorization?: string,
   ): Promise<void> {
     const principal = await this.authenticateTextureAccess(authorization);
-    const normalizedUuid = uuid.replace(/-/g, "");
+    const normalizedUuid = this.normalizeProfileUuid(uuid, HttpStatus.BAD_REQUEST);
 
     await withPathLock(this.textureMutationLockKey(normalizedUuid, textureType), async () => {
       const profile = await this.store.findProfileByUuid(normalizedUuid);

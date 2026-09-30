@@ -4,7 +4,6 @@ import {
   selectQuery,
   updateQuery,
   deleteQuery,
-  updateColumnQuery,
   setSoftDeletedQuery,
   execute,
   executeInTransaction,
@@ -12,6 +11,7 @@ import {
   toBoolean,
   isUniqueViolation,
   TABLES,
+  type SqlValue,
 } from "../../utils/sql";
 import type { IAuthStore, StoredUser, RefreshEntry } from "./auth_store";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../token.constants";
@@ -97,28 +97,12 @@ export class AuthPostgresStore implements IAuthStore {
     return true;
   }
 
-  async setApproved(uuid: string, approved: boolean): Promise<boolean> {
-    const query = updateColumnQuery(
-      TABLES.users,
-      "approved",
-      approved,
-      "uuid = $1 AND deleted = false",
-      uuid,
-    );
-    const { count } = await execute(query.sql, query.values);
-    return this.appliedToLiveUser(count, uuid);
+  async setApproved(uuid: string, approved: boolean, expectedRole?: string): Promise<boolean> {
+    return this.updateLiveUser("approved", approved, uuid, expectedRole);
   }
 
-  async setBanned(uuid: string, banned: boolean): Promise<boolean> {
-    const query = updateColumnQuery(
-      TABLES.users,
-      "banned",
-      banned,
-      "uuid = $1 AND deleted = false",
-      uuid,
-    );
-    const { count } = await execute(query.sql, query.values);
-    return this.appliedToLiveUser(count, uuid);
+  async setBanned(uuid: string, banned: boolean, expectedRole?: string): Promise<boolean> {
+    return this.updateLiveUser("banned", banned, uuid, expectedRole);
   }
 
   async userExists(username: string): Promise<boolean> {
@@ -154,28 +138,47 @@ export class AuthPostgresStore implements IAuthStore {
     ]);
   }
 
-  async updateRole(uuid: string, role: string): Promise<boolean> {
-    const query = updateColumnQuery(
-      TABLES.users,
-      "role",
-      role,
-      "uuid = $1 AND deleted = false",
-      uuid,
-    );
-    const { count } = await execute(query.sql, query.values);
-    return this.appliedToLiveUser(count, uuid);
+  async updateRole(uuid: string, role: string, expectedRole?: string): Promise<boolean> {
+    return this.updateLiveUser("role", role, uuid, expectedRole);
   }
 
-  private async appliedToLiveUser(affected: number, uuid: string): Promise<boolean> {
+  private async updateLiveUser(
+    column: string,
+    value: boolean | string,
+    uuid: string,
+    expectedRole?: string,
+  ): Promise<boolean> {
+    const guardValues: SqlValue[] = expectedRole !== undefined ? [uuid, expectedRole] : [uuid];
+    const query = updateQuery()
+      .from(TABLES.users)
+      .set(column, value)
+      .where(
+        expectedRole !== undefined
+          ? "uuid = $1 AND deleted = false AND role = $2"
+          : "uuid = $1 AND deleted = false",
+        ...guardValues,
+      )
+      .build();
+    const { count } = await execute(query.sql, query.values);
+    return this.appliedToLiveUser(count, uuid, expectedRole);
+  }
+
+  private async appliedToLiveUser(
+    affected: number,
+    uuid: string,
+    expectedRole?: string,
+  ): Promise<boolean> {
     if (affected > 0) return true;
-    const query = selectQuery("1")
+    const query = selectQuery("role")
       .from(TABLES.users)
       .where("uuid = $1", uuid)
       .where("deleted = false")
       .limit(1)
       .build();
-    const { rows } = await execute(query.sql, query.values);
-    return rows.length > 0;
+    const { rows } = await execute<{ role: string }>(query.sql, query.values);
+    const [row] = rows;
+    if (!row) return false;
+    return expectedRole === undefined || row.role === expectedRole;
   }
 
   async deleteUser(uuid: string): Promise<void> {

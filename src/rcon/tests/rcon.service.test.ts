@@ -53,10 +53,12 @@ class FakeRconClient implements RconClient {
   output = "Сервер: готово";
   error: string | undefined;
   checkCount = 0;
+  onCheck: (() => Promise<void>) | undefined;
   readonly calls: string[] = [];
 
   async checkAvailable(): Promise<boolean> {
     this.checkCount++;
+    if (this.onCheck) await this.onCheck();
     return this.available;
   }
 
@@ -133,6 +135,33 @@ describe("RconService — статус", () => {
 
     expect((await service.getStatus()).enabled).toBe(false);
     expect((await service.getStatus()).enabled).toBe(false);
+    expect(client.checkCount).toBe(1);
+  });
+
+  it("бёрст параллельных запросов поднимает одну RCON-проверку (TASK-411.23)", async () => {
+    const client = new FakeRconClient();
+    let releaseCheck!: () => void;
+    const checkGate = new Promise<void>((resolve) => {
+      releaseCheck = resolve;
+    });
+    client.onCheck = () => checkGate;
+    const { service } = await createService(
+      rconConfig({ host: "127.0.0.1", password: "secret" }),
+      client,
+    );
+
+    const statusesPromise = Promise.all(
+      Array.from({ length: 5 }, () => service.getStatus()),
+    );
+    await Bun.sleep(10);
+
+    expect(client.checkCount).toBe(1);
+
+    releaseCheck();
+    const statuses = await statusesPromise;
+
+    expect(statuses).toHaveLength(5);
+    expect(statuses.every((status) => status.enabled)).toBe(true);
     expect(client.checkCount).toBe(1);
   });
 });

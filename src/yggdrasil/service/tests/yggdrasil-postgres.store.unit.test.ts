@@ -89,7 +89,7 @@ describe("YggdrasilPostgresStore (мок SQL-клиента)", () => {
     expect(call?.values).toEqual(["a", "b", "c"]);
   });
 
-  it("saveProfile вставляет текстуры с null-подстановкой", async () => {
+  it("saveProfile вставляет текстуры с null-подстановкой upsert-запросом", async () => {
     fake.onSql(() => []);
 
     await store.saveProfile({
@@ -103,11 +103,39 @@ describe("YggdrasilPostgresStore (мок SQL-клиента)", () => {
 
     const [call] = lastCalls(1);
     expect(call?.sql).toContain("INSERT INTO user_textures");
+    expect(call?.sql).toContain("ON CONFLICT (uuid) DO UPDATE SET");
     expect(call?.values).toEqual([
       "profile-uuid",
       "http://localhost:3005/textures/skin.png",
       null,
       null,
+    ]);
+  });
+
+  it("saveProfile по существующему uuid не падает unique violation (повторный вызов)", async () => {
+    fake.onSql(() => []);
+    const before = fake.sqlCalls.length;
+
+    await store.saveProfile({
+      uuid: "profile-uuid",
+      userId: "profile-uuid",
+      username: "pgygg_user",
+    });
+    await store.saveProfile({
+      uuid: "profile-uuid",
+      userId: "profile-uuid",
+      username: "pgygg_user",
+      capeUrl: "http://localhost:3005/capes/c.png",
+    });
+
+    expect(fake.sqlCalls.length).toBe(before + 2);
+    const [first, second] = lastCalls(2);
+    expect(first?.values).toEqual(["profile-uuid", null, null, null]);
+    expect(second?.values).toEqual([
+      "profile-uuid",
+      null,
+      null,
+      "http://localhost:3005/capes/c.png",
     ]);
   });
 

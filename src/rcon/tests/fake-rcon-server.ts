@@ -65,6 +65,20 @@ export function rconExecHandler(output: string): RconHandler {
   };
 }
 
+export function rconVanillaHandler(output: string): RconHandler {
+  return (packet, socket) => {
+    if (packet.type === RCON_AUTH) {
+      rconRespond(socket, RCON_AUTH_RESPONSE, "", packet.id);
+      return;
+    }
+    if (packet.type === RCON_EXECCOMMAND) {
+      rconRespond(socket, RCON_RESPONSE_VALUE, output, packet.id);
+      return;
+    }
+    socket.destroy();
+  };
+}
+
 export function startFakeRconServer(handler: RconHandler): Promise<FakeRconServer> {
   let connections = 0;
   const sockets = new Set<Socket>();
