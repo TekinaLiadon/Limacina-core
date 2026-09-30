@@ -14,9 +14,9 @@ export const RCON_RESPONSE_VALUE = 0;
 
 const CONNECT_TIMEOUT_MS = 5_000;
 const READ_TIMEOUT_MS = 10_000;
+const IDLE_TIMEOUT_MS = 500;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_PACKET_SIZE = 4096;
-const END_MARKER = "limacina-rcon-end";
 
 export interface RconTarget {
   host: string;
@@ -27,13 +27,17 @@ export interface RconTarget {
 export interface RconTimeouts {
   connectTimeoutMs?: number;
   readTimeoutMs?: number;
+  idleTimeoutMs?: number;
 }
 
 export type RconResult = { ok: true; output: string } | { ok: false; error: string };
 
+export class RconTransportError extends Error {}
+
 export class SourceRconClient {
   private readonly connectTimeoutMs: number;
   private readonly readTimeoutMs: number;
+  private readonly idleTimeoutMs: number;
 
   constructor(
     private readonly target: RconTarget,
@@ -41,6 +45,7 @@ export class SourceRconClient {
   ) {
     this.connectTimeoutMs = timeouts.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
     this.readTimeoutMs = timeouts.readTimeoutMs ?? READ_TIMEOUT_MS;
+    this.idleTimeoutMs = timeouts.idleTimeoutMs ?? IDLE_TIMEOUT_MS;
   }
 
   async checkAvailable(): Promise<boolean> {
@@ -65,7 +70,7 @@ export class SourceRconClient {
     action: (connection: RconConnection) => string | void | Promise<string | void>,
   ): Promise<string> {
     const socket = await connectRcon(this.target, this.connectTimeoutMs);
-    const connection = new RconConnection(socket, this.readTimeoutMs);
+    const connection = new RconConnection(socket, this.readTimeoutMs, this.idleTimeoutMs);
     try {
       await connection.authenticate(this.target.password);
       return ((await action(connection)) as string | undefined) ?? "";
@@ -93,6 +98,7 @@ async function connectRcon(target: RconTarget, connectTimeoutMs: number): Promis
     });
     socket.connect(target.port, target.host);
   });
+  socket.setNoDelay(true);
   return socket;
 }
 
@@ -112,10 +118,11 @@ class RconConnection {
   constructor(
     private readonly socket: Socket,
     private readonly readTimeoutMs: number,
+    private readonly idleTimeoutMs: number,
   ) {
     socket.on("data", (chunk: Buffer) => this.onData(chunk));
-    socket.on("error", () => this.fail(new Error(RCON_CLOSED_MESSAGE)));
-    socket.on("close", () => this.fail(new Error(RCON_CLOSED_MESSAGE)));
+    socket.on("error", () => this.fail(new RconTransportError(RCON_CLOSED_MESSAGE)));
+    socket.on("close", () => this.fail(new RconTransportError(RCON_CLOSED_MESSAGE)));
   }
 
   async authenticate(password: string): Promise<void> {
@@ -127,22 +134,35 @@ class RconConnection {
     if (response.type !== RCON_AUTH_RESPONSE || response.id !== 1) {
       throw new Error(RCON_AUTH_MESSAGE);
     }
+    this.drainTrailingResponseValues();
   }
 
   async execute(command: string): Promise<string> {
-    this.write({ id: 1, type: RCON_EXECCOMMAND, body: command });
-    this.write({ id: 2, type: RCON_EXECCOMMAND, body: END_MARKER });
+    await this.writeDrained({ id: 1, type: RCON_EXECCOMMAND, body: command });
 
     const parts: string[] = [];
+    let answered = false;
     while (true) {
-      const packet = await this.readPacket();
-      if (packet.body.length > MAX_PACKET_SIZE) {
-        throw new Error(RCON_TOO_LARGE_MESSAGE);
+      try {
+        const packet = await this.readPacket(answered ? this.idleTimeoutMs : this.readTimeoutMs);
+        answered = true;
+        if (packet.body.length > MAX_PACKET_SIZE) {
+          throw new Error(RCON_TOO_LARGE_MESSAGE);
+        }
+        parts.push(packet.body);
+      } catch (error) {
+        if (!answered || !(error instanceof RconTransportError)) throw error;
+        break;
       }
-      if (packet.id === 2) break;
-      parts.push(packet.body);
     }
     return parts.join("");
+  }
+
+  private drainTrailingResponseValues(): void {
+    while (true) {
+      const buffered = this.takeBufferedPacket();
+      if (!buffered || buffered.type !== RCON_RESPONSE_VALUE) break;
+    }
   }
 
   close(): void {
@@ -154,14 +174,20 @@ class RconConnection {
     this.socket.write(encodeRconPacket(packet));
   }
 
-  private async readPacket(): Promise<RconPacket> {
+  private writeDrained(packet: RconPacket): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.socket.write(encodeRconPacket(packet), () => resolve());
+    });
+  }
+
+  private async readPacket(timeoutMs: number = this.readTimeoutMs): Promise<RconPacket> {
     const buffered = this.takeBufferedPacket();
     if (buffered) return buffered;
 
     return new Promise<RconPacket>((resolve, reject) => {
       this.timer = setTimeout(() => {
-        this.fail(new Error(RCON_READ_TIMEOUT_MESSAGE));
-      }, this.readTimeoutMs);
+        this.fail(new RconTransportError(RCON_READ_TIMEOUT_MESSAGE));
+      }, timeoutMs);
       this.waiter = (result) => {
         this.clearTimer();
         this.waiter = undefined;
