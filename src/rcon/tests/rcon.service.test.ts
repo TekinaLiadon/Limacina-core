@@ -150,9 +150,7 @@ describe("RconService — статус", () => {
       client,
     );
 
-    const statusesPromise = Promise.all(
-      Array.from({ length: 5 }, () => service.getStatus()),
-    );
+    const statusesPromise = Promise.all(Array.from({ length: 5 }, () => service.getStatus()));
     await Bun.sleep(10);
 
     expect(client.checkCount).toBe(1);
