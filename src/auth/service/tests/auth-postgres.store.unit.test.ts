@@ -222,7 +222,7 @@ describe("AuthPostgresStore (мок SQL-клиента)", () => {
     expect(calls[5]?.sql).toContain("SELECT");
   });
 
-  it("setApproved отсутствующего пользователя не применяется (TASK-267.13)", async () => {
+  it("setApproved отсутствующего пользователя не применяется", async () => {
     fake.onSql(() => []);
 
     expect(await store.setApproved("uuid-miss", true)).toBe(false);
@@ -233,7 +233,7 @@ describe("AuthPostgresStore (мок SQL-клиента)", () => {
     expect(select?.sql).toContain("deleted = false");
   });
 
-  it("условная запись с expectedRole включает роль в условие UPDATE (TASK-411.22)", async () => {
+  it("условная запись с expectedRole включает роль в условие UPDATE", async () => {
     fake.onSql(({ sql }) => (sql.includes("SELECT") ? [{ role: "user" }] : [{ id: 1 }]));
 
     expect(await store.updateRole("uuid-1", "admin", "user")).toBe(true);
@@ -244,7 +244,7 @@ describe("AuthPostgresStore (мок SQL-клиента)", () => {
     expect(update?.values).toEqual(["admin", "uuid-1", "user"]);
   });
 
-  it("условная запись отклоняет пользователя с разошедшейся ролью (TASK-411.22)", async () => {
+  it("условная запись отклоняет пользователя с разошедшейся ролью", async () => {
     fake.onSql(({ sql }) => (sql.includes("SELECT") ? [{ role: "admin" }] : []));
 
     expect(await store.setBanned("uuid-1", true, "user")).toBe(false);

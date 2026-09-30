@@ -230,7 +230,7 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
     expect(panelContent(publicDir)).toBe("panel-v2");
   }, 30_000);
 
-  it("отклоняет ref с ведущим дефисом до любых git-команд (TASK-411.9)", async (): Promise<void> => {
+  it("отклоняет ref с ведущим дефисом до любых git-команд", async (): Promise<void> => {
     const { service, repoDir, publicDir } = createService(panelFixture);
 
     await expect(service.deploy("--orphan")).rejects.toThrow("Недопустимый ref");
@@ -240,7 +240,7 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
     expect(existsSync(join(publicDir, PANEL_DIR_NAME))).toBe(false);
   }, 30_000);
 
-  it("отклоняет ref вне допустимого паттерна (TASK-411.9)", (): void => {
+  it("отклоняет ref вне допустимого паттерна", (): void => {
     for (const ref of ["bad ref", "main;rm", "ref|pipe", "", "main\norphan"]) {
       expect(() => assertValidPanelRef(ref)).toThrow("Недопустимый ref");
     }
@@ -249,7 +249,7 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
     expect(() => assertValidPanelRef("9c49fcba1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d")).not.toThrow();
   });
 
-  it("убитый clone оставляет сломанный repoDir — следующий деплой пересоздаёт его (TASK-411.10)", async (): Promise<void> => {
+  it("убитый clone оставляет сломанный repoDir — следующий деплой пересоздаёт его", async (): Promise<void> => {
     const { publicDir } = createService(panelFixture);
     const brokenRepoDir = makeWorkDir();
     writeFileSync(join(brokenRepoDir, "leftover.lock"), "partial clone");
@@ -265,7 +265,7 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
     expect(existsSync(join(brokenRepoDir, ".git"))).toBe(true);
   }, 30_000);
 
-  it("deploy() восстанавливает панель из crash-окна подмены (TASK-411.11)", async (): Promise<void> => {
+  it("deploy() восстанавливает панель из crash-окна подмены", async (): Promise<void> => {
     const { service, publicDir } = createService(panelFixture);
     const backupPath = join(publicDir, buildPanelBackupName("crash-window"));
     mkdirSync(backupPath, { recursive: true });
@@ -278,7 +278,7 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
     expect(backupEntries(publicDir)).toHaveLength(0);
   }, 30_000);
 
-  it("дефолтные каталоги якорятся к корню проекта независимо от cwd (TASK-411.12)", (): void => {
+  it("дефолтные каталоги якорятся к корню проекта независимо от cwd", (): void => {
     expect(DEFAULT_PANEL_REPO_DIR).toBe(join(PROJECT_ROOT, "tmp", "panel-admin"));
     expect(DEFAULT_PANEL_PUBLIC_DIR).toBe(join(PROJECT_ROOT, "public"));
 
@@ -381,7 +381,7 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
     });
   });
 
-  it("деплой отклоняет чекаут с чужим origin до fetch и checkout (TASK-411.1)", async (): Promise<void> => {
+  it("деплой отклоняет чекаут с чужим origin до fetch и checkout", async (): Promise<void> => {
     const { publicDir } = createService(panelFixture);
     await new TechnicalPanelDeployService({
       repoUrl: panelFixture,
@@ -401,7 +401,7 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
     expect(panelContent(publicDir)).toBe("panel-v2");
   }, 30_000);
 
-  describe("лок деплоя панели (TASK-411.2)", (): void => {
+  describe("лок деплоя панели", (): void => {
     it("второй параллельный deploy отклоняется локом и не трогает repoDir и панель", async (): Promise<void> => {
       const repoDir = makeWorkDir();
       const publicDir = makeWorkDir();

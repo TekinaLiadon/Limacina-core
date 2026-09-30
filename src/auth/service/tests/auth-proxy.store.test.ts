@@ -16,7 +16,7 @@ const buildProxyAuthService = (): AuthService =>
     GlobalConfig.parseEnvOrExit(),
   );
 
-describe("AuthService в прокси-режиме (TASK-12)", (): void => {
+describe("AuthService в прокси-режиме", (): void => {
   it("register отвечает 409", async (): Promise<void> => {
     const error = await buildProxyAuthService()
       .register("proxyregister", "password123")
@@ -36,7 +36,7 @@ describe("AuthService в прокси-режиме (TASK-12)", (): void => {
   });
 });
 
-describe("AuthProxyStore — мутации не имитируют успех (TASK-411.14)", (): void => {
+describe("AuthProxyStore — мутации не имитируют успех", (): void => {
   const buildStore = (): AuthProxyStore => new AuthProxyStore("http://upstream.test");
 
   const rejectionOf = async (promise: Promise<unknown>): Promise<NotImplementedException> =>

@@ -8,6 +8,7 @@ import type { FastifyReply } from "fastify";
 import { LauncherService, parseLauncherConfig } from "../launcher.service";
 
 const PLATFORM_DIR = "public/linux/x86_64";
+const VERSION_FILE = join("public", "version.json");
 const TEST_VERSION = "9.9.9";
 const CURRENT_ZIP = `Limacina-${TEST_VERSION}-linux-x86_64.zip`;
 const CURRENT_ZIP_PATH = join(PLATFORM_DIR, CURRENT_ZIP);
@@ -79,6 +80,9 @@ function setVersion(version: string): void {
 
 beforeAll(async () => {
   mkdirSync(join(PLATFORM_DIR, "old"), { recursive: true });
+  if (!existsSync(VERSION_FILE)) {
+    writeFileSync(VERSION_FILE, `${JSON.stringify({ version: "0.0.0" })}\n`);
+  }
   await launcher.onApplicationBootstrap();
 });
 
@@ -158,7 +162,7 @@ describe("LauncherService — watcher и стриминг скачивания",
     captured.raw.emit("close");
   });
 
-  it("Range bytes=start-end отдаёт 206 со срезом тела (TASK-269.28)", async () => {
+  it("Range bytes=start-end отдаёт 206 со срезом тела", async () => {
     setVersion(TEST_VERSION);
     writeFileSync(CURRENT_ZIP_PATH, "0123456789");
     const captured = captureReply();
@@ -174,7 +178,7 @@ describe("LauncherService — watcher и стриминг скачивания",
     captured.raw.emit("close");
   });
 
-  it("Range суффиксом bytes=-N отдаёт последние N байт (TASK-269.28)", async () => {
+  it("Range суффиксом bytes=-N отдаёт последние N байт", async () => {
     setVersion(TEST_VERSION);
     writeFileSync(CURRENT_ZIP_PATH, "0123456789");
     const captured = captureReply();
@@ -188,7 +192,7 @@ describe("LauncherService — watcher и стриминг скачивания",
     captured.raw.emit("close");
   });
 
-  it("неудовлетворимый Range отвечает 416 с bytes */size (TASK-269.28)", async () => {
+  it("неудовлетворимый Range отвечает 416 с bytes */size", async () => {
     setVersion(TEST_VERSION);
     writeFileSync(CURRENT_ZIP_PATH, "zip-body");
     const captured = captureReply();
@@ -201,7 +205,7 @@ describe("LauncherService — watcher и стриминг скачивания",
     expect(captured.streams).toHaveLength(0);
   });
 
-  it("мусорный Range игнорируется — файл отдаётся целиком со 200 (TASK-269.28)", async () => {
+  it("мусорный Range игнорируется — файл отдаётся целиком со 200", async () => {
     setVersion(TEST_VERSION);
     writeFileSync(CURRENT_ZIP_PATH, "zip-body");
     const captured = captureReply();
@@ -260,9 +264,7 @@ describe("LauncherService — watcher и стриминг скачивания",
   });
 });
 
-describe("LauncherService — перечитывание version.json (TASK-269.28)", () => {
-  const VERSION_FILE = join("public", "version.json");
-
+describe("LauncherService — перечитывание version.json", () => {
   function reread(service: LauncherService): void {
     (service as unknown as { rereadVersion(): void }).rereadVersion();
   }
@@ -360,7 +362,7 @@ describe("LauncherService — наблюдаемые каталоги", () => {
   });
 });
 
-describe("parseLauncherConfig — форма config.toml (TASK-269.19)", (): void => {
+describe("parseLauncherConfig — форма config.toml", (): void => {
   const validToml = `projectName = "Cordelia"
 mcVersion = "1.21.1"
 modLoader = "neoforge"

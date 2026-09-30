@@ -28,7 +28,7 @@ const recordReply = (): { reply: FastifyReply; state: ReplyState } => {
 
 const bodyMessage = (state: ReplyState): string => (state.body as { message: string }).message;
 
-describe("sendTooManyRequests (TASK-411.19)", () => {
+describe("sendTooManyRequests", () => {
   it("ставит Retry-After (ceil) и 429 с русским сообщением", async () => {
     const { reply, state } = recordReply();
     await sendTooManyRequests(reply, "Слишком много попыток входа", 2500);

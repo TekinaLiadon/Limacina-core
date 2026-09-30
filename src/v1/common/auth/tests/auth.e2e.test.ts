@@ -234,7 +234,7 @@ describe("V1 common/auth эндпоинты", (): void => {
         .expect(401);
     });
 
-    it("возвращает 400 при username длиннее 64 символов (TASK-11)", async () => {
+    it("возвращает 400 при username длиннее 64 символов", async () => {
       await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
         .send({ username: "a".repeat(65), password: "pass123" })
@@ -255,7 +255,7 @@ describe("V1 common/auth эндпоинты", (): void => {
       }
     });
 
-    it("не раскрывает отсутствие пользователя: сообщение как при неверном пароле (TASK-10)", async () => {
+    it("не раскрывает отсутствие пользователя: сообщение как при неверном пароле", async () => {
       const wrongPassword = await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
         .send({ username: "v1user", password: "wrongpass" })
@@ -270,7 +270,7 @@ describe("V1 common/auth эндпоинты", (): void => {
       expect(ghost.body.message).toBe(wrongPassword.body.message);
     });
 
-    it("не раскрывает бан: сообщение как при неверном пароле (TASK-10)", async () => {
+    it("не раскрывает бан: сообщение как при неверном пароле", async () => {
       const user = await seedUser(authStore, "bannedlogin", "banned-login-uuid", "pass123");
       try {
         await authStore.saveUser({ ...user, banned: true });
@@ -286,7 +286,7 @@ describe("V1 common/auth эндпоинты", (): void => {
       }
     });
 
-    it("не раскрывает неодобрение: сообщение как при неверном пароле (TASK-10)", async () => {
+    it("не раскрывает неодобрение: сообщение как при неверном пароле", async () => {
       const user = await seedUser(authStore, "unapprovedlogin", "unapproved-login-uuid", "pass123");
       try {
         await authStore.saveUser({ ...user, approved: false });
@@ -372,7 +372,7 @@ describe("V1 common/auth эндпоинты", (): void => {
         .expect(401);
     });
 
-    it("параллельный refresh одного токена: ровно один 201 (TASK-9)", async () => {
+    it("параллельный refresh одного токена: ровно один 201", async () => {
       const loginRes = await supertest(app.getHttpServer())
         .post("/v1/common/auth/login")
         .send({ username: "refresheracer", password: "pass123" })

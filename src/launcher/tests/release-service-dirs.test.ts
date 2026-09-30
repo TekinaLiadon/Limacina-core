@@ -120,7 +120,7 @@ describe("release-service-dirs — восстановление после crash
     }
   });
 
-  it("recover под локом версии восстанавливает только свои бэкапы (TASK-411.8)", (): void => {
+  it("recover под локом версии восстанавливает только свои бэкапы", (): void => {
     const ownBackup = buildReleaseBackupName("5.1.0", randomUUID());
     const foreignBackup = buildReleaseBackupName("5.1.1", randomUUID());
     mkdirSync(join(TEST_ROOT, ownBackup), { recursive: true });

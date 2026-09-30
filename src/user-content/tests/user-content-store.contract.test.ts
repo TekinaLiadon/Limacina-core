@@ -173,7 +173,7 @@ contractDescribeEach("контракт IUserContentStore", (driver) => {
     expect(foreignSkin.id).toBeGreaterThan(0);
   });
 
-  it("updateActiveSkin с чужим id отвечает false и не меняет состояние (TASK-411.21)", async () => {
+  it("updateActiveSkin с чужим id отвечает false и не меняет состояние", async () => {
     const first = await ctx.makeUser();
     const second = await ctx.makeUser();
     const ownSkin = await ctx.store.save(first.uuid, "skins/own.png", "skin");
@@ -188,7 +188,7 @@ contractDescribeEach("контракт IUserContentStore", (driver) => {
     expect((await ctx.store.findById(foreignSkin.id, "skin"))?.active).toBe(true);
   });
 
-  it("updateActiveSkin с несуществующим id отвечает false и не меняет состояние (TASK-411.21)", async () => {
+  it("updateActiveSkin с несуществующим id отвечает false и не меняет состояние", async () => {
     const first = await ctx.makeUser();
     const ownSkin = await ctx.store.save(first.uuid, "skins/own.png", "skin");
 

@@ -24,7 +24,7 @@ const seedUser = async (store: AuthMapStore, username: string): Promise<string> 
   return uuid;
 };
 
-describe("AuthMapStore — TTL refresh-токенов (TASK-17)", (): void => {
+describe("AuthMapStore — TTL refresh-токенов", (): void => {
   it("истёкший refresh-токен не возвращается и удаляется лениво", async (): Promise<void> => {
     const store = new AuthMapStore();
     const uuid = await seedUser(store, "ttluser");
@@ -67,7 +67,7 @@ describe("AuthMapStore — TTL refresh-токенов (TASK-17)", (): void => {
   });
 });
 
-describe("AuthMapStore — лимит refresh-токенов на пользователя (TASK-17)", (): void => {
+describe("AuthMapStore — лимит refresh-токенов на пользователя", (): void => {
   it("превышение лимита вытесняет самый старый токен пользователя", async (): Promise<void> => {
     const store = new AuthMapStore();
     const uuid = await seedUser(store, "evictuser");
@@ -107,7 +107,7 @@ describe("AuthMapStore — лимит refresh-токенов на пользов
   });
 });
 
-describe("AuthMapStore — setApproved/setBanned (TASK-38)", (): void => {
+describe("AuthMapStore — setApproved/setBanned", (): void => {
   it("setApproved переключает одобрение в обе стороны", async (): Promise<void> => {
     const store = new AuthMapStore();
     const uuid = await seedUser(store, "approveci");

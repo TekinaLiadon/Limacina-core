@@ -8,7 +8,7 @@ import { AuthMapStore } from "../../auth/service/auth_store";
 import { AdminMapStore } from "../../admin/admin_store";
 import { YggdrasilMapStore } from "../../yggdrasil/service/yggdrasil_store";
 
-describe("map-режим: общий MemoryDb связывает доменные сторы (TASK-269.20)", (): void => {
+describe("map-режим: общий MemoryDb связывает доменные сторы", (): void => {
   const USERNAME = "mapjourney";
   const UUID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 

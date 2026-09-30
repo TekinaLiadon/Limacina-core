@@ -179,7 +179,7 @@ contractDescribeEach("контракт IAdminStore", (driver) => {
     expect(found?.role).toBe("admin");
   });
 
-  it("setApproved/setBanned/setRole возвращают признак применения (TASK-267.13)", async () => {
+  it("setApproved/setBanned/setRole возвращают признак применения", async () => {
     const user = await ctx.makeUser();
 
     expect(await ctx.store.setApproved(user.username, user.approved)).toBe(true);
@@ -192,7 +192,7 @@ contractDescribeEach("контракт IAdminStore", (driver) => {
     expect(await ctx.store.setRole(missing, "admin")).toBe(false);
   });
 
-  it("условная запись с expectedRole отклоняет изменившуюся роль (TASK-411.22)", async () => {
+  it("условная запись с expectedRole отклоняет изменившуюся роль", async () => {
     const user = await ctx.makeUser();
 
     expect(await ctx.store.setApproved(user.username, false, "moderator")).toBe(false);

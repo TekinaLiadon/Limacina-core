@@ -138,7 +138,7 @@ describe("RconService — статус", () => {
     expect(client.checkCount).toBe(1);
   });
 
-  it("бёрст параллельных запросов поднимает одну RCON-проверку (TASK-411.23)", async () => {
+  it("бёрст параллельных запросов поднимает одну RCON-проверку", async () => {
     const client = new FakeRconClient();
     let releaseCheck!: () => void;
     const checkGate = new Promise<void>((resolve) => {

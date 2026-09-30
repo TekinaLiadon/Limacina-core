@@ -73,28 +73,28 @@ describe("mariadbDialect", () => {
     expect(adapted.values).toEqual(["uuid-1"]);
   });
 
-  it("не переписывает $n внутри доллар-квотированных литералов (TASK-269.22)", () => {
+  it("не переписывает $n внутри доллар-квотированных литералов", () => {
     const adapted = mariadbDialect.toClientQuery("note = $$цена $2$$ AND uuid = $1", ["uuid-1"]);
 
     expect(adapted.sql).toBe("note = $$цена $2$$ AND uuid = ?");
     expect(adapted.values).toEqual(["uuid-1"]);
   });
 
-  it("не переписывает $n внутри $tag$-литералов (TASK-269.22)", () => {
+  it("не переписывает $n внутри $tag$-литералов", () => {
     const adapted = mariadbDialect.toClientQuery("note = $fn$$2$fn$ AND uuid = $1", ["uuid-1"]);
 
     expect(adapted.sql).toBe("note = $fn$$2$fn$ AND uuid = ?");
     expect(adapted.values).toEqual(["uuid-1"]);
   });
 
-  it("отклоняет отсутствующий параметр вместо подстановки NULL (TASK-269.22)", () => {
+  it("отклоняет отсутствующий параметр вместо подстановки NULL", () => {
     expect(() => mariadbDialect.toClientQuery("uuid = $1 AND approved = $2", ["uuid-1"])).toThrow(
       "$2",
     );
     expect(() => mariadbDialect.toClientQuery("uuid = $2", ["uuid-1"])).toThrow("$2");
   });
 
-  it("отклоняет значения без соответствующих плейсхолдеров (TASK-269.22)", () => {
+  it("отклоняет значения без соответствующих плейсхолдеров", () => {
     expect(() => mariadbDialect.toClientQuery("uuid = $1", ["uuid-1", "extra"])).toThrow("значени");
   });
 

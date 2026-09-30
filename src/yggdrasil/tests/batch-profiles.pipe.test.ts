@@ -4,7 +4,7 @@ import { BatchProfilesPipe, MAX_PROFILE_NAMES } from "../batch-profiles.pipe";
 const pipe = new BatchProfilesPipe();
 const transform = (value: unknown): string[] => pipe.transform(value, { type: "body" } as never);
 
-describe("BatchProfilesPipe (TASK-411.20)", () => {
+describe("BatchProfilesPipe", () => {
   it("пропускает массив имён", () => {
     expect(transform(["a", "b"])).toEqual(["a", "b"]);
   });

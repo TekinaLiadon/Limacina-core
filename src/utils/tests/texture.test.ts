@@ -74,7 +74,7 @@ describe("texture utils", () => {
   });
 });
 
-describe("textureFileIssue (TASK-269.24)", () => {
+describe("textureFileIssue", () => {
   it("возвращает null для валидного скина и плаща", () => {
     expect(textureFileIssue(buildTestPng(), "skin")).toBeNull();
     expect(textureFileIssue(buildTestPng({ width: 64, height: 32 }), "cape")).toBeNull();

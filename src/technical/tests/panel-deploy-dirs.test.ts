@@ -119,7 +119,7 @@ describe("panel-deploy-dirs — свип резервных копий пане�
   });
 });
 
-describe("panel-deploy-dirs — resolvePanelRepoDir (TASK-411.1)", (): void => {
+describe("panel-deploy-dirs — resolvePanelRepoDir", (): void => {
   it("пустое и пробельное значение PANEL_REPO_DIR даёт дефолтный каталог чекаута", (): void => {
     expect(resolvePanelRepoDir(undefined)).toBe(DEFAULT_PANEL_REPO_DIR);
     expect(resolvePanelRepoDir("")).toBe(DEFAULT_PANEL_REPO_DIR);

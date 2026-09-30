@@ -154,7 +154,7 @@ postgresDescribe("UserContentPostgresStore (postgres)", () => {
     expect((await store.findByUserUuid(user.uuid, "skin")).length).toBe(1);
   });
 
-  it("параллельные удаления дублей атомарно считают остаток ссылок (TASK-269.10)", async () => {
+  it("параллельные удаления дублей атомарно считают остаток ссылок", async () => {
     const user = await createPostgresUser({ usernamePrefix: "pgcnt" });
     const first = await store.save(user.uuid, "skins/race-dup.png", "skin");
     const second = await store.save(user.uuid, "skins/race-dup.png", "skin");
@@ -168,7 +168,7 @@ postgresDescribe("UserContentPostgresStore (postgres)", () => {
     expect(await store.countByFilePath("skins/race-dup.png", "skin")).toBe(0);
   });
 
-  it("параллельные upload и delete одного пути оставляют согласованное состояние (TASK-269.10)", async () => {
+  it("параллельные upload и delete одного пути оставляют согласованное состояние", async () => {
     const user = await createPostgresUser({ usernamePrefix: "pgcnt" });
     const existing = await store.save(user.uuid, "skins/race-upd.png", "skin");
 

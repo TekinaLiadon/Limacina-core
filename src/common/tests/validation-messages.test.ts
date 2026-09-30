@@ -75,7 +75,7 @@ describe("Сообщения валидации DTO на русском", () => 
     expect(errors).toEqual(["password: максимум 128 символов"]);
   });
 
-  it("AuthDto: длинный username (TASK-11)", () => {
+  it("AuthDto: длинный username", () => {
     const errors = validate(AuthDto, { username: "a".repeat(65), password: "secret123" });
     expect(errors).toEqual(["username: максимум 64 символов"]);
   });

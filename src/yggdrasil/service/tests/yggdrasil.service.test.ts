@@ -92,7 +92,7 @@ const makeStore = async (): Promise<{ store: YggdrasilMapStore; username: string
   return { store, username };
 };
 
-describe("YggdrasilService.refresh — атомарность замены токена (TASK-269.8)", (): void => {
+describe("YggdrasilService.refresh — атомарность замены токена", (): void => {
   it("сбой подготовки ответа не расходует токен — refresh можно повторить", async (): Promise<void> => {
     const { store, username } = await makeStore();
     const tokenStore = new YggdrasilMapTokenStore(new MemoryDb());
@@ -157,7 +157,7 @@ describe("YggdrasilService.refresh — атомарность замены то�
   });
 });
 
-describe("YggdrasilService.uploadTexture — сериализация мутаций текстур (TASK-411.15)", (): void => {
+describe("YggdrasilService.uploadTexture — сериализация мутаций текстур", (): void => {
   const TEXTURE_USERNAME = "textureuser";
   const TEXTURE_UUID = "d0000000000000000000000000000001";
   const writtenFiles: string[] = [];
@@ -278,7 +278,7 @@ const makeTimingStore = async (): Promise<{ store: YggdrasilMapStore; passwordHa
   return { store, passwordHash };
 };
 
-describe("YggdrasilService — тайминговая нейтральность (TASK-267.4)", (): void => {
+describe("YggdrasilService — тайминговая нейтральность", (): void => {
   it("authenticate несуществующего юзера выполняет dummy-verify", async (): Promise<void> => {
     const { store } = await makeTimingStore();
     const service = makeService(store, new YggdrasilMapTokenStore(new MemoryDb()));
@@ -372,7 +372,7 @@ const makeMetadataService = (baseUrl: string): YggdrasilService =>
     baseUrl,
   );
 
-describe("YggdrasilService.getMetadata — skinDomains (TASK-269.34)", (): void => {
+describe("YggdrasilService.getMetadata — skinDomains", (): void => {
   it("апекс-домен получает корректный wildcard-элемент", () => {
     const metadata = makeMetadataService("https://example.com").getMetadata();
     expect(metadata.skinDomains).toEqual(["example.com", ".example.com"]);
@@ -399,7 +399,7 @@ describe("YggdrasilService.getMetadata — skinDomains (TASK-269.34)", (): void 
   });
 });
 
-describe("YggdrasilService — валидация uuid профиля (TASK-411.20)", (): void => {
+describe("YggdrasilService — валидация uuid профиля", (): void => {
   const UUID_USERNAME = "uuiduser";
   const UUID_USER = "d0000000000000000000000000000099";
   const FOREIGN_UUID = "e0000000000000000000000000000099";

@@ -54,7 +54,7 @@ describe("SourceRconClient — авторизация", () => {
     expect(await client.checkAvailable()).toBe(false);
   });
 
-  it("протокольная неудача аутентификации (id=-1, пустое тело) — различимая ошибка (TASK-411.4)", async () => {
+  it("протокольная неудача аутентификации (id=-1, пустое тело) — различимая ошибка", async () => {
     running = await startFakeRconServer((packet, socket) => {
       if (packet.type !== RCON_AUTH) return;
       rconRespond(socket, RCON_AUTH_RESPONSE, "", -1);
@@ -119,7 +119,7 @@ describe("SourceRconClient — выполнение команд", () => {
     if (result.ok) expect(result.output).toContain("Unknown or incomplete command");
   });
 
-  it("vanilla-сервер не отвечает на маркер type 0 и рвёт соединение — вывод команды сохраняется (TASK-437)", async () => {
+  it("vanilla-сервер не отвечает на маркер type 0 и рвёт соединение — вывод команды сохраняется", async () => {
     const output = "There are 0 of a max of 20 players online";
     running = await startFakeRconServer(rconVanillaHandler(output));
     const client = new SourceRconClient(target(running.port), FAST_TIMEOUTS);

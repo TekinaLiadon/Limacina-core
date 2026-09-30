@@ -34,7 +34,7 @@ describe("technical-steps", (): void => {
       ).rejects.toThrow(InternalServerErrorException);
     });
 
-    it("отличает таймаут шага от обычного ненулевого кода выхода (TASK-269.33)", async () => {
+    it("отличает таймаут шага от обычного ненулевого кода выхода", async () => {
       const errorSpy = spyOn(logger, "error");
       try {
         await expect(
@@ -52,7 +52,7 @@ describe("technical-steps", (): void => {
       }
     });
 
-    it("дренирует вывод болтливого шага, не обрывая его (TASK-269.33)", async () => {
+    it("дренирует вывод болтливого шага, не обрывая его", async () => {
       await runStep(
         logger,
         "chatty-step",
@@ -61,7 +61,7 @@ describe("technical-steps", (): void => {
       );
     });
 
-    it("обрезает болтливый вывод в логе ошибки (TASK-269.33)", async () => {
+    it("обрезает болтливый вывод в логе ошибки", async () => {
       const errorSpy = spyOn(logger, "error");
       try {
         await expect(
@@ -121,7 +121,7 @@ describe("technical-steps", (): void => {
   describe("terminateActiveSteps", () => {
     const logger = new Logger("terminateActiveSteps");
 
-    it("прерывает активный шаг конвейера (TASK-267.8)", async () => {
+    it("прерывает активный шаг конвейера", async () => {
       const pending = runStep(logger, "sleep-step", ["sleep", "5"], 30_000);
       pending.catch(() => {});
 
@@ -141,7 +141,7 @@ describe("technical-steps", (): void => {
       await terminateActiveSteps(100);
     });
 
-    it("завершает внуков, переживших родительский шаг (TASK-267.8)", async () => {
+    it("завершает внуков, переживших родительский шаг", async () => {
       const dir = mkdtempSync(join(tmpdir(), "limacina-grandchild-"));
       const pidPath = join(dir, "grandchild.pid");
       const script =

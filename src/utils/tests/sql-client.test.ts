@@ -5,7 +5,7 @@ setupTestEnv();
 import { afterAll, describe, expect, it } from "bun:test";
 import { resetSqlClient, sqlDialect } from "../sql";
 
-describe("currentDialect — ленивый кеш диалекта (TASK-411.17)", () => {
+describe("currentDialect — ленивый кеш диалекта", () => {
   const originalDatabaseUrl = process.env["DATABASE_URL"];
   const originalSecrets = process.env["SECRETS"];
 

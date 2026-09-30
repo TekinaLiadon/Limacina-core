@@ -9,7 +9,7 @@ import { createUncaughtExceptionHandler } from "../process-error-handlers";
 const fakeLogger = (log: unknown[]): Logger =>
   ({ error: (data: unknown, message?: string) => log.push(message ?? data) }) as unknown as Logger;
 
-describe("createUncaughtExceptionHandler (TASK-73)", (): void => {
+describe("createUncaughtExceptionHandler", (): void => {
   it("логирует исключение и завершает процесс с кодом 1", async (): Promise<void> => {
     const logged: unknown[] = [];
     const exitCodes: number[] = [];

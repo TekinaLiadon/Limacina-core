@@ -15,7 +15,7 @@ const ACTOR = {
   role: "owner",
 };
 
-describe("AdminService: атомарность мутаций (TASK-15)", (): void => {
+describe("AdminService: атомарность мутаций", (): void => {
   const seed = async (): Promise<{
     adminStore: AdminMapStore;
     authStore: AuthMapStore;
@@ -51,7 +51,7 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     expect((await authStore.findByUsername("rollbacktarget"))?.role).toBe("admin");
   });
 
-  it("setApproved синхронизирует статус одобрения в обоих сторах (TASK-38)", async (): Promise<void> => {
+  it("setApproved синхронизирует статус одобрения в обоих сторах", async (): Promise<void> => {
     const { adminStore, authStore, service } = await seed();
 
     await service.setApproved("rollbacktarget", false, ACTOR);
@@ -65,7 +65,7 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     expect((await authStore.findByUsername("rollbacktarget"))?.approved).toBe(true);
   });
 
-  it("setBanned синхронизирует статус бана в обоих сторах (TASK-38)", async (): Promise<void> => {
+  it("setBanned синхронизирует статус бана в обоих сторах", async (): Promise<void> => {
     const { adminStore, authStore, service } = await seed();
 
     await service.setBanned("rollbacktarget", true, ACTOR);
@@ -79,7 +79,7 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     expect((await authStore.findByUsername("rollbacktarget"))?.banned).toBe(false);
   });
 
-  it("setApproved откатывает admin-стор при сбое auth-стора (TASK-38)", async (): Promise<void> => {
+  it("setApproved откатывает admin-стор при сбое auth-стора", async (): Promise<void> => {
     const { adminStore, authStore, service } = await seed();
     const setApproved = spyOn(authStore, "setApproved").mockRejectedValue(
       new Error("auth store down"),
@@ -93,7 +93,7 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     setApproved.mockRestore();
   });
 
-  it("setBanned откатывает admin-стор при сбое auth-стора (TASK-38)", async (): Promise<void> => {
+  it("setBanned откатывает admin-стор при сбое auth-стора", async (): Promise<void> => {
     const { adminStore, authStore, service } = await seed();
     const setBanned = spyOn(authStore, "setBanned").mockRejectedValue(new Error("auth store down"));
 
@@ -119,7 +119,7 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     updateRole.mockRestore();
   });
 
-  it("откат неудачной мутации не затирает конкурирующую мутацию другого админа (TASK-267.13)", async (): Promise<void> => {
+  it("откат неудачной мутации не затирает конкурирующую мутацию другого админа", async (): Promise<void> => {
     const { adminStore, authStore, service } = await seed();
     const originalUpdateRole = authStore.updateRole.bind(authStore);
     const updateRole = spyOn(authStore, "updateRole").mockImplementationOnce(async () => {
@@ -137,7 +137,7 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     updateRole.mockRestore();
   });
 
-  it("мутация не проходит молча при конкурентном удалении пользователя (TASK-267.13)", async (): Promise<void> => {
+  it("мутация не проходит молча при конкурентном удалении пользователя", async (): Promise<void> => {
     const { adminStore, service } = await seed();
     const errorSpy = spyOn(
       (service as unknown as { logger: { error: (...args: unknown[]) => void } }).logger,
@@ -157,7 +157,7 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     errorSpy.mockRestore();
   });
 
-  it("повторная мутация тем же значением остаётся успешной (TASK-267.13)", async (): Promise<void> => {
+  it("повторная мутация тем же значением остаётся успешной", async (): Promise<void> => {
     const { adminStore, service } = await seed();
 
     await service.setApproved("rollbacktarget", true, ACTOR);
@@ -165,7 +165,7 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     expect((await adminStore.findByUsername("rollbacktarget"))?.approved).toBe(true);
   });
 
-  it("гонка с повышением роли цели отменяет мутацию статуса (TASK-411.22)", async (): Promise<void> => {
+  it("гонка с повышением роли цели отменяет мутацию статуса", async (): Promise<void> => {
     const { adminStore, authStore, service } = await seed();
     const originalSetApproved = adminStore.setApproved.bind(adminStore);
     const setApproved = spyOn(adminStore, "setApproved").mockImplementationOnce(
@@ -187,7 +187,7 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     setApproved.mockRestore();
   });
 
-  it("гонка с повышением роли цели отменяет удаление (TASK-411.22)", async (): Promise<void> => {
+  it("гонка с повышением роли цели отменяет удаление", async (): Promise<void> => {
     const { adminStore, service } = await seed();
     const originalDeleteUser = adminStore.deleteUser.bind(adminStore);
     const deleteUser = spyOn(adminStore, "deleteUser").mockImplementationOnce(
@@ -203,7 +203,7 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     deleteUser.mockRestore();
   });
 
-  it("мутация проходит, когда роль цели совпадает со снимком (TASK-411.22)", async (): Promise<void> => {
+  it("мутация проходит, когда роль цели совпадает со снимком", async (): Promise<void> => {
     const { adminStore, authStore, service } = await seed();
 
     await service.setBanned("rollbacktarget", true, ACTOR);
@@ -239,7 +239,7 @@ describe("AdminService: атомарность мутаций (TASK-15)", (): vo
     expect(await authStore.findRefresh("rollback-jti")).toBeUndefined();
   });
 
-  it("setUserPassword отклоняет короткий пароль (TASK-265)", async (): Promise<void> => {
+  it("setUserPassword отклоняет короткий пароль", async (): Promise<void> => {
     const { authStore, service } = await seed();
 
     await expect(service.setUserPassword("rollbacktarget", "12345", ACTOR)).rejects.toThrow(

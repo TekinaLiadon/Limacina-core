@@ -7,7 +7,7 @@ import { BadRequestException } from "@nestjs/common";
 import { validationMessages } from "../../common/validation-messages";
 import { MIN_PASSWORD_LENGTH, validatePasswordPolicy } from "../password-policy";
 
-describe("validatePasswordPolicy (TASK-265)", (): void => {
+describe("validatePasswordPolicy", (): void => {
   it("принимает пароль минимальной длины и длиннее", (): void => {
     expect(() => validatePasswordPolicy("a".repeat(MIN_PASSWORD_LENGTH))).not.toThrow();
     expect(() => validatePasswordPolicy("secure-password-123")).not.toThrow();

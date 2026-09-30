@@ -14,7 +14,7 @@ function validate<T extends object>(dtoClass: new () => T, query: object): strin
   );
 }
 
-describe("OffsetLimitQueryDto — общий базовый DTO пагинации (TASK-269.27)", (): void => {
+describe("OffsetLimitQueryDto — общий базовый DTO пагинации", (): void => {
   it("UsersSearchQueryDto держит границу limit 100 и опциональность offset/limit", (): void => {
     expect(validate(UsersSearchQueryDto, {})).toEqual([]);
     expect(validate(UsersSearchQueryDto, { limit: "50", offset: "10" })).toEqual([]);

@@ -128,7 +128,7 @@ contractDescribeEach("контракт IAuthStore", (driver) => {
     expect((await ctx.store.findByUsername(user.username))?.approved).toBe(true);
   });
 
-  it("setApproved/setBanned/updateRole возвращают признак применения (TASK-267.13)", async () => {
+  it("setApproved/setBanned/updateRole возвращают признак применения", async () => {
     const user = await ctx.makeUser();
 
     expect(await ctx.store.setApproved(user.uuid, true)).toBe(true);
@@ -146,7 +146,7 @@ contractDescribeEach("контракт IAuthStore", (driver) => {
     expect(await ctx.store.updateRole(user.uuid, "admin")).toBe(false);
   });
 
-  it("условная запись с expectedRole отклоняет изменившуюся роль (TASK-411.22)", async () => {
+  it("условная запись с expectedRole отклоняет изменившуюся роль", async () => {
     const user = await ctx.makeUser();
 
     expect(await ctx.store.setApproved(user.uuid, false, "moderator")).toBe(false);
@@ -200,7 +200,7 @@ contractDescribeEach("контракт IAuthStore", (driver) => {
     expect(await ctx.store.findRefresh(jti)).toBeUndefined();
   });
 
-  it("replacePassword с keepRefreshJti сохраняет указанный токен и отзывает остальные (TASK-411.13)", async () => {
+  it("replacePassword с keepRefreshJti сохраняет указанный токен и отзывает остальные", async () => {
     const user = await ctx.makeUser();
     const keptJti = generateUuid();
     const revokedJti = generateUuid();

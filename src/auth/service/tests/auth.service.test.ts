@@ -58,7 +58,7 @@ class FlakyAuthStore extends AuthMapStore {
   }
 }
 
-describe("AuthService — атомарность регистрации (TASK-217.7)", () => {
+describe("AuthService — атомарность регистрации", () => {
   let service: AuthService;
   let failingStore: IAuthStore;
 
@@ -96,7 +96,7 @@ describe("AuthService — атомарность регистрации (TASK-21
   });
 });
 
-describe("AuthService — MASTER_PASSWORD (TASK-217.20)", () => {
+describe("AuthService — MASTER_PASSWORD", () => {
   let service: AuthService;
 
   beforeAll(async () => {
@@ -172,7 +172,7 @@ describe("AuthService — MASTER_PASSWORD (TASK-217.20)", () => {
   });
 });
 
-describe("AuthService — политика паролей (TASK-265)", () => {
+describe("AuthService — политика паролей", () => {
   let service: AuthService;
   let store: IAuthStore;
 
@@ -221,7 +221,7 @@ describe("AuthService — политика паролей (TASK-265)", () => {
   });
 });
 
-describe("AuthService — восстановление сессии при сбоях (TASK-411.13)", () => {
+describe("AuthService — восстановление сессии при сбоях", () => {
   let service: AuthService;
   let store: FlakyAuthStore;
 

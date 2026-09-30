@@ -110,7 +110,7 @@ describe("LogsService — фильтрация логов запросов", ():
     errorSpy.mockRestore();
   });
 
-  it("логирует ошибку чтения на error один раз за запрос, кроме ENOENT (TASK-217.9, TASK-411.22)", async () => {
+  it("логирует ошибку чтения на error один раз за запрос, кроме ENOENT", async () => {
     const service = new LogsService();
     const errorSpy = spyOn(serviceLogger(service), "error");
     chmodSync(TEST_LOG_FILE, 0o000);
@@ -125,7 +125,7 @@ describe("LogsService — фильтрация логов запросов", ():
     errorSpy.mockRestore();
   });
 
-  it("total и страница собираются одним проходом файла (TASK-411.22)", async () => {
+  it("total и страница собираются одним проходом файла", async () => {
     const service = new LogsService();
     let openCount = 0;
     const realCreateReadStream = nodeFs.createReadStream.bind(nodeFs);
@@ -174,7 +174,7 @@ describe("LogsService — фильтрация логов запросов", ():
     expect(lines).toEqual([registrationLine]);
   });
 
-  it("не включает посторонние *.log в список дат, список согласован с getLines (TASK-269.32)", async () => {
+  it("не включает посторонние *.log в список дат, список согласован с getLines", async () => {
     const service = new LogsService();
     const dates = service.listAvailableDates();
 

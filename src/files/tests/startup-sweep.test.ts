@@ -70,7 +70,7 @@ describe("StartupSweepService — свип служебных файлов пр�
     expect(existsSync(join(RELEASES_ROOT, `junk-${suffix}.old-x`))).toBe(false);
   });
 
-  it("восстанавливает zip лаунчера из replaced-бэкапа после crash-окна обновления (TASK-411.3)", (): void => {
+  it("восстанавливает zip лаунчера из replaced-бэкапа после crash-окна обновления", (): void => {
     writeFileSync(join(PLATFORM_DIR, ".Limacina-9.9.9-linux-x86_64.zip.replaced"), "crash-backup");
 
     service.onApplicationBootstrap();
@@ -101,7 +101,7 @@ describe("StartupSweepService — свип служебных файлов пр�
     expect(existsSync(join(PLATFORM_DIR, ".junk-sweep.replaced"))).toBe(false);
   });
 
-  it("восстанавливает каталог релиза из бэкапа после crash-окна swapReleaseDir (TASK-267.10)", (): void => {
+  it("восстанавливает каталог релиза из бэкапа после crash-окна swapReleaseDir", (): void => {
     const backupName = `.old-9.9.9-${randomUUID()}`;
     mkdirSync(join(RELEASES_ROOT, backupName), { recursive: true });
     writeFileSync(join(RELEASES_ROOT, backupName, "Limacina-9.9.9-windows-x86_64.exe"), "payload");

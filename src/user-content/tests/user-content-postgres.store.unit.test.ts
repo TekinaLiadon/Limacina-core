@@ -173,7 +173,7 @@ describe("UserContentPostgresStore (мок SQL-клиента)", () => {
     expect(activate?.values).toEqual([true, 42, "uuid-1"]);
   });
 
-  it("updateActiveSkin чужого или несуществующего скина — false без записи (TASK-411.21)", async () => {
+  it("updateActiveSkin чужого или несуществующего скина — false без записи", async () => {
     fake.onSql(() => []);
     const before = fake.sqlCalls.length;
 

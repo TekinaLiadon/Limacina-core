@@ -139,7 +139,7 @@ describe("V1 launcher эндпоинты", (): void => {
       expect(Array.isArray(res.body.platforms)).toBe(true);
     });
 
-    it("использует 0.0.0, если version.json не соответствует форме (TASK-69)", async () => {
+    it("использует 0.0.0, если version.json не соответствует форме", async () => {
       await sleep(MUTATION_SETTLE_MS);
       writeFileSync(VERSION_FILE, JSON.stringify({ version: 123 }));
 
@@ -248,7 +248,7 @@ describe("V1 launcher эндпоинты", (): void => {
       }
     });
 
-    it("возвращает 404 при битом config.toml, а не 500 (TASK-68)", async () => {
+    it("возвращает 404 при битом config.toml, а не 500", async () => {
       const backupContent = existsSync(CONFIG_FILE) ? readFileSync(CONFIG_FILE, "utf-8") : "";
       await sleep(MUTATION_SETTLE_MS);
 

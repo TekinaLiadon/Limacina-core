@@ -217,7 +217,7 @@ contractDescribeEach("контракт IYggdrasilStore", (driver) => {
     ).toBe(0);
   });
 
-  it("countProfilesByTextureUrl не считает профили удалённых пользователей (TASK-411.20)", async () => {
+  it("countProfilesByTextureUrl не считает профили удалённых пользователей", async () => {
     const [first, second] = await ctx.makeUsers([{}, {}]);
     await saveProfile(ctx.store, first!);
     await saveProfile(ctx.store, second!);
@@ -232,7 +232,7 @@ contractDescribeEach("контракт IYggdrasilStore", (driver) => {
     expect(await ctx.store.countProfilesByTextureUrl(sharedUrl)).toBe(1);
   });
 
-  it("saveProfile повторным вызовом обновляет текстуры профиля (upsert) (TASK-411.20)", async () => {
+  it("saveProfile повторным вызовом обновляет текстуры профиля (upsert)", async () => {
     const [user] = await ctx.makeUsers([{}]);
     await saveProfile(ctx.store, user!);
     await ctx.store.saveProfile({
