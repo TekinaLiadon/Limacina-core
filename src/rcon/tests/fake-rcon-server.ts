@@ -79,7 +79,61 @@ export function rconVanillaHandler(output: string): RconHandler {
   };
 }
 
-export function startFakeRconServer(handler: RconHandler): Promise<FakeRconServer> {
+export function rconCloseAfterResponseHandler(output: string): RconHandler {
+  return (packet, socket) => {
+    if (packet.type === RCON_AUTH) {
+      rconRespond(socket, RCON_AUTH_RESPONSE, "", packet.id);
+      return;
+    }
+    if (packet.type === RCON_EXECCOMMAND && packet.id === 1) {
+      rconRespond(socket, RCON_RESPONSE_VALUE, output, packet.id);
+      socket.end();
+    }
+  };
+}
+
+export function rconCloseBeforeResponseHandler(): RconHandler {
+  return (packet, socket) => {
+    if (packet.type === RCON_AUTH) {
+      rconRespond(socket, RCON_AUTH_RESPONSE, "", packet.id);
+      socket.end();
+    }
+  };
+}
+
+export function rconIgnoreMarkerHandler(output: string): RconHandler {
+  return (packet, socket) => {
+    if (packet.type === RCON_AUTH) {
+      rconRespond(socket, RCON_AUTH_RESPONSE, "", packet.id);
+      return;
+    }
+    if (packet.type === RCON_EXECCOMMAND && packet.id === 1) {
+      rconRespond(socket, RCON_RESPONSE_VALUE, output, packet.id);
+    }
+  };
+}
+
+export function rconTrailingAuthValueHandler(output: string): RconHandler {
+  return (packet, socket) => {
+    if (packet.type === RCON_AUTH) {
+      rconRespond(socket, RCON_AUTH_RESPONSE, "", packet.id);
+      rconRespond(socket, RCON_RESPONSE_VALUE, "", packet.id);
+      return;
+    }
+    if (packet.type === RCON_EXECCOMMAND) {
+      rconRespond(socket, RCON_RESPONSE_VALUE, packet.id === 1 ? output : "unknown", packet.id);
+    }
+  };
+}
+
+export interface FakeRconServerOptions {
+  onCoalescedChunk?: () => void;
+}
+
+export function startFakeRconServer(
+  handler: RconHandler,
+  options: FakeRconServerOptions = {},
+): Promise<FakeRconServer> {
   let connections = 0;
   const sockets = new Set<Socket>();
   const server = createServer((socket) => {
@@ -99,7 +153,10 @@ export function startFakeRconServer(handler: RconHandler): Promise<FakeRconServe
         const consumed = packetWireLength(merged);
         if (consumed === undefined) return;
         const rest = merged.subarray(consumed);
-        if (rest.length > 0) chunks.push(rest);
+        if (rest.length > 0) {
+          chunks.push(rest);
+          options.onCoalescedChunk?.();
+        }
 
         handler(packet, socket);
       }

@@ -92,23 +92,16 @@ export class AuthService {
       throw new UnauthorizedException("Неверный текущий пароль");
     }
 
+    const passwordHash = await Bun.password.hash(newPassword);
+    const changedAt = new Date();
     const { tokens, refreshJti } = await this.createTokens(user.uuid, user.username, user.role);
     try {
-      await this.replacePassword(user.uuid, newPassword, refreshJti);
+      await this.authStore.replacePassword(user.uuid, passwordHash, changedAt, refreshJti);
     } catch (error) {
       await this.deleteRefreshQuietly(refreshJti);
       throw error;
     }
     return { tokens, uuid: user.uuid, username: user.username, role: user.role };
-  }
-
-  private async replacePassword(
-    uuid: string,
-    newPassword: string,
-    keepRefreshJti: string,
-  ): Promise<void> {
-    const passwordHash = await Bun.password.hash(newPassword);
-    await this.authStore.replacePassword(uuid, passwordHash, new Date(), keepRefreshJti);
   }
 
   private async restoreRefreshToken(jti: string, entry: RefreshEntry): Promise<void> {

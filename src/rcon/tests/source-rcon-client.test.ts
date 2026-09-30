@@ -15,8 +15,12 @@ import {
 } from "../source-rcon-client";
 import {
   rconAuthHandler,
+  rconCloseAfterResponseHandler,
+  rconCloseBeforeResponseHandler,
   rconExecHandler,
+  rconIgnoreMarkerHandler,
   rconRespond,
+  rconTrailingAuthValueHandler,
   rconVanillaHandler,
   startFakeRconServer,
   type FakeRconServer,
@@ -24,7 +28,7 @@ import {
 
 const PASSWORD = "test-password";
 const WRONG_PASSWORD = "wrong-password";
-const FAST_TIMEOUTS = { connectTimeoutMs: 250, readTimeoutMs: 250 };
+const FAST_TIMEOUTS = { connectTimeoutMs: 250, readTimeoutMs: 250, idleTimeoutMs: 250 };
 
 function target(port: number, password = PASSWORD): RconTarget {
   return { host: "127.0.0.1", port, password };
@@ -131,6 +135,52 @@ describe("SourceRconClient — выполнение команд", () => {
     if (result.ok) expect(result.output).toBe(output);
   });
 
+  it("клиент шлёт один пакет на команду — склейка сегментов не случается", async () => {
+    let coalesced = 0;
+    running = await startFakeRconServer(rconVanillaHandler("Segmented output"), {
+      onCoalescedChunk: () => void coalesced++,
+    });
+    const client = new SourceRconClient(target(running.port), FAST_TIMEOUTS);
+
+    const result = await client.executeCommand("list");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.output).toBe("Segmented output");
+    expect(coalesced).toBe(0);
+  });
+
+  it("сервер отвечает на команду и закрывает соединение без ответа на маркер — вывод сохраняется", async () => {
+    running = await startFakeRconServer(rconCloseAfterResponseHandler("There are 0 players"));
+    const client = new SourceRconClient(target(running.port), FAST_TIMEOUTS);
+
+    const result = await client.executeCommand("list");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.output).toBe("There are 0 players");
+  });
+
+  it("сервер молчит после ответа на команду — вывод по idle-таймауту", async () => {
+    running = await startFakeRconServer(rconIgnoreMarkerHandler("Idle gap output"));
+    const client = new SourceRconClient(target(running.port), FAST_TIMEOUTS);
+
+    const started = Date.now();
+    const result = await client.executeCommand("list");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.output).toBe("Idle gap output");
+    expect(Date.now() - started).toBeLessThan(3_000);
+  });
+
+  it("ответ RESPONSE_VALUE после успешной авторизации не попадает в вывод", async () => {
+    running = await startFakeRconServer(rconTrailingAuthValueHandler("Trailing output"));
+    const client = new SourceRconClient(target(running.port), FAST_TIMEOUTS);
+
+    const result = await client.executeCommand("list");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.output).toBe("Trailing output");
+  });
+
   it("собирает мультипакетный вывод", async () => {
     const part1 = "a".repeat(1200);
     const part2 = "b".repeat(500);
@@ -166,17 +216,8 @@ describe("SourceRconClient — выполнение команд", () => {
     if (!result.ok) expect(result.error).toBe("Неверный пароль RCON");
   });
 
-  it("сервер закрыл соединение посреди вывода", async () => {
-    running = await startFakeRconServer((packet, socket) => {
-      if (packet.type === RCON_AUTH) {
-        rconRespond(socket, RCON_AUTH_RESPONSE, "", packet.id);
-        return;
-      }
-      if (packet.type === RCON_EXECCOMMAND) {
-        rconRespond(socket, RCON_RESPONSE_VALUE, "partial", packet.id);
-        socket.destroy();
-      }
-    });
+  it("сервер закрыл соединение до ответа на команду — сбой с различимой ошибкой", async () => {
+    running = await startFakeRconServer(rconCloseBeforeResponseHandler());
     const client = new SourceRconClient(target(running.port), FAST_TIMEOUTS);
 
     const result = await client.executeCommand("say hi");
