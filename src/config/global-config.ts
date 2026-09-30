@@ -3,6 +3,8 @@ import { ZodEnvConfig } from "./zod-env";
 
 const CORS_ORIGINS_MAX = 100;
 
+export const DEFAULT_RCON_PORT = 25575;
+
 const corsOriginsSchema = z
   .string()
   .transform((raw) => {
@@ -45,7 +47,7 @@ const configSchema = z
     CACHE_PREFIX: z.string().optional(),
     MINECRAFT_HOST: z.string().optional(),
     RCON_HOST: z.string().optional(),
-    RCON_PORT: z.coerce.number().int().min(1).max(65535).default(25575),
+    RCON_PORT: z.coerce.number().int().min(1).max(65535).default(DEFAULT_RCON_PORT),
     RCON_PASSWORD: z.string().optional(),
     DEPLOY_PINNED_REVISION: z
       .string()

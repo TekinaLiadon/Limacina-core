@@ -132,7 +132,7 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
     expect(await store.findRefresh(jti)).toBeUndefined();
   });
 
-  it("claimRefresh атомарно забирает запись: повторный вызов пуст (TASK-9)", async () => {
+  it("claimRefresh атомарно забирает запись: повторный вызов пуст", async () => {
     const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
     const jti = generateUuid();
     await store.saveRefresh(jti, { userId: saved.uuid, username: saved.username }, futureExpiry());
@@ -159,7 +159,7 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
     expect(await store.findRefresh(generateUuid())).toBeUndefined();
   });
 
-  it("истёкший refresh-токен не возвращается и не забирается (TASK-17)", async () => {
+  it("истёкший refresh-токен не возвращается и не забирается", async () => {
     const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
     const jti = generateUuid();
     await store.saveRefresh(jti, { userId: saved.uuid, username: saved.username }, pastExpiry());
@@ -168,7 +168,7 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
     expect(await store.claimRefresh(jti)).toBeUndefined();
   });
 
-  it("saveRefresh чистит просроченные записи всех пользователей (TASK-17)", async () => {
+  it("saveRefresh чистит просроченные записи всех пользователей", async () => {
     const expiredOwner = await createPostgresUser({ usernamePrefix: "pgauth" });
     const saver = await createPostgresUser({ usernamePrefix: "pgauth" });
     const expiredJti = generateUuid();
@@ -191,7 +191,7 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
     expect(Number(rows[0]?.count)).toBe(0);
   });
 
-  it("saveRefresh вытесняет самые старые токены сверх лимита (TASK-17)", async () => {
+  it("saveRefresh вытесняет самые старые токены сверх лимита", async () => {
     const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
     const jtis = Array.from({ length: MAX_REFRESH_TOKENS_PER_USER + 1 }, () => generateUuid());
     for (const [index, jti] of jtis.entries()) {
@@ -267,7 +267,7 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
     expect(live?.approved).toBe(true);
   });
 
-  it("deleteUser помечает пользователя удалённым, не трогая строку (TASK-15)", async () => {
+  it("deleteUser помечает пользователя удалённым, не трогая строку", async () => {
     const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
 
     await store.deleteUser(saved.uuid);
@@ -277,7 +277,7 @@ postgresDescribe("AuthPostgresStore (postgres)", () => {
     expect(await store.claimRefresh(generateUuid())).toBeUndefined();
   });
 
-  it("restoreUser снимает флаг удаления у записи с тем же uuid (TASK-15)", async () => {
+  it("restoreUser снимает флаг удаления у записи с тем же uuid", async () => {
     const saved = await createPostgresUser({ usernamePrefix: "pgauth" });
 
     await store.deleteUser(saved.uuid);

@@ -1,4 +1,5 @@
 import { Socket } from "node:net";
+import { concatBytes } from "../utils/bytes";
 import {
   decodeRconPacket,
   encodeRconPacket,
@@ -10,8 +11,6 @@ export const RCON_AUTH = 3;
 export const RCON_AUTH_RESPONSE = 2;
 export const RCON_EXECCOMMAND = 2;
 export const RCON_RESPONSE_VALUE = 0;
-
-export const DEFAULT_RCON_PORT = 25575;
 
 const CONNECT_TIMEOUT_MS = 5_000;
 const READ_TIMEOUT_MS = 10_000;
@@ -132,7 +131,7 @@ class RconConnection {
 
   async execute(command: string): Promise<string> {
     this.write({ id: 1, type: RCON_EXECCOMMAND, body: command });
-    this.write({ id: 2, type: RCON_RESPONSE_VALUE, body: END_MARKER });
+    this.write({ id: 2, type: RCON_EXECCOMMAND, body: END_MARKER });
 
     const parts: string[] = [];
     while (true) {
@@ -227,17 +226,6 @@ function readCompletePacket(chunks: Uint8Array[]): {
     packet,
     rest: merged.length > consumed ? [merged.subarray(consumed)] : [],
   };
-}
-
-function concatBytes(parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((sum, part) => sum + part.length, 0);
-  const merged = new Uint8Array(total);
-  let cursor = 0;
-  for (const part of parts) {
-    merged.set(part, cursor);
-    cursor += part.length;
-  }
-  return merged;
 }
 
 function describeError(error: unknown): string {

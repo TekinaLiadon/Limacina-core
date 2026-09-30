@@ -73,13 +73,13 @@ describe("extractStatusJson", () => {
     expect(() => extractStatusJson(payload)).toThrow("Invalid players.online value");
   });
 
-  it("отклоняет players.online больше players.max (TASK-269.30)", () => {
+  it("отклоняет players.online больше players.max", () => {
     const payload = new TextEncoder().encode(JSON.stringify({ players: { max: 5, online: 7 } }));
 
     expect(() => extractStatusJson(payload)).toThrow("exceeds players.max");
   });
 
-  it("обрезает имя версии длиннее лимита (TASK-269.30)", () => {
+  it("обрезает имя версии длиннее лимита", () => {
     const payload = new TextEncoder().encode(
       JSON.stringify({
         version: { name: "v".repeat(100) },
@@ -93,7 +93,7 @@ describe("extractStatusJson", () => {
     expect(result.version.length).toBe(64);
   });
 
-  it("не трогает имя версии ровно на границе лимита (TASK-269.30)", () => {
+  it("не трогает имя версии ровно на границе лимита", () => {
     const payload = new TextEncoder().encode(
       JSON.stringify({
         version: { name: "v".repeat(64) },

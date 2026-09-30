@@ -1,6 +1,5 @@
 import { Injectable } from "@nestjs/common";
 import {
-  insertQuery,
   selectQuery,
   execute,
   sqlDialect,
@@ -94,17 +93,11 @@ export class YggdrasilPostgresStore implements IYggdrasilStore {
   }
 
   async saveProfile(profile: YggdrasilProfile): Promise<void> {
-    const q = insertQuery("uuid", "skin_url", "skin_model", "cape_url")
-      .from(TABLES.user_textures)
-      .values(
-        profile.uuid,
-        profile.skinUrl ?? null,
-        profile.skinModel ?? null,
-        profile.capeUrl ?? null,
-      )
-      .build();
-
-    await execute(q.sql, q.values);
+    await this.updateProfileTexture(profile.uuid, {
+      skinUrl: profile.skinUrl ?? null,
+      skinModel: profile.skinModel ?? null,
+      capeUrl: profile.capeUrl ?? null,
+    });
   }
 
   async updateProfileTexture(

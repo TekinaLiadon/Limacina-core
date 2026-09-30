@@ -51,7 +51,7 @@ describe("TechnicalRestartService", (): void => {
       expect(signalCount).toBe(1);
     });
 
-    it("повторный запрос перезапуска отклоняется, сигнал подаётся один раз (TASK-46)", async () => {
+    it("повторный запрос перезапуска отклоняется, сигнал подаётся один раз", async () => {
       const service = new TechnicalRestartService();
       let signalCount = 0;
       service.sendShutdownSignal = () => {
@@ -66,7 +66,7 @@ describe("TechnicalRestartService", (): void => {
       expect(signalCount).toBe(1);
     });
 
-    it("отказ повторного перезапуска логируется на error (TASK-217.9)", async () => {
+    it("отказ повторного перезапуска логируется на error", async () => {
       const service = new TechnicalRestartService();
       service.sendShutdownSignal = () => {};
       const errorSpy = spyOn(
@@ -93,7 +93,7 @@ describe("TechnicalRestartService", (): void => {
     });
   });
 
-  describe("гвард пересборки (TASK-267.8)", () => {
+  describe("гвард пересборки", () => {
     it("отклоняет перезапуск, пока активна пересборка", async () => {
       const service = new TechnicalRestartService();
       let signalCount = 0;

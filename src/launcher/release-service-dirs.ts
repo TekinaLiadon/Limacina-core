@@ -1,7 +1,8 @@
-import { existsSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { existsSync, renameSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Logger } from "@nestjs/common";
 import { LAUNCHER_VERSION_REGEX } from "./launcher-files";
+import { listDirEntriesQuietly } from "../utils/fs";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BACKUP_INFIX = ".old-";
@@ -89,7 +90,7 @@ export function recoverReleaseBackups(
   logger: Logger,
   version?: string,
 ): void {
-  for (const entry of listEntries(releasesRoot)) {
+  for (const entry of listDirEntriesQuietly(releasesRoot)) {
     if (!isReleaseBackupEntry(entry)) continue;
 
     const base = parseReleaseBackupEntry(entry);
@@ -117,7 +118,7 @@ export function cleanupReleaseServiceDirs(
   logger: Logger,
   staleMs?: number,
 ): void {
-  for (const entry of listEntries(releasesRoot)) {
+  for (const entry of listDirEntriesQuietly(releasesRoot)) {
     const restorableBackup =
       isReleaseBackupEntry(entry) &&
       (() => {
@@ -126,7 +127,7 @@ export function cleanupReleaseServiceDirs(
       })();
     if (restorableBackup) continue;
 
-    if (!isServiceRemovableEntry(entry)) continue;
+    if (!isReleaseServiceEntry(entry)) continue;
     if (staleMs !== undefined && !isEntryStale(join(releasesRoot, entry), staleMs)) continue;
 
     const fullPath = join(releasesRoot, entry);
@@ -139,22 +140,10 @@ export function cleanupReleaseServiceDirs(
   }
 }
 
-function isServiceRemovableEntry(entry: string): boolean {
-  return isReleaseStagingEntry(entry) || isReleaseLockEntry(entry) || isReleaseBackupEntry(entry);
-}
-
 function isEntryStale(fullPath: string, staleMs: number): boolean {
   try {
     return Date.now() - statSync(fullPath).mtimeMs > staleMs;
   } catch {
     return false;
-  }
-}
-
-function listEntries(releasesRoot: string): string[] {
-  try {
-    return readdirSync(releasesRoot);
-  } catch {
-    return [];
   }
 }

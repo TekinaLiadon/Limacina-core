@@ -179,7 +179,7 @@ contractDescribeEach("контракт IAdminStore", (driver) => {
     expect(found?.role).toBe("admin");
   });
 
-  it("setApproved/setBanned/setRole возвращают признак применения (TASK-267.13)", async () => {
+  it("setApproved/setBanned/setRole возвращают признак применения", async () => {
     const user = await ctx.makeUser();
 
     expect(await ctx.store.setApproved(user.username, user.approved)).toBe(true);
@@ -190,6 +190,25 @@ contractDescribeEach("контракт IAdminStore", (driver) => {
     expect(await ctx.store.setApproved(missing, true)).toBe(false);
     expect(await ctx.store.setBanned(missing, true)).toBe(false);
     expect(await ctx.store.setRole(missing, "admin")).toBe(false);
+  });
+
+  it("условная запись с expectedRole отклоняет изменившуюся роль", async () => {
+    const user = await ctx.makeUser();
+
+    expect(await ctx.store.setApproved(user.username, false, "moderator")).toBe(false);
+    expect(await ctx.store.setBanned(user.username, true, "moderator")).toBe(false);
+    expect(await ctx.store.setRole(user.username, "moderator", "moderator")).toBe(false);
+    expect(await ctx.store.deleteUser(user.username, "moderator")).toBeUndefined();
+
+    const untouched = await ctx.store.findByUsername(user.username);
+    expect(untouched?.approved).toBe(user.approved);
+    expect(untouched?.banned).toBe(user.banned);
+    expect(untouched?.role).toBe(user.role);
+
+    expect(await ctx.store.setApproved(user.username, false, user.role)).toBe(true);
+    expect(await ctx.store.setBanned(user.username, true, user.role)).toBe(true);
+    expect(await ctx.store.setRole(user.username, "admin", user.role)).toBe(true);
+    expect((await ctx.store.deleteUser(user.username, "admin"))?.uuid).toBe(user.uuid);
   });
 
   it("deleteUser прячет пользователя в живых списках и показывает в удалённых", async () => {

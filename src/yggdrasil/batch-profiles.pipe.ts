@@ -14,6 +14,10 @@ export class BatchProfilesPipe implements PipeTransform {
       throw new BadRequestException("Ожидается массив имён игроков");
     }
 
+    if (value.length > MAX_PROFILE_NAMES) {
+      throw new BadRequestException(`Максимум ${MAX_PROFILE_NAMES} имён игроков в одном запросе`);
+    }
+
     for (const name of value) {
       if (typeof name !== "string" || name.length === 0) {
         throw new BadRequestException("Имена игроков должны быть непустыми строками");

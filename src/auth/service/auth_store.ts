@@ -2,15 +2,7 @@ import { Injectable, Optional } from "@nestjs/common";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../token.constants";
 import { MemoryDb, type MemoryUserRecord } from "../../memory/memory-db";
 
-export interface StoredUser {
-  uuid: string;
-  username: string;
-  passwordHash: string;
-  role: string;
-  approved: boolean;
-  banned: boolean;
-  passwordChangedAt?: Date | undefined;
-}
+export type StoredUser = Omit<MemoryUserRecord, "deleted" | "deletedAt">;
 
 export interface RefreshEntry {
   userId: string;
@@ -22,8 +14,8 @@ export const AuthStoreToken = Symbol("AuthMapStore");
 export interface IAuthStore {
   findByUsername(username: string): Promise<StoredUser | undefined>;
   saveUser(user: StoredUser): Promise<boolean>;
-  setApproved(uuid: string, approved: boolean): Promise<boolean>;
-  setBanned(uuid: string, banned: boolean): Promise<boolean>;
+  setApproved(uuid: string, approved: boolean, expectedRole?: string): Promise<boolean>;
+  setBanned(uuid: string, banned: boolean, expectedRole?: string): Promise<boolean>;
   userExists(username: string): Promise<boolean>;
   replacePassword(
     uuid: string,
@@ -31,7 +23,7 @@ export interface IAuthStore {
     changedAt: Date,
     keepRefreshJti?: string,
   ): Promise<void>;
-  updateRole(uuid: string, role: string): Promise<boolean>;
+  updateRole(uuid: string, role: string, expectedRole?: string): Promise<boolean>;
   deleteUser(uuid: string): Promise<void>;
   restoreUser(uuid: string): Promise<void>;
   saveRefresh(jti: string, entry: RefreshEntry, expiresAt: Date): Promise<void>;
@@ -46,18 +38,6 @@ interface StoredRefreshEntry extends RefreshEntry {
   expiresAt: number;
 }
 
-function toStoredUser(user: MemoryUserRecord): StoredUser {
-  return {
-    uuid: user.uuid,
-    username: user.username,
-    passwordHash: user.passwordHash,
-    role: user.role,
-    approved: user.approved,
-    banned: user.banned,
-    passwordChangedAt: user.passwordChangedAt,
-  };
-}
-
 @Injectable()
 export class AuthMapStore implements IAuthStore {
   private readonly users: Map<string, MemoryUserRecord>;
@@ -70,7 +50,7 @@ export class AuthMapStore implements IAuthStore {
   async findByUsername(username: string): Promise<StoredUser | undefined> {
     const user = this.liveUser(username);
     if (!user) return undefined;
-    return toStoredUser(user);
+    return { ...user };
   }
 
   async saveUser(user: StoredUser): Promise<boolean> {
@@ -81,16 +61,18 @@ export class AuthMapStore implements IAuthStore {
     return true;
   }
 
-  async setApproved(uuid: string, approved: boolean): Promise<boolean> {
+  async setApproved(uuid: string, approved: boolean, expectedRole?: string): Promise<boolean> {
     const user = this.users.get(uuid);
     if (!user || user.deleted) return false;
+    if (!this.roleMatches(user, expectedRole)) return false;
     user.approved = approved;
     return true;
   }
 
-  async setBanned(uuid: string, banned: boolean): Promise<boolean> {
+  async setBanned(uuid: string, banned: boolean, expectedRole?: string): Promise<boolean> {
     const user = this.users.get(uuid);
     if (!user || user.deleted) return false;
+    if (!this.roleMatches(user, expectedRole)) return false;
     user.banned = banned;
     return true;
   }
@@ -112,11 +94,16 @@ export class AuthMapStore implements IAuthStore {
     this.deleteTokensOfUser(uuid, keepRefreshJti);
   }
 
-  async updateRole(uuid: string, role: string): Promise<boolean> {
+  async updateRole(uuid: string, role: string, expectedRole?: string): Promise<boolean> {
     const user = this.users.get(uuid);
     if (!user || user.deleted) return false;
+    if (!this.roleMatches(user, expectedRole)) return false;
     user.role = role;
     return true;
+  }
+
+  private roleMatches(user: MemoryUserRecord, expectedRole: string | undefined): boolean {
+    return expectedRole === undefined || user.role === expectedRole;
   }
 
   async deleteUser(uuid: string): Promise<void> {

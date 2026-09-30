@@ -4,7 +4,13 @@ import {
   REDIS_RECONNECT_DELAY_MS,
   type RedisLifecycleClient,
 } from "../utils/redis-lifecycle";
-import { DEFAULT_CACHE_TTL_MS, isValidCacheTtl, type ICacheStore } from "./cache_store";
+import {
+  DEFAULT_CACHE_TTL_MS,
+  assertValidCacheTtl,
+  parseCacheValue,
+  serializeCacheValue,
+  type ICacheStore,
+} from "./cache_store";
 
 export interface RedisClientLike extends RedisLifecycleClient {
   get(key: string): Promise<string | null>;
@@ -47,31 +53,19 @@ export class RedisCacheStore implements ICacheStore, OnModuleDestroy {
     this.lifecycle.reportSuccess();
     if (raw === null) return undefined;
 
-    try {
-      return JSON.parse(raw) as T;
-    } catch {
-      this.logger.error({ key }, "Повреждённое значение в кеш-сторе, промах кеша");
-      return undefined;
-    }
+    return parseCacheValue<T>(
+      this.logger,
+      key,
+      raw,
+      "Повреждённое значение в кеш-сторе, промах кеша",
+    );
   }
 
   async set<T>(key: string, value: T, ttlMs?: number): Promise<void> {
-    if (!isValidCacheTtl(ttlMs)) {
-      this.logger.error({ key, ttlMs }, "Невалидный ttl, значение не сохранено в кеш");
-      return;
-    }
+    if (!assertValidCacheTtl(this.logger, key, ttlMs)) return;
 
-    let payload: string;
-    try {
-      payload = JSON.stringify(value);
-    } catch (error) {
-      this.logger.error({ err: error, key }, "Несериализуемое значение не сохранено в кеш");
-      return;
-    }
-    if (typeof payload !== "string") {
-      this.logger.error({ key }, "Несериализуемое значение не сохранено в кеш");
-      return;
-    }
+    const payload = serializeCacheValue(this.logger, key, value);
+    if (payload === undefined) return;
 
     try {
       await this.lifecycle.withTimeout(

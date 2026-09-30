@@ -47,46 +47,24 @@ export class LogsService {
     this.validateDate(date);
 
     const filePath = join(LOGS_DIR, `${date}.log`);
-    const total = await this.countMatchedLines(filePath, filter);
-    const lines = await this.collectMatchedLines(filePath, filter, offset, limit);
-
-    return { lines, total };
-  }
-
-  private async countMatchedLines(filePath: string, filter?: LogsFilter): Promise<number> {
-    let total = 0;
-    try {
-      for await (const line of this.readLines(filePath)) {
-        if (this.isMatchedRequestLine(line, filter)) total++;
-      }
-    } catch (error) {
-      this.logReadError(error, filePath);
-    }
-    return total;
-  }
-
-  private async collectMatchedLines(
-    filePath: string,
-    filter: LogsFilter | undefined,
-    offset: number,
-    limit: number,
-  ): Promise<string[]> {
     const lines: string[] = [];
+    let total = 0;
     let matchedBeforePage = 0;
     try {
       for await (const line of this.readLines(filePath)) {
         if (!this.isMatchedRequestLine(line, filter)) continue;
+        total++;
         if (matchedBeforePage < offset) {
           matchedBeforePage++;
           continue;
         }
-        lines.push(line);
-        if (lines.length >= limit) break;
+        if (lines.length < limit) lines.push(line);
       }
     } catch (error) {
       this.logReadError(error, filePath);
     }
-    return lines;
+
+    return { lines, total };
   }
 
   private logReadError(error: unknown, filePath: string): void {

@@ -30,6 +30,7 @@ interface MutationStep {
 
 interface StatusFieldAccess<Value> {
   write: (value: Value) => Promise<boolean>;
+  restore: (value: Value) => Promise<boolean>;
   read: () => Promise<Value | undefined>;
 }
 
@@ -70,11 +71,13 @@ export class AdminService implements OnModuleInit {
       this.statusPairSteps(
         username,
         {
-          write: (value) => this.adminStore.setApproved(username, value),
+          write: (value) => this.adminStore.setApproved(username, value, user.role),
+          restore: (value) => this.adminStore.setApproved(username, value),
           read: async () => (await this.adminStore.findByUsername(username))?.approved,
         },
         {
-          write: (value) => this.authStore.setApproved(user.uuid, value),
+          write: (value) => this.authStore.setApproved(user.uuid, value, user.role),
+          restore: (value) => this.authStore.setApproved(user.uuid, value),
           read: async () => (await this.authStore.findByUsername(username))?.approved,
         },
         approved,
@@ -88,11 +91,13 @@ export class AdminService implements OnModuleInit {
       this.statusPairSteps(
         username,
         {
-          write: (value) => this.adminStore.setBanned(username, value),
+          write: (value) => this.adminStore.setBanned(username, value, user.role),
+          restore: (value) => this.adminStore.setBanned(username, value),
           read: async () => (await this.adminStore.findByUsername(username))?.banned,
         },
         {
-          write: (value) => this.authStore.setBanned(user.uuid, value),
+          write: (value) => this.authStore.setBanned(user.uuid, value, user.role),
+          restore: (value) => this.authStore.setBanned(user.uuid, value),
           read: async () => (await this.authStore.findByUsername(username))?.banned,
         },
         banned,
@@ -114,11 +119,13 @@ export class AdminService implements OnModuleInit {
       this.statusPairSteps(
         username,
         {
-          write: (value) => this.adminStore.setRole(username, value),
+          write: (value) => this.adminStore.setRole(username, value, user.role),
+          restore: (value) => this.adminStore.setRole(username, value),
           read: async () => (await this.adminStore.findByUsername(username))?.role,
         },
         {
-          write: (value) => this.authStore.updateRole(user.uuid, value),
+          write: (value) => this.authStore.updateRole(user.uuid, value, user.role),
+          restore: (value) => this.authStore.updateRole(user.uuid, value),
           read: async () => (await this.authStore.findByUsername(username))?.role,
         },
         role,
@@ -147,11 +154,13 @@ export class AdminService implements OnModuleInit {
         this.statusPairSteps(
           username,
           {
-            write: (value) => this.adminStore.setRole(username, value),
+            write: (value) => this.adminStore.setRole(username, value, user.role),
+            restore: (value) => this.adminStore.setRole(username, value),
             read: async () => (await this.adminStore.findByUsername(username))?.role,
           },
           {
-            write: (value) => this.authStore.updateRole(user.uuid, value),
+            write: (value) => this.authStore.updateRole(user.uuid, value, user.role),
+            restore: (value) => this.authStore.updateRole(user.uuid, value),
             read: async () => (await this.authStore.findByUsername(username))?.role,
           },
           "owner",
@@ -180,7 +189,7 @@ export class AdminService implements OnModuleInit {
     await this.applyWithRollback([
       {
         run: async () => {
-          deleted = await this.adminStore.deleteUser(username);
+          deleted = await this.adminStore.deleteUser(username, user.role);
           if (!deleted) {
             this.logger.error(
               this.audit(actor, username, "delete"),
@@ -323,7 +332,9 @@ export class AdminService implements OnModuleInit {
       run: async () => {
         const applied = await access.write(next);
         if (!applied) {
-          throw new NotFoundException(`Пользователь ${username} не найден`);
+          throw new NotFoundException(
+            `Пользователь ${username} не найден или изменился конкурентно`,
+          );
         }
       },
       undo: async () => {
@@ -335,7 +346,7 @@ export class AdminService implements OnModuleInit {
           );
           return;
         }
-        await access.write(previous);
+        await access.restore(previous);
       },
     };
   }

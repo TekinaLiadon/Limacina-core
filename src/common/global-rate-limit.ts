@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { sendTooManyRequests } from "./rate-limit-reply";
 import {
   MemorySlidingWindowStore,
   SlidingWindowRateLimiter,
@@ -24,10 +25,6 @@ export async function registerGlobalRateLimit(
     const hit = await limiter.hit(`global-ip:${request.ip}`);
     if (hit.allowed) return;
 
-    await reply.code(429).send({
-      statusCode: 429,
-      error: "Too Many Requests",
-      message: `Слишком много запросов. Повторите через ${Math.ceil(hit.retryAfterMs / 1000)} с.`,
-    });
+    await sendTooManyRequests(reply, "Слишком много запросов", hit.retryAfterMs);
   });
 }

@@ -9,6 +9,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { validationMessages } from "../../common/validation-messages";
+import { MAX_USERNAME_LENGTH } from "../../common/username-policy";
 
 export class AgentDto {
   @ApiProperty({ example: "Minecraft" })
@@ -52,9 +53,11 @@ export class AuthenticateDto {
   @Type(() => AgentDto)
   agent?: AgentDto;
 
-  @ApiProperty({ example: "player1", maxLength: 64 })
+  @ApiProperty({ example: "player1", maxLength: MAX_USERNAME_LENGTH })
   @IsString({ message: validationMessages.string("username") })
-  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
+  @MaxLength(MAX_USERNAME_LENGTH, {
+    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
+  })
   username!: string;
 
   @ApiProperty({ example: "secret123", maxLength: 128 })
@@ -125,9 +128,11 @@ export class InvalidateDto {
 }
 
 export class SignoutDto {
-  @ApiProperty({ example: "player1", maxLength: 64 })
+  @ApiProperty({ example: "player1", maxLength: MAX_USERNAME_LENGTH })
   @IsString({ message: validationMessages.string("username") })
-  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
+  @MaxLength(MAX_USERNAME_LENGTH, {
+    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
+  })
   username!: string;
 
   @ApiProperty({ example: "secret123", maxLength: 128 })
@@ -154,9 +159,11 @@ export class JoinDto {
 }
 
 export class HasJoinedQueryDto {
-  @ApiProperty({ example: "player1", maxLength: 64 })
+  @ApiProperty({ example: "player1", maxLength: MAX_USERNAME_LENGTH })
   @IsString({ message: validationMessages.string("username") })
-  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
+  @MaxLength(MAX_USERNAME_LENGTH, {
+    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
+  })
   username!: string;
 
   @ApiProperty({ example: "server-id", maxLength: 64 })

@@ -13,7 +13,7 @@ const BASE_URL = "http://localhost:3005";
 const logger = new Logger("content-files-test");
 
 describe("buildContentLocation", () => {
-  it("строит content-addressed имя, url и путь (TASK-269.24)", () => {
+  it("строит content-addressed имя, url и путь", () => {
     const location = buildContentLocation(
       BASE_URL,
       "textures",
@@ -100,7 +100,7 @@ describe("releaseContentFile", () => {
     return { dir, filePath, url: `${BASE_URL}/textures/steve-hash.png` };
   }
 
-  it("удаляет файл, когда ссылок не осталось (TASK-269.24)", async () => {
+  it("удаляет файл, когда ссылок не осталось", async () => {
     const { dir, filePath, url } = makeTempPublicFile();
     try {
       await withCwd(dir, () =>

@@ -17,6 +17,7 @@ import { validationMessages } from "../../common/validation-messages";
 import { LimitQuery, OffsetQuery } from "../../common/dto/dto";
 import { MIN_PASSWORD_LENGTH } from "../../auth/password-policy";
 import { ASSIGNABLE_ROLES, type AssignableRole } from "../../common/roles";
+import { MAX_USERNAME_LENGTH } from "../../common/username-policy";
 
 export const LOG_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -66,7 +67,9 @@ export class ApproveUserDto {
   @ApiProperty({ example: "john" })
   @IsString({ message: validationMessages.string("username") })
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })
-  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
+  @MaxLength(MAX_USERNAME_LENGTH, {
+    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
+  })
   username!: string;
 
   @ApiProperty({ example: true })
@@ -78,7 +81,9 @@ export class BanUserDto {
   @ApiProperty({ example: "john" })
   @IsString({ message: validationMessages.string("username") })
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })
-  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
+  @MaxLength(MAX_USERNAME_LENGTH, {
+    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
+  })
   username!: string;
 
   @ApiProperty({ example: true })
@@ -90,7 +95,9 @@ export class SetRoleDto {
   @ApiProperty({ example: "john" })
   @IsString({ message: validationMessages.string("username") })
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })
-  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
+  @MaxLength(MAX_USERNAME_LENGTH, {
+    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
+  })
   username!: string;
 
   @ApiProperty({ example: "user", enum: ASSIGNABLE_ROLES })
@@ -105,7 +112,9 @@ export class SetUserPasswordDto {
   @ApiProperty({ example: "john" })
   @IsString({ message: validationMessages.string("username") })
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })
-  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
+  @MaxLength(MAX_USERNAME_LENGTH, {
+    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
+  })
   username!: string;
 
   @ApiProperty({ example: "newsecret123", minLength: MIN_PASSWORD_LENGTH, maxLength: 128 })
@@ -122,7 +131,9 @@ export class SetOwnerDto {
   @ApiProperty({ example: "john" })
   @IsString({ message: validationMessages.string("username") })
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })
-  @MaxLength(64, { message: validationMessages.maxLength("username", 64) })
+  @MaxLength(MAX_USERNAME_LENGTH, {
+    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
+  })
   username!: string;
 }
 

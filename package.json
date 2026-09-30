@@ -62,7 +62,7 @@
   },
   "devDependencies": {
     "@fastify/view": "^12.0.0",
-    "@nestjs/microservices": "^11.2.3",
+    "@nestjs/microservices": "11.2.4",
     "@nestjs/testing": "^11.2.3",
     "@nestjs/websockets": "^11.2.3",
     "@types/node": "^22.20.2",

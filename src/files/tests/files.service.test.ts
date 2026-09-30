@@ -140,7 +140,7 @@ describe("FilesService — watcher и стриминг", () => {
     ).rejects.toThrow("Недопустимый путь к файлу");
   });
 
-  it("хеш, завершившийся после удаления файла, не возвращает запись в карту (TASK-267.15)", async () => {
+  it("хеш, завершившийся после удаления файла, не возвращает запись в карту", async () => {
     writeFileSync(FIXTURE_PATH, "race-content");
     await waitFor(() => files.launcherHash.has(FIXTURE_NAME));
 
@@ -169,7 +169,7 @@ describe("FilesService — watcher и стриминг", () => {
     }
   });
 
-  it("сверка с диском удаляет фантом из манифеста при потерянном unlink (TASK-267.15)", () => {
+  it("сверка с диском удаляет фантом из манифеста при потерянном unlink", () => {
     const phantomName = "files-phantom-fixture.bin";
     files.launcherHash.set(phantomName, "phantom-hash");
 
@@ -179,7 +179,7 @@ describe("FilesService — watcher и стриминг", () => {
     expect(files.getList().files[phantomName]).toBeUndefined();
   });
 
-  it("сверка с диском подхватывает файл, добавленный мимо watcher (потерянный add, TASK-267.15)", async () => {
+  it("сверка с диском подхватывает файл, добавленный мимо watcher (потерянный add)", async () => {
     const lostName = "files-lost-add-fixture.bin";
     const lostPath = join(LAUNCHER_DIR, lostName);
     writeFileSync(lostPath, "lost-add-content");

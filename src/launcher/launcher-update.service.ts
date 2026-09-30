@@ -4,15 +4,12 @@ import { join } from "node:path";
 import type { LauncherUpdateResponseDto } from "./dto/dto";
 import { removeFilesQuietly, writeFileAtomicSync } from "../utils/fs";
 import {
-  LAUNCHER_VERSION_REGEX,
   OLD_VERSIONS_DIR,
   PUBLIC_DIR,
-  RESERVED_LAUNCHER_VERSION,
-  RESERVED_VERSION_MESSAGE,
-  VERSION_FORMAT_MESSAGE,
   buildLauncherZipName,
   isSupportedPlatform,
   parseLauncherZipName,
+  validateLauncherVersion,
 } from "./launcher-files";
 import { buildReplacedZipName } from "./release-service-dirs";
 import { VERSION_FILE, readLauncherVersion } from "./version-file";
@@ -45,7 +42,7 @@ export class LauncherUpdateService {
         throw new BadRequestException("Нужен хотя бы один zip-файл платформы");
       }
       const targetVersion = version || this.requireCurrentVersion();
-      this.validateVersion(targetVersion);
+      validateLauncherVersion(targetVersion);
 
       for (const file of files) {
         this.validatePlatform(file.os, file.arch);
@@ -66,15 +63,6 @@ export class LauncherUpdateService {
       return { version: targetVersion, updated };
     } finally {
       this.removeTempFiles(files);
-    }
-  }
-
-  private validateVersion(version: string): void {
-    if (version === RESERVED_LAUNCHER_VERSION) {
-      throw new BadRequestException(RESERVED_VERSION_MESSAGE);
-    }
-    if (!LAUNCHER_VERSION_REGEX.test(version)) {
-      throw new BadRequestException(VERSION_FORMAT_MESSAGE);
     }
   }
 

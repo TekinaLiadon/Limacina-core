@@ -17,6 +17,18 @@ describe("Иерархия ролей", () => {
     expect(isKnownRole("")).toBe(false);
   });
 
+  it("isKnownRole не видит свойства цепочки прототипов", () => {
+    expect(isKnownRole("toString")).toBe(false);
+    expect(isKnownRole("constructor")).toBe(false);
+    expect(isKnownRole("valueOf")).toBe(false);
+    expect(isKnownRole("hasOwnProperty")).toBe(false);
+  });
+
+  it("roleWeight отдаёт 0 для прототипных имён ролей", () => {
+    expect(roleWeight("toString")).toBe(0);
+    expect(roleWeight("constructor")).toBe(0);
+  });
+
   it("roleWeight отдаёт 0 для неизвестной роли", () => {
     expect(roleWeight("owner")).toBe(4);
     expect(roleWeight("admim")).toBe(0);

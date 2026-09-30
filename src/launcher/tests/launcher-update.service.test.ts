@@ -185,7 +185,7 @@ describe("LauncherUpdateService — архивирование старых ве
     resetToBaseline();
   });
 
-  it("PATCH без файловых полей отклоняется и не трогает version.json (TASK-411.7)", () => {
+  it("PATCH без файловых полей отклоняется и не трогает version.json", () => {
     const versionBefore = existsSync(VERSION_FILE)
       ? readFileSync(VERSION_FILE, "utf-8")
       : undefined;
@@ -360,7 +360,7 @@ describe("LauncherUpdateService — порядок мутаций и атома�
     expect(leftovers).toEqual([]);
   });
 
-  it("битый version.json + update без версии даёт понятную ошибку и ничего не публикует (TASK-267.11)", () => {
+  it("битый version.json + update без версии даёт понятную ошибку и ничего не публикует", () => {
     seedBaseline();
     writeFileSync(VERSION_FILE, "{broken");
 

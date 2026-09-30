@@ -118,7 +118,7 @@ describe("CacheMapStore", (): void => {
     expect(await store.get<string>("a")).toBe("A2");
   });
 
-  it("вытеснение при заполненной мапе сначала чистит истёкшие записи (TASK-269.29)", async (): Promise<void> => {
+  it("вытеснение при заполненной мапе сначала чистит истёкшие записи", async (): Promise<void> => {
     const store = new CacheMapStore(new MemoryDb(), 2);
 
     await store.set("fresh", "F", 60_000);

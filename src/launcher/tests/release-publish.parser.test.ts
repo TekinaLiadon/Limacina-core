@@ -170,7 +170,7 @@ describe("parseLauncherReleaseRequest (стриминг артефактов и 
     expect(capturedOptions).toEqual({ limits: { fileSize: MAX_RELEASE_ARTIFACT_BYTES } });
   });
 
-  it("усечённый артефакт (busboy обрезал ровно на лимите) отклоняется как 413 (TASK-411.6)", async () => {
+  it("усечённый артефакт (busboy обрезал ровно на лимите) отклоняется как 413", async () => {
     mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
     const truncatedFile = Object.assign(Readable.from([Buffer.from("installer-bytes")]), {
       truncated: true,

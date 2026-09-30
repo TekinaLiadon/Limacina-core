@@ -9,7 +9,7 @@ import {
 } from "../png";
 import { buildTestPng, pngChunk, TEST_PNG_SIGNATURE } from "./test-png";
 
-describe("validatePngStructure (TASK-24)", (): void => {
+describe("validatePngStructure", (): void => {
   it("пропускает структурно корректный PNG", (): void => {
     expect(() => validatePngStructure(buildTestPng())).not.toThrow();
   });
@@ -286,7 +286,7 @@ describe("validatePngStructure — поля IHDR и порядок чанков"
   });
 });
 
-describe("sanitizePng (TASK-269.21)", (): void => {
+describe("sanitizePng", (): void => {
   const buildWithMetadata = (): Buffer => {
     const source = buildTestPng({ variant: 7 });
     const idat = idatPayload(source);

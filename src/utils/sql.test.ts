@@ -226,7 +226,7 @@ describe("updateQuery", () => {
     expect(q.values).toEqual(["jane", true]);
   });
 
-  it("не трогает доллар-числа внутри доллар-квотированных литералов (TASK-269.22)", () => {
+  it("не трогает доллар-числа внутри доллар-квотированных литералов", () => {
     const q = updateQuery()
       .from(TABLES.users)
       .set("username", "jane")
@@ -238,7 +238,7 @@ describe("updateQuery", () => {
     expect(q.values).toEqual(["jane", true]);
   });
 
-  it("не трогает доллар-числа внутри $tag$-литералов (TASK-269.22)", () => {
+  it("не трогает доллар-числа внутри $tag$-литералов", () => {
     const q = updateQuery()
       .from(TABLES.users)
       .set("username", "jane")
@@ -250,11 +250,11 @@ describe("updateQuery", () => {
     expect(q.values).toEqual(["jane", true]);
   });
 
-  it("update без where отклоняется (TASK-269.22)", () => {
+  it("update без where отклоняется", () => {
     expect(() => updateQuery().from(TABLES.users).set("username", "jane").build()).toThrow("where");
   });
 
-  it("limit отклоняет отрицательные, дробные и бесконечные значения (TASK-269.22)", () => {
+  it("limit отклоняет отрицательные, дробные и бесконечные значения", () => {
     expect(() => selectQuery("id").from(TABLES.users).limit(-1)).toThrow("limit");
     expect(() => selectQuery("id").from(TABLES.users).limit(1.5)).toThrow("limit");
     expect(() => selectQuery("id").from(TABLES.users).limit(Number.POSITIVE_INFINITY)).toThrow(
@@ -263,7 +263,7 @@ describe("updateQuery", () => {
     expect(() => selectQuery("id").from(TABLES.users).limit(Number.NaN)).toThrow("limit");
   });
 
-  it("offset отклоняет невалидные значения (TASK-269.22)", () => {
+  it("offset отклоняет невалидные значения", () => {
     expect(() => selectQuery("id").from(TABLES.users).offset(-10)).toThrow("offset");
     expect(() => selectQuery("id").from(TABLES.users).offset(0.25)).toThrow("offset");
   });
@@ -281,12 +281,12 @@ describe("deleteQuery", () => {
     expect(q.values).toEqual(["u1"]);
   });
 
-  it("delete без where отклоняется (TASK-269.22)", () => {
+  it("delete без where отклоняется", () => {
     expect(() => deleteQuery().from(TABLES.refresh_tokens).build()).toThrow("where");
   });
 });
 
-describe("защита фрагментов SQL от инъекций (TASK-63)", () => {
+describe("защита фрагментов SQL от инъекций", () => {
   it("where отклоняет фрагмент с точкой с запятой", () => {
     expect(() =>
       selectQuery("id").from(TABLES.users).where("username = ''; DROP TABLE users", "x").build(),

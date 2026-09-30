@@ -1,4 +1,4 @@
-import { existsSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { Logger } from "@nestjs/common";
 
 export function isMissingFileError(error: unknown): boolean {
@@ -8,6 +8,14 @@ export function isMissingFileError(error: unknown): boolean {
     "code" in error &&
     (error as { code: unknown }).code === "ENOENT"
   );
+}
+
+export function listDirEntriesQuietly(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
 }
 
 export function removeFilesQuietly(logger: Logger, paths: string[], errorMessage: string): void {

@@ -750,7 +750,7 @@ describe("V1 panel эндпоинты", (): void => {
       await store.restoreUser("modtarget");
     });
 
-    it("удаление отзывает доступ в auth-сторе и чистит refresh-токены (TASK-15)", async () => {
+    it("удаление отзывает доступ в auth-сторе и чистит refresh-токены", async () => {
       const adminStore = app.get(AdminMapStoreToken, { strict: false });
       const authStore = app.get(AuthStoreToken, { strict: false });
       await adminStore.saveUser({
@@ -963,7 +963,7 @@ describe("V1 panel эндпоинты", (): void => {
       await store.deleteUser("deletedadmin");
     });
 
-    it("восстановление возвращает доступ в auth-сторе (TASK-15)", async () => {
+    it("восстановление возвращает доступ в auth-сторе", async () => {
       const adminStore = app.get(AdminMapStoreToken, { strict: false });
       const authStore = app.get(AuthStoreToken, { strict: false });
       const passwordHash = await Bun.password.hash("restorablepass");
@@ -1593,7 +1593,7 @@ describe("V1 panel эндпоинты", (): void => {
       expect(existsSync(`${CONFIG_FILE}.tmp`)).toBe(false);
     });
 
-    it("повторная запись конфига заменяет файл целиком и подчищает temp (TASK-21)", async () => {
+    it("повторная запись конфига заменяет файл целиком и подчищает temp", async () => {
       await supertest(app.getHttpServer())
         .patch("/v1/panel/launcher/config")
         .set("Authorization", `Bearer ${ownerToken}`)
@@ -1678,7 +1678,7 @@ describe("V1 panel эндпоинты", (): void => {
         .expect(400);
     });
 
-    it("PATCH без файлов отклоняется и не публикует версию без артефактов (TASK-411.7)", async () => {
+    it("PATCH без файлов отклоняется и не публикует версию без артефактов", async () => {
       const versionBefore = existsSync(VERSION_FILE)
         ? readFileSync(VERSION_FILE, "utf-8")
         : undefined;
@@ -1695,7 +1695,7 @@ describe("V1 panel эндпоинты", (): void => {
       expect(versionAfter).toBe(versionBefore);
     });
 
-    it("загрузка zip через multipart стримится в temp и не оставляет временных файлов (TASK-20)", async () => {
+    it("загрузка zip через multipart стримится в temp и не оставляет временных файлов", async () => {
       const zipDir = join("public", "linux", "x86_64");
       try {
         const res = await supertest(app.getHttpServer())

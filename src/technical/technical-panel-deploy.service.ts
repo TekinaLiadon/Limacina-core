@@ -13,7 +13,9 @@ import { BadRequestException, Logger } from "@nestjs/common";
 import {
   buildInstallCommand,
   currentRevision,
+  hasLockfile,
   runCommand,
+  runStepWithOptions,
   truncateOutput,
   type CommandRun,
 } from "../utils/technical-steps";
@@ -35,7 +37,6 @@ const CHECKOUT_TIMEOUT_MS = 30_000;
 const BRANCH_TIMEOUT_MS = 10_000;
 const INSTALL_TIMEOUT_MS = 300_000;
 const BUILD_TIMEOUT_MS = 300_000;
-const LOCKFILE_NAMES = ["bun.lock", "bun.lockb"];
 const PANEL_REF_PATTERN = /^[0-9A-Za-z._/-]+$/;
 const PANEL_DEPLOY_LOCK_TIMEOUT_MS = 10_000;
 export const PANEL_DEPLOY_LOCK_STALE_MS = 30 * 60_000;
@@ -140,49 +141,19 @@ export async function runPanelStep(
   timeoutMs: number,
   cwd: string,
 ): Promise<void> {
-  let run: CommandRun;
-  try {
-    run = await runCommand(command, cwd, timeoutMs);
-  } catch (error) {
-    logger.error(
-      { err: error, step, command: command.join(" "), cwd },
-      `Шаг деплоя панели не запущен: ${step}`,
-    );
-    throw new Error(`Деплой панели не удался на шаге ${step}: команда не запущена`, {
-      cause: error,
-    });
-  }
-
-  if (run.timedOut) {
-    logger.error(
-      {
-        step,
-        timeoutMs,
-        cwd,
-        command: command.join(" "),
-        stdout: truncateOutput(run.stdout),
-        stderr: truncateOutput(run.stderr),
-      },
-      `Шаг деплоя панели прерван по таймауту: ${step}`,
-    );
-    throw new Error(`Деплой панели не удался на шаге ${step}: превышен таймаут ${timeoutMs} мс`);
-  }
-
-  if (run.exitCode !== 0) {
-    logger.error(
-      {
-        step,
-        exitCode: run.exitCode,
-        cwd,
-        command: command.join(" "),
-        stdout: truncateOutput(run.stdout),
-        stderr: truncateOutput(run.stderr),
-      },
-      `Шаг деплоя панели не выполнен: ${step}`,
-    );
-    throw new Error(`Деплой панели не удался на шаге ${step}`);
-  }
-  logger.log({ step }, "Шаг деплоя панели выполнен");
+  await runStepWithOptions({
+    logger,
+    step,
+    command,
+    timeoutMs,
+    cwd,
+    logSubject: "деплоя панели",
+    logFields: { cwd },
+    failurePrefix: "Деплой панели не удался",
+    failureSuffix: "",
+    createFailure: (message, cause) =>
+      cause === undefined ? new Error(message) : new Error(message, { cause }),
+  });
 }
 
 export async function resolveDefaultBranch(logger: Logger, repoDir: string): Promise<string> {
@@ -256,15 +227,6 @@ function restorePanelBackup(logger: Logger, backupPath: string, panelDir: string
       "Не удалось восстановить предыдущую панель — восстановление выполнит свип при старте сервера",
     );
   }
-}
-
-async function hasLockfile(repoDir: string): Promise<boolean> {
-  for (const lockfileName of LOCKFILE_NAMES) {
-    if (await Bun.file(join(repoDir, lockfileName)).exists()) {
-      return true;
-    }
-  }
-  return false;
 }
 
 export class TechnicalPanelDeployService {

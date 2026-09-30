@@ -28,6 +28,7 @@ export function nextDailyFireAt(hour: number, fromMs: number): number {
 export class CronService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(CronService.name);
   private readonly tasks: CronTask[] = [];
+  private readonly zombieRuns = new Set<Promise<void>>();
   private running = false;
   private job: import("bun").CronJob | undefined;
   private timer: Timer | undefined;
@@ -59,6 +60,12 @@ export class CronService implements OnApplicationBootstrap, OnModuleDestroy {
       this.logger.warn("Пропуск прогона cron-задач: предыдущий прогон ещё выполняется");
       return;
     }
+    if (this.zombieRuns.size > 0) {
+      this.logger.warn(
+        "Пропуск прогона cron-задач: задача прошлого прогона всё ещё выполняется после таймаута",
+      );
+      return;
+    }
     this.running = true;
     try {
       for (const task of this.tasks) {
@@ -74,24 +81,42 @@ export class CronService implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   private runWithTimeout(task: CronTask): Promise<void> {
+    const taskRun = Promise.resolve().then(task.run);
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
+        this.trackZombieRun(task.name, taskRun);
         reject(
           new Error(`Задача "${task.name}" не завершилась за ${String(this.taskTimeoutMs)} мс`),
         );
       }, this.taskTimeoutMs);
       timer.unref();
 
-      Promise.resolve()
-        .then(task.run)
-        .then(() => {
+      taskRun.then(
+        () => {
           clearTimeout(timer);
           resolve();
-        })
-        .catch((err: unknown) => {
+        },
+        (err: unknown) => {
           clearTimeout(timer);
           reject(err);
-        });
+        },
+      );
+    });
+  }
+
+  private trackZombieRun(taskName: string, taskRun: Promise<void>): void {
+    const zombie = taskRun.then(
+      () => undefined,
+      (err: unknown) => {
+        this.logger.error(
+          { err, task: taskName },
+          `Задача "${taskName}" упала после срабатывания таймаута`,
+        );
+      },
+    );
+    this.zombieRuns.add(zombie);
+    void zombie.then(() => {
+      this.zombieRuns.delete(zombie);
     });
   }
 

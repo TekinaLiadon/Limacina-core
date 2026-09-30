@@ -2,10 +2,14 @@ import { Injectable, Logger } from "@nestjs/common";
 import {
   DEFAULT_CACHE_TTL_MS,
   MAX_CACHE_ENTRIES,
-  isValidCacheTtl,
+  assertValidCacheTtl,
+  parseCacheValue,
+  serializeCacheValue,
   type ICacheStore,
 } from "../cache/cache_store";
 import type { CacheEntryRecord, MemoryDb } from "./memory-db";
+
+const CORRUPTED_VALUE_MESSAGE = "Повреждённое значение в кеш-сторе, ключ удалён";
 
 function entryExpired(entry: CacheEntryRecord): boolean {
   return entry.expiresAt <= Date.now();
@@ -30,33 +34,18 @@ export class CacheMapStore implements ICacheStore {
     }
 
     this.touchEntry(key, entry);
-    try {
-      return JSON.parse(entry.value) as T;
-    } catch {
+    const parsed = parseCacheValue<T>(this.logger, key, entry.value, CORRUPTED_VALUE_MESSAGE);
+    if (parsed === undefined) {
       this.db.cacheEntries.delete(key);
-      this.logger.error({ key }, "Повреждённое значение в кеш-сторе, ключ удалён");
-      return undefined;
     }
+    return parsed;
   }
 
   async set<T>(key: string, value: T, ttlMs?: number): Promise<void> {
-    let payload: string;
-    try {
-      payload = JSON.stringify(value);
-    } catch (error) {
-      this.logger.error({ err: error, key }, "Несериализуемое значение не сохранено в кеш");
-      return;
-    }
+    if (!assertValidCacheTtl(this.logger, key, ttlMs)) return;
 
-    if (payload === undefined) {
-      this.logger.error({ key }, "Несериализуемое значение не сохранено в кеш");
-      return;
-    }
-
-    if (!isValidCacheTtl(ttlMs)) {
-      this.logger.error({ key, ttlMs }, "Невалидный ttl, значение не сохранено в кеш");
-      return;
-    }
+    const payload = serializeCacheValue(this.logger, key, value);
+    if (payload === undefined) return;
 
     if (!this.db.cacheEntries.has(key)) {
       this.evictFilledSlots();

@@ -204,7 +204,8 @@ export class UserContentService {
     await withPathLock(`active-skin:${ownerUuid}`, async () => {
       const previousActiveId = await this.findActiveSkinId(ownerUuid);
 
-      await this.store.updateActiveSkin(ownerUuid, skinId);
+      const activated = await this.store.updateActiveSkin(ownerUuid, skinId);
+      if (!activated) throw new NotFoundException("Скин не найден");
       try {
         await this.syncProfileTexture(ownerUuid, {
           skinUrl: item.filePath,
@@ -235,7 +236,13 @@ export class UserContentService {
         await this.store.deactivateAllSkins(ownerUuid);
         return;
       }
-      await this.store.updateActiveSkin(ownerUuid, previousActiveId);
+      const restored = await this.store.updateActiveSkin(ownerUuid, previousActiveId);
+      if (!restored) {
+        this.logger.error(
+          { ownerUuid, previousActiveId },
+          "Предыдущий активный скин не найден при откате",
+        );
+      }
     } catch (error) {
       this.logger.error(
         { err: error, ownerUuid, previousActiveId },
@@ -255,7 +262,14 @@ export class UserContentService {
       const remaining = await this.store.findByUserUuid(userUuid, "skin");
       const latest = lastById(remaining);
       if (latest) {
-        await this.store.updateActiveSkin(userUuid, latest.id);
+        const activated = await this.store.updateActiveSkin(userUuid, latest.id);
+        if (!activated) {
+          this.logger.warn(
+            { userUuid, skinId: latest.id },
+            "Скин удалён конкурентно — синк пропущен",
+          );
+          return;
+        }
         await this.syncProfileTexture(userUuid, {
           skinUrl: latest.filePath,
           skinModel: latest.skinModel ?? null,

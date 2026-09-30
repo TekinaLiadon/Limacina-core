@@ -32,6 +32,22 @@ describe("Глобальный rate limit по IP", (): void => {
       error: "Too Many Requests",
     });
     expect(res.body.message).toMatch(/^Слишком много запросов\. Повторите через \d+ с\.$/);
+    expect(Number(res.headers["retry-after"])).toBeGreaterThanOrEqual(1);
+  });
+
+  it("429-ответ несёт заголовок Retry-After с оставшимся окном", async (): Promise<void> => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await supertest(app.server).get("/ping").set("X-Forwarded-For", "10.0.0.2").expect(200);
+    }
+
+    const res = await supertest(app.server)
+      .get("/ping")
+      .set("X-Forwarded-For", "10.0.0.2")
+      .expect(429);
+
+    const retryAfter = Number(res.headers["retry-after"]);
+    expect(retryAfter).toBeGreaterThanOrEqual(1);
+    expect(retryAfter).toBeLessThanOrEqual(60);
   });
 
   it("другой IP не затронут бакетом первого", async (): Promise<void> => {

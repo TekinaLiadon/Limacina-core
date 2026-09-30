@@ -178,7 +178,7 @@ describe("TechnicalRebuildService", (): void => {
       expect(rebuild.getRebuildStatus().lastError).toBeNull();
     });
 
-    it("выполняет шаги в порядке: pull → install → build → migrate (TASK-267.7)", async () => {
+    it("выполняет шаги в порядке: pull → install → build → migrate", async () => {
       const { rebuild } = makeRebuildService();
       const steps = stubPipeline(rebuild);
 
@@ -188,7 +188,7 @@ describe("TechnicalRebuildService", (): void => {
       expect(steps()).toEqual(["gitPull", "installDependencies", "buildBinary", "runMigrations"]);
     });
 
-    it("отклоняет пересборку при запланированной остановке сервера (TASK-267.8)", async () => {
+    it("отклоняет пересборку при запланированной остановке сервера", async () => {
       const { rebuild, restart, signalled } = makeRebuildService();
       const steps = stubPipeline(rebuild);
 
@@ -204,7 +204,7 @@ describe("TechnicalRebuildService", (): void => {
       expect(rebuild.getRebuildStatus().inProgress).toBe(false);
     });
 
-    it("отклоняет рестарт при активной пересборке (TASK-267.8)", async () => {
+    it("отклоняет рестарт при активной пересборке", async () => {
       const { rebuild, restart, signalled } = makeRebuildService();
       let release = (): void => {};
       const gate = new Promise<void>((resolve) => {
@@ -225,7 +225,7 @@ describe("TechnicalRebuildService", (): void => {
       expect(rebuild.getRebuildStatus().inProgress).toBe(false);
     });
 
-    it("откатывает бинарник при упавших миграциях после успешной сборки (TASK-267.7)", async () => {
+    it("откатывает бинарник при упавших миграциях после успешной сборки", async () => {
       const { rebuild, signalled } = makeRebuildService();
       stubPipeline(rebuild);
       rebuild.runMigrations = async () => {
@@ -432,7 +432,7 @@ describe("TechnicalRebuildService", (): void => {
       });
     });
 
-    it("onApplicationShutdown прерывает активный шаг конвейера (TASK-267.8)", async () => {
+    it("onApplicationShutdown прерывает активный шаг конвейера", async () => {
       const { rebuild } = makeRebuildService();
       const dir = makeTempProject({
         "package.json": JSON.stringify({

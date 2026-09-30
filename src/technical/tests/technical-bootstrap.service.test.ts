@@ -75,7 +75,7 @@ describe("TechnicalBootstrapService", (): void => {
       }
     });
 
-    it("отклоняет короткий пароль до создания владельца (TASK-265)", async () => {
+    it("отклоняет короткий пароль до создания владельца", async () => {
       const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
       const adminStore = new AdminMapStore();
       const authStore = new AuthMapStore();
@@ -247,7 +247,7 @@ describe("TechnicalBootstrapService", (): void => {
       }
     });
 
-    it("при сбое отката auth-записи повторяет deleteUser и завершает init-owner явной ошибкой (TASK-269.16)", async () => {
+    it("при сбое отката auth-записи повторяет deleteUser и завершает init-owner явной ошибкой", async () => {
       const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
       const adminStore = new AdminMapStore();
       const authStore = new AuthMapStore();
@@ -281,7 +281,7 @@ describe("TechnicalBootstrapService", (): void => {
       }
     });
 
-    it("неудавшийся откат auth-записи не оставляет второго владельца при повторном init-owner (TASK-269.16)", async () => {
+    it("неудавшийся откат auth-записи не оставляет второго владельца при повторном init-owner", async () => {
       const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
       const adminStore = new AdminMapStore();
       const authStore = new AuthMapStore();
@@ -320,7 +320,7 @@ describe("TechnicalBootstrapService", (): void => {
     });
   });
 
-  describe("диагностика ошибок bootstrap-токена (TASK-267.17)", () => {
+  describe("диагностика ошибок bootstrap-токена", () => {
     it("ошибка проверки владельца логируется отдельным сообщением без создания токена", async () => {
       const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
       const adminStore = new AdminMapStore();

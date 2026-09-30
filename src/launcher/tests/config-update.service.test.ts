@@ -21,7 +21,7 @@ const validDto = {
   online: true,
 };
 
-describe("ConfigUpdateService — атомарная запись config.toml (TASK-21)", (): void => {
+describe("ConfigUpdateService — атомарная запись config.toml", (): void => {
   let configExisted = false;
 
   beforeAll(() => {

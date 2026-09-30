@@ -4,7 +4,6 @@ import {
   insertQuery,
   updateQuery,
   execute,
-  executeInTransaction,
   executeInTransactionReturning,
   sqlDialect,
   toBoolean,
@@ -61,7 +60,7 @@ export interface IUserContentStore {
     id: number,
     type: ContentType,
   ): Promise<ContentDeletionResult | undefined>;
-  updateActiveSkin(userUuid: string, skinId: number): Promise<void>;
+  updateActiveSkin(userUuid: string, skinId: number): Promise<boolean>;
   deactivateAllSkins(userUuid: string): Promise<void>;
 }
 
@@ -231,7 +230,14 @@ export class UserContentPostgresStore implements IUserContentStore {
     return rowToItem(row);
   }
 
-  async updateActiveSkin(userUuid: string, skinId: number): Promise<void> {
+  async updateActiveSkin(userUuid: string, skinId: number): Promise<boolean> {
+    const targetQuery = selectQuery("id")
+      .from(TABLES.user_skins)
+      .where("id = $1 AND user_uuid = $2", skinId, userUuid)
+      .build();
+    const target = await execute(targetQuery.sql, targetQuery.values);
+    if (target.rows.length === 0) return false;
+
     const deactivate = updateQuery()
       .from(TABLES.user_skins)
       .set("active", false)
@@ -241,10 +247,11 @@ export class UserContentPostgresStore implements IUserContentStore {
     const activate = updateQuery()
       .from(TABLES.user_skins)
       .set("active", true)
-      .where("id = $1", skinId)
+      .where("id = $1 AND user_uuid = $2", skinId, userUuid)
       .build();
 
-    await executeInTransaction([deactivate, activate]);
+    const results = await executeInTransactionReturning<ContentRow>([deactivate, activate]);
+    return (results[1]?.count ?? 0) > 0;
   }
 
   async deactivateAllSkins(userUuid: string): Promise<void> {
@@ -390,13 +397,15 @@ export class UserContentMapStore implements IUserContentStore {
     return { item, remainingCount };
   }
 
-  async updateActiveSkin(userUuid: string, skinId: number): Promise<void> {
-    const { skins } = this;
-    for (const item of skins.values()) {
+  async updateActiveSkin(userUuid: string, skinId: number): Promise<boolean> {
+    const target = this.skins.get(skinId);
+    if (!target || target.userUuid !== userUuid) return false;
+    for (const item of this.skins.values()) {
       if (item.userUuid !== userUuid) continue;
       const updated: UserContentItem = { ...item, active: item.id === skinId };
-      skins.set(item.id, updated);
+      this.skins.set(item.id, updated);
     }
+    return true;
   }
 
   async deactivateAllSkins(userUuid: string): Promise<void> {

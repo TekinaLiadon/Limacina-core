@@ -19,8 +19,9 @@ import { V1PanelRconController } from "./panel/rcon.controller";
 import { V1PanelServerController } from "./panel/server.controller";
 import { V1PanelUsersController } from "./panel/users.controller";
 import { V1StatusController } from "./common/status/status.controller";
+import { V1_API_PREFIX } from "./v1-prefix";
 
-export const V1_API_PREFIX = "v1";
+export { V1_API_PREFIX };
 
 @Module({
   imports: [

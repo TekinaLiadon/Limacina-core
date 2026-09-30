@@ -183,7 +183,7 @@ describe("UserContentService — нейминг файлов и условный
   });
 });
 
-describe("UserContentService — откат при сбоях атомарности (TASK-217.2)", (): void => {
+describe("UserContentService — откат при сбоях атомарности", (): void => {
   let service: UserContentService;
   let store: UserContentMapStore;
   let config: AppConfigType;
@@ -267,7 +267,7 @@ describe("UserContentService — откат при сбоях атомарнос
   });
 });
 
-describe("UserContentService — unlink с учётом профильных ссылок (TASK-99)", (): void => {
+describe("UserContentService — unlink с учётом профильных ссылок", (): void => {
   let service: UserContentService;
   let store: UserContentMapStore;
   let profileStore: YggdrasilMapStore;
@@ -297,7 +297,7 @@ describe("UserContentService — unlink с учётом профильных с�
 
   const localPathOf = (url: string): string => `public/${url.replace(`${config.BASE_URL}/`, "")}`;
 
-  it("удаление активного скина, на который ссылался профиль, физически удаляет файл (TASK-411.5)", async () => {
+  it("удаление активного скина, на который ссылался профиль, физически удаляет файл", async () => {
     const bytes = pngBytes(31);
     const userUuid = "prof-skin-0001";
     const upload = await service.uploadSkin(userUuid, "profskin", bytes);
@@ -312,7 +312,7 @@ describe("UserContentService — unlink с учётом профильных с�
     expect((await profileStore.findProfileByUuid(userUuid))?.skinUrl).toBeNull();
   });
 
-  it("удаление плаща, на который ссылался профиль, физически удаляет файл (TASK-411.5)", async () => {
+  it("удаление плаща, на который ссылался профиль, физически удаляет файл", async () => {
     const bytes = capeBytes(32);
     const userUuid = "prof-cape-0001";
     await profileStore.saveProfile({ uuid: userUuid, userId: userUuid, username: "profcape" });
@@ -381,7 +381,7 @@ describe("UserContentService — unlink с учётом профильных с�
   });
 });
 
-describe("UserContentService — удаление скинов и активность (TASK-269.6)", (): void => {
+describe("UserContentService — удаление скинов и активность", (): void => {
   let service: UserContentService;
   let store: UserContentMapStore;
   let profileStore: YggdrasilMapStore;
@@ -502,7 +502,7 @@ describe("UserContentService — удаление скинов и активно
     expect((await okProfiles.findProfileByUuid(userUuid))?.skinUrl).toBe(third.url);
   });
 
-  it("интерливинг двух смен даёт согласованные active и skinUrl профиля (TASK-411.16)", async () => {
+  it("интерливинг двух смен даёт согласованные active и skinUrl профиля", async () => {
     const userUuid = "il-active-0001";
     const username = "ilactive";
     const { first, second, third } = await uploadThree(userUuid, username);
@@ -526,7 +526,7 @@ describe("UserContentService — удаление скинов и активно
   });
 });
 
-describe("UserContentService — откат загрузки плаща при сбое синка профиля (TASK-269.9)", (): void => {
+describe("UserContentService — откат загрузки плаща при сбое синка профиля", (): void => {
   let store: UserContentMapStore;
   let config: AppConfigType;
   const writtenFiles: string[] = [];
@@ -595,7 +595,7 @@ describe("UserContentService — откат загрузки плаща при �
   });
 });
 
-describe("UserContentService — сериализация операций над одним файлом (TASK-269.10)", (): void => {
+describe("UserContentService — сериализация операций над одним файлом", (): void => {
   let service: UserContentService;
   let store: GatedDeleteStore;
   let config: AppConfigType;

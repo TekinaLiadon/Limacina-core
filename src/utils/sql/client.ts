@@ -15,13 +15,21 @@ let sqlClientOverride: SqlClient | undefined;
 let dialectOverride: SqlDialectName | undefined;
 let cachedDialect: SqlDialect | undefined;
 
+function assertTestRuntime(): void {
+  if (!Bun.main.endsWith(".test.ts")) {
+    throw new Error("Подмена SQL-клиента доступна только в тестовом окружении (bun:test)");
+  }
+}
+
 export function overrideSqlClient(client: SqlClient, dialect?: SqlDialectName): void {
+  assertTestRuntime();
   sqlClientOverride = client;
   dialectOverride = dialect;
   cachedDialect = undefined;
 }
 
 export function resetSqlClient(): void {
+  assertTestRuntime();
   sqlClientOverride = undefined;
   dialectOverride = undefined;
   cachedDialect = undefined;

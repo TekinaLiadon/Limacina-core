@@ -40,10 +40,10 @@ export interface IAdminStore {
   saveUser(user: AdminUser): Promise<void>;
   searchUsers(filter: UsersFilter): Promise<UsersPage>;
   searchDeletedUsers(filter: UsersFilter): Promise<DeletedUsersPage>;
-  setApproved(username: string, approved: boolean): Promise<boolean>;
-  setBanned(username: string, banned: boolean): Promise<boolean>;
-  setRole(username: string, role: string): Promise<boolean>;
-  deleteUser(username: string): Promise<AdminUser | undefined>;
+  setApproved(username: string, approved: boolean, expectedRole?: string): Promise<boolean>;
+  setBanned(username: string, banned: boolean, expectedRole?: string): Promise<boolean>;
+  setRole(username: string, role: string, expectedRole?: string): Promise<boolean>;
+  deleteUser(username: string, expectedRole?: string): Promise<AdminUser | undefined>;
   findDeletedByUsername(username: string): Promise<DeletedUser | undefined>;
   restoreUser(username: string): Promise<void>;
   removeDeletedDuplicates(username: string): Promise<number>;
@@ -126,34 +126,41 @@ export class AdminMapStore implements IAdminStore {
     return this.searchUserRecords(filter, false, toAdminView);
   }
 
-  async setApproved(username: string, approved: boolean): Promise<boolean> {
+  async setApproved(username: string, approved: boolean, expectedRole?: string): Promise<boolean> {
     const user = this.liveUser(username);
     if (!user) return false;
+    if (!this.roleMatches(user, expectedRole)) return false;
     user.approved = approved;
     return true;
   }
 
-  async setBanned(username: string, banned: boolean): Promise<boolean> {
+  async setBanned(username: string, banned: boolean, expectedRole?: string): Promise<boolean> {
     const user = this.liveUser(username);
     if (!user) return false;
+    if (!this.roleMatches(user, expectedRole)) return false;
     user.banned = banned;
     return true;
   }
 
-  async setRole(username: string, role: string): Promise<boolean> {
+  async setRole(username: string, role: string, expectedRole?: string): Promise<boolean> {
     const user = this.liveUser(username);
     if (!user) return false;
+    if (!this.roleMatches(user, expectedRole)) return false;
     user.role = role;
     return true;
   }
 
-  async deleteUser(username: string): Promise<AdminUser | undefined> {
+  async deleteUser(username: string, expectedRole?: string): Promise<AdminUser | undefined> {
     const user = this.liveUser(username);
-    if (!user) return undefined;
+    if (!user || !this.roleMatches(user, expectedRole)) return undefined;
 
     user.deleted = true;
     user.deletedAt = new Date();
     return toAdminView(user);
+  }
+
+  private roleMatches(user: MemoryUserRecord, expectedRole: string | undefined): boolean {
+    return expectedRole === undefined || user.role === expectedRole;
   }
 
   async searchDeletedUsers(filter: UsersFilter): Promise<DeletedUsersPage> {

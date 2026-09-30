@@ -128,7 +128,7 @@ contractDescribeEach("контракт IAuthStore", (driver) => {
     expect((await ctx.store.findByUsername(user.username))?.approved).toBe(true);
   });
 
-  it("setApproved/setBanned/updateRole возвращают признак применения (TASK-267.13)", async () => {
+  it("setApproved/setBanned/updateRole возвращают признак применения", async () => {
     const user = await ctx.makeUser();
 
     expect(await ctx.store.setApproved(user.uuid, true)).toBe(true);
@@ -144,6 +144,23 @@ contractDescribeEach("контракт IAuthStore", (driver) => {
     expect(await ctx.store.setApproved(user.uuid, true)).toBe(false);
     expect(await ctx.store.setBanned(user.uuid, true)).toBe(false);
     expect(await ctx.store.updateRole(user.uuid, "admin")).toBe(false);
+  });
+
+  it("условная запись с expectedRole отклоняет изменившуюся роль", async () => {
+    const user = await ctx.makeUser();
+
+    expect(await ctx.store.setApproved(user.uuid, false, "moderator")).toBe(false);
+    expect(await ctx.store.setBanned(user.uuid, true, "moderator")).toBe(false);
+    expect(await ctx.store.updateRole(user.uuid, "moderator", "moderator")).toBe(false);
+
+    const untouched = await ctx.store.findByUsername(user.username);
+    expect(untouched?.approved).toBe(user.approved);
+    expect(untouched?.banned).toBe(user.banned);
+    expect(untouched?.role).toBe(user.role);
+
+    expect(await ctx.store.setApproved(user.uuid, false, user.role)).toBe(true);
+    expect(await ctx.store.setBanned(user.uuid, true, user.role)).toBe(true);
+    expect(await ctx.store.updateRole(user.uuid, "admin", user.role)).toBe(true);
   });
 
   it("setBanned переключает бан в обе стороны", async () => {
@@ -183,7 +200,7 @@ contractDescribeEach("контракт IAuthStore", (driver) => {
     expect(await ctx.store.findRefresh(jti)).toBeUndefined();
   });
 
-  it("replacePassword с keepRefreshJti сохраняет указанный токен и отзывает остальные (TASK-411.13)", async () => {
+  it("replacePassword с keepRefreshJti сохраняет указанный токен и отзывает остальные", async () => {
     const user = await ctx.makeUser();
     const keptJti = generateUuid();
     const revokedJti = generateUuid();

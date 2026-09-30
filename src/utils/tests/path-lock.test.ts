@@ -9,7 +9,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-describe("withPathLock — сериализация операций (TASK-411.15/411.16)", () => {
+describe("withPathLock — сериализация операций", () => {
   it("выполняет функции над одним ключом строго по очереди", async () => {
     const events: string[] = [];
     const firstStarted = deferred();

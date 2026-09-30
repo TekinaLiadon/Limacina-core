@@ -5,6 +5,7 @@ process.env["LOG_LEVEL"] = "info";
 
 import pino from "pino";
 import { describe, expect, it } from "bun:test";
+import { mkdirSync } from "node:fs";
 import type { Writable } from "node:stream";
 import { join } from "node:path";
 import { buildPinoHttpOptions } from "../pino-options";
@@ -61,7 +62,7 @@ describe("buildPinoHttpOptions", (): void => {
     expect(line).not.toContain("nested-client-token");
   });
 
-  it("warn проходит при уровне info — security-события видны в проде (TASK-67)", (): void => {
+  it("warn проходит при уровне info — security-события видны в проде", (): void => {
     const lines: string[] = [];
     buildLogger(lines).warn({ event: "login_failed" }, "Подозрительная активность");
 
@@ -69,7 +70,8 @@ describe("buildPinoHttpOptions", (): void => {
     expect(lines[0]).toContain("Подозрительная активность");
   });
 
-  it("прод: строка лога уходит и в файл, и в stdout (TASK-75)", async (): Promise<void> => {
+  it("прод: строка лога уходит и в файл, и в stdout", async (): Promise<void> => {
+    mkdirSync(join(process.cwd(), "logs"), { recursive: true });
     const originalStdoutWrite = process.stdout.write;
     const stdoutChunks: string[] = [];
     process.stdout.write = ((chunk: unknown): boolean => {
@@ -99,7 +101,7 @@ describe("buildPinoHttpOptions", (): void => {
     expect(fileLine).toContain("prod-stdout-line");
   });
 
-  it("редактирует old_password и new_password на верхнем и вложенном уровне (TASK-58)", (): void => {
+  it("редактирует old_password и new_password на верхнем и вложенном уровне", (): void => {
     const lines: string[] = [];
     buildLogger(lines).info(
       {

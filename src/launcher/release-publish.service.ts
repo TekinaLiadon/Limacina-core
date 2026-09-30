@@ -22,14 +22,11 @@ import {
 import type { LauncherReleaseResponseDto } from "./dto/dto";
 import { removeFilesQuietly } from "../utils/fs";
 import {
-  LAUNCHER_VERSION_REGEX,
   PUBLIC_DIR,
   RELEASES_DIR,
-  RESERVED_LAUNCHER_VERSION,
-  RESERVED_VERSION_MESSAGE,
-  VERSION_FORMAT_MESSAGE,
   buildUpdaterArtifactName,
   findUpdaterPlatform,
+  validateLauncherVersion,
 } from "./launcher-files";
 import {
   RELEASE_LOCK_TOKEN_FILENAME,
@@ -158,12 +155,7 @@ export class ReleasePublishService {
       if (!version) {
         throw new BadRequestException("Не передано поле version");
       }
-      if (version === RESERVED_LAUNCHER_VERSION) {
-        throw new BadRequestException(RESERVED_VERSION_MESSAGE);
-      }
-      if (!LAUNCHER_VERSION_REGEX.test(version)) {
-        throw new BadRequestException(VERSION_FORMAT_MESSAGE);
-      }
+      validateLauncherVersion(version);
       if (artifacts.length === 0) {
         throw new BadRequestException("Нужен хотя бы один артефакт платформы");
       }

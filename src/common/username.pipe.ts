@@ -1,8 +1,6 @@
 import { BadRequestException, Injectable, type PipeTransform } from "@nestjs/common";
 import { validationMessages } from "./validation-messages";
-import { validateUsernamePattern } from "./username-policy";
-
-const MAX_USERNAME_LENGTH = 64;
+import { MAX_USERNAME_LENGTH, validateUsernamePattern } from "./username-policy";
 
 @Injectable()
 export class UsernamePipe implements PipeTransform {

@@ -25,12 +25,12 @@ export class AuthProxyStore implements IAuthStore {
     return false;
   }
 
-  async setApproved(uuid: string, approved: boolean): Promise<boolean> {
+  async setApproved(uuid: string, approved: boolean, _expectedRole?: string): Promise<boolean> {
     this.warnUnsupported("setApproved", { uuid, approved });
     throw new NotImplementedException(UNSUPPORTED_MESSAGE);
   }
 
-  async setBanned(uuid: string, banned: boolean): Promise<boolean> {
+  async setBanned(uuid: string, banned: boolean, _expectedRole?: string): Promise<boolean> {
     this.warnUnsupported("setBanned", { uuid, banned });
     throw new NotImplementedException(UNSUPPORTED_MESSAGE);
   }
@@ -44,7 +44,7 @@ export class AuthProxyStore implements IAuthStore {
     throw new NotImplementedException(UNSUPPORTED_MESSAGE);
   }
 
-  async updateRole(uuid: string, role: string): Promise<boolean> {
+  async updateRole(uuid: string, role: string, _expectedRole?: string): Promise<boolean> {
     this.warnUnsupported("updateRole", { uuid, role });
     throw new NotImplementedException(UNSUPPORTED_MESSAGE);
   }

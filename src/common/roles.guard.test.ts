@@ -68,7 +68,7 @@ describe("RolesGuard", (): void => {
     expect(() => guard.canActivate(buildContext({ role: "hacker" }))).toThrow(ForbiddenException);
   });
 
-  it("неизвестная роль в @Roles запрещает доступ даже владельцу (TASK-18)", (): void => {
+  it("неизвестная роль в @Roles запрещает доступ даже владельцу", (): void => {
     const guard = buildGuard({ [ROLES_KEY]: ["superadmin"] });
     expect(() => guard.canActivate(buildContext({ role: "owner" }))).toThrow(ForbiddenException);
     expect(() => guard.canActivate(buildContext({ role: "user" }))).toThrow(ForbiddenException);

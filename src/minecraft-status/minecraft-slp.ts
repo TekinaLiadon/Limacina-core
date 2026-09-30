@@ -1,4 +1,5 @@
 import { Socket } from "node:net";
+import { concatBytes } from "../utils/bytes";
 
 export interface MinecraftStatus {
   online: number;
@@ -97,32 +98,21 @@ export function readVarInt(bytes: Uint8Array, offset: number): { value: number; 
   throw new Error("VarInt truncated");
 }
 
-function concat(...parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((sum, part) => sum + part.length, 0);
-  const merged = new Uint8Array(total);
-  let cursor = 0;
-  for (const part of parts) {
-    merged.set(part, cursor);
-    cursor += part.length;
-  }
-  return merged;
-}
-
 export function buildHandshakePacket(host: string, port: number): Uint8Array {
   const hostBytes = new TextEncoder().encode(host);
-  const body = concat(
+  const body = concatBytes([
     writeVarInt(-1),
     writeVarInt(hostBytes.length),
     hostBytes,
     Uint8Array.from([(port >> 8) & 0xff, port & 0xff]),
     writeVarInt(1),
-  );
-  const packet = concat(Uint8Array.from([0]), body);
-  return concat(writeVarInt(packet.length), packet);
+  ]);
+  const packet = concatBytes([Uint8Array.from([0]), body]);
+  return concatBytes([writeVarInt(packet.length), packet]);
 }
 
 export function buildStatusRequestPacket(): Uint8Array {
-  return concat(writeVarInt(1), Uint8Array.from([0]));
+  return concatBytes([writeVarInt(1), Uint8Array.from([0])]);
 }
 
 function parsePlayerCount(value: unknown, label: string): number {
@@ -176,7 +166,7 @@ function assertLength(declared: number, available: number, label: string): void 
 
 function readResponseHeader(chunks: Uint8Array[], received: number): number | null | undefined {
   try {
-    const header = readVarInt(concat(...chunks), 0);
+    const header = readVarInt(concatBytes(chunks), 0);
     if (header.value < 0 || header.value > MAX_RESPONSE_BYTES) return null;
     return header.offset + header.value;
   } catch {
@@ -244,7 +234,7 @@ export async function status(host: string, port: number): Promise<StatusResult> 
 
         if (received < expectedTotal) return;
 
-        resolve(finish({ ok: true, status: parseStatusResponse(concat(...chunks)) }));
+        resolve(finish({ ok: true, status: parseStatusResponse(concatBytes(chunks)) }));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         resolve(finish({ ok: false, error: `Некорректный ответ игрового сервера: ${message}` }));

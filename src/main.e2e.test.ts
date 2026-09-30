@@ -55,7 +55,7 @@ describe("Bootstrap реального AppModule", () => {
     expect(html).toContain("Scalar");
   });
 
-  it("API-маршруты живут под /v1, Yggdrasil — в корне (TASK-83)", async () => {
+  it("API-маршруты живут под /v1, Yggdrasil — в корне", async () => {
     const v1Response = await fetch(`${baseUrl}/v1/common/status`);
     expect(v1Response.status).not.toBe(404);
 

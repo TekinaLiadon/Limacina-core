@@ -55,7 +55,7 @@ describe("multipart-file", () => {
     expect(existsSync(tempPath)).toBe(false);
   });
 
-  it("streamPartToFile закрывает writer (Bun FileSink) на error-пути (TASK-411.6)", async () => {
+  it("streamPartToFile закрывает writer (Bun FileSink) на error-пути", async () => {
     const tempPath = join(tmpRoot, "leaked.zip");
     mkdirSync(tmpRoot, { recursive: true });
     let endCalls = 0;

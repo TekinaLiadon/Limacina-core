@@ -5,13 +5,13 @@ export const ROLE_WEIGHTS = {
   owner: 4,
 } as const;
 
-type UserRole = keyof typeof ROLE_WEIGHTS;
+export type UserRole = keyof typeof ROLE_WEIGHTS;
 
 export const ASSIGNABLE_ROLES = ["admin", "moderator", "user"] as const;
 export type AssignableRole = (typeof ASSIGNABLE_ROLES)[number];
 
 export function isKnownRole(role: string): role is UserRole {
-  return role in ROLE_WEIGHTS;
+  return Object.hasOwn(ROLE_WEIGHTS, role);
 }
 
 export function roleWeight(role: string): number {

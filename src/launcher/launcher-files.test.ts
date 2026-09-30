@@ -24,7 +24,7 @@ describe("isSupportedPlatform", (): void => {
     expect(isSupportedPlatform("templeos", "x86_64")).toBe(false);
   });
 
-  it("прототипные ключи не проходят как os (TASK-66)", (): void => {
+  it("прототипные ключи не проходят как os", (): void => {
     expect(isSupportedPlatform("toString", "x86_64")).toBe(false);
     expect(isSupportedPlatform("constructor", "x86_64")).toBe(false);
     expect(isSupportedPlatform("hasOwnProperty", "x86_64")).toBe(false);

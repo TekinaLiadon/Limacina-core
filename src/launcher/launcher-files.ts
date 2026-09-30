@@ -1,3 +1,4 @@
+import { BadRequestException } from "@nestjs/common";
 import { join } from "node:path";
 
 export const LAUNCHER_VERSION_REGEX = /^\d+\.\d+\.\d+$/;
@@ -7,6 +8,17 @@ export const VERSION_FORMAT_MESSAGE = "Версия должна быть в ф�
 export const RESERVED_LAUNCHER_VERSION = "0.0.0";
 
 export const RESERVED_VERSION_MESSAGE = "Версия 0.0.0 зарезервирована и не может быть опубликована";
+
+export function validateLauncherVersion(version: string): void {
+  if (version === RESERVED_LAUNCHER_VERSION) {
+    throw new BadRequestException(RESERVED_VERSION_MESSAGE);
+  }
+  if (!LAUNCHER_VERSION_REGEX.test(version)) {
+    throw new BadRequestException(VERSION_FORMAT_MESSAGE);
+  }
+}
+
+export const CONFIG_FILE = "config.toml";
 
 export const PUBLIC_DIR = "public";
 
@@ -73,9 +85,18 @@ export const SUPPORTED_OS: string[] = Object.keys(SUPPORTED_PLATFORMS);
 
 export const SUPPORTED_ARCHS: string[] = [...new Set(Object.values(SUPPORTED_PLATFORMS).flat())];
 
-export const PLATFORM_FIELD_NAMES: string[] = Object.entries(SUPPORTED_PLATFORMS).flatMap(
-  ([os, archs]) => archs.map((arch) => `${os}_${arch}`),
+export interface PlatformField {
+  os: string;
+  arch: string;
+}
+
+export const PLATFORM_FIELDS: Record<string, PlatformField> = Object.fromEntries(
+  Object.entries(SUPPORTED_PLATFORMS).flatMap(([os, archs]) =>
+    archs.map((arch) => [`${os}_${arch}`, { os, arch }]),
+  ),
 );
+
+export const PLATFORM_FIELD_NAMES: string[] = Object.keys(PLATFORM_FIELDS);
 
 export function isSupportedPlatform(os: string, arch: string): boolean {
   const archs = Object.hasOwn(SUPPORTED_PLATFORMS, os) ? SUPPORTED_PLATFORMS[os] : undefined;

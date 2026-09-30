@@ -159,7 +159,8 @@ contractDescribeEach("контракт IUserContentStore", (driver) => {
     const secondSkin = await ctx.store.save(first.uuid, "skins/second.png", "skin");
     const foreignSkin = await ctx.store.save(second.uuid, "skins/foreign.png", "skin");
 
-    await ctx.store.updateActiveSkin(first.uuid, secondSkin.id);
+    const activated = await ctx.store.updateActiveSkin(first.uuid, secondSkin.id);
+    expect(activated).toBe(true);
 
     const skins = await ctx.store.findByUserUuid(first.uuid, "skin");
     const activeById = new Map(skins.map((item) => [item.id, item.active]));
@@ -170,6 +171,31 @@ contractDescribeEach("контракт IUserContentStore", (driver) => {
     expect(foreign.map((item) => item.active)).toEqual([false]);
 
     expect(foreignSkin.id).toBeGreaterThan(0);
+  });
+
+  it("updateActiveSkin с чужим id отвечает false и не меняет состояние", async () => {
+    const first = await ctx.makeUser();
+    const second = await ctx.makeUser();
+    const ownSkin = await ctx.store.save(first.uuid, "skins/own.png", "skin");
+    const foreignSkin = await ctx.store.save(second.uuid, "skins/foreign.png", "skin");
+
+    expect(await ctx.store.updateActiveSkin(first.uuid, ownSkin.id)).toBe(true);
+    expect(await ctx.store.updateActiveSkin(second.uuid, foreignSkin.id)).toBe(true);
+
+    expect(await ctx.store.updateActiveSkin(first.uuid, foreignSkin.id)).toBe(false);
+
+    expect((await ctx.store.findById(ownSkin.id, "skin"))?.active).toBe(true);
+    expect((await ctx.store.findById(foreignSkin.id, "skin"))?.active).toBe(true);
+  });
+
+  it("updateActiveSkin с несуществующим id отвечает false и не меняет состояние", async () => {
+    const first = await ctx.makeUser();
+    const ownSkin = await ctx.store.save(first.uuid, "skins/own.png", "skin");
+
+    expect(await ctx.store.updateActiveSkin(first.uuid, ownSkin.id)).toBe(true);
+    expect(await ctx.store.updateActiveSkin(first.uuid, ownSkin.id + 10_000)).toBe(false);
+
+    expect((await ctx.store.findById(ownSkin.id, "skin"))?.active).toBe(true);
   });
 
   it("deactivateAllSkins снимает активный флаг и не трогает чужие", async () => {

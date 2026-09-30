@@ -14,7 +14,9 @@ import { streamFileToReply } from "../utils/file-stream";
 
 const LAUNCHER_DIR = "public/launcher";
 
-export const FILES_LIST_EXCLUDED_FOLDERS: string[] = ["mods"];
+export const MODS_FOLDER = "mods";
+
+export const FILES_LIST_EXCLUDED_FOLDERS: string[] = [MODS_FOLDER];
 
 export const FILES_RESCAN_INTERVAL_MS = 30_000;
 

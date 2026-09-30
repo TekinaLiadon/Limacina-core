@@ -273,7 +273,7 @@ describe("ReleasePublishService — публикация релиза", (): void
     }
   });
 
-  it("публикация своей версии не восстанавливает чужие crash-бэкапы — полный recover делает свип при старте (TASK-411.8)", async () => {
+  it("публикация своей версии не восстанавливает чужие crash-бэкапы — полный recover делает свип при старте", async () => {
     const backupName = `.old-4.4.13-${randomUUID()}`;
     mkdirSync(join(RELEASES_ROOT, backupName), { recursive: true });
     writeFileSync(
@@ -353,7 +353,7 @@ describe("ReleasePublishService — публикация релиза", (): void
     );
   });
 
-  describe("токен-лок публикации (TASK-321)", (): void => {
+  describe("токен-лок публикации", (): void => {
     const lockLogger = new Logger("ReleasePublishLockTest");
     const lockPathOf = (version: string): string => join(RELEASES_ROOT, `.lock-${version}`);
     const tokenPathOf = (version: string): string =>

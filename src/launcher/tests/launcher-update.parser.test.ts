@@ -42,7 +42,7 @@ function filePart(fieldname: string, content: string): FakePart {
   return { type: "file", fieldname, file: Readable.from([Buffer.from(content)]) };
 }
 
-describe("parseLauncherUpdateRequest (TASK-20: стриминг в temp-файл)", (): void => {
+describe("parseLauncherUpdateRequest (стриминг в temp-файл)", (): void => {
   afterEach((): void => {
     if (existsSync(UPLOAD_TMP_DIR)) {
       rmSync(UPLOAD_TMP_DIR, { recursive: true, force: true });
@@ -110,7 +110,7 @@ describe("parseLauncherUpdateRequest (TASK-20: стриминг в temp-файл
     expect(readdirSync(UPLOAD_TMP_DIR)).toEqual([]);
   });
 
-  it("передаёт плагину multipart явный лимит размера части (TASK-411.6)", async () => {
+  it("передаёт плагину multipart явный лимит размера части", async () => {
     const { request, capturedOptions } = buildCapturingFakeRequest([]);
 
     await parseLauncherUpdateRequest(request);
@@ -118,7 +118,7 @@ describe("parseLauncherUpdateRequest (TASK-20: стриминг в temp-файл
     expect(capturedOptions()).toEqual({ limits: { fileSize: MULTIPART_FILE_SIZE_LIMIT_BYTES } });
   });
 
-  it("усечённая busboy-часть (truncated) отклоняется как 413, temp подчищен (TASK-411.6)", async () => {
+  it("усечённая busboy-часть (truncated) отклоняется как 413, temp подчищен", async () => {
     mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
     const truncatedFile = Object.assign(Readable.from([Buffer.from("truncated-zip")]), {
       truncated: true,
@@ -138,7 +138,7 @@ describe("parseLauncherUpdateRequest (TASK-20: стриминг в temp-файл
     expect(readdirSync(UPLOAD_TMP_DIR)).toEqual([]);
   });
 
-  it("обрыв итератора частей (лимит плагина) подчищает уже записанные temp (TASK-411.6)", async () => {
+  it("обрыв итератора частей (лимит плагина) подчищает уже записанные temp", async () => {
     mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
     const limitError = Object.assign(new Error("request file too large"), {
       statusCode: 413,
