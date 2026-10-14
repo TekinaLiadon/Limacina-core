@@ -25,7 +25,7 @@ describeFlow("Флоу B: сессия лаунчера", () => {
     await flow?.cleanup();
   });
 
-  it("B1: первый запуск — апдейтер без релизов, конфиг и список версий читаются", async () => {
+  it("B1: первый запуск — апдейтер без релизов, конфиг читается", async () => {
     const latest = await api(flow.baseUrl).get("/v1/launcher/update/latest");
     expect(latest.status).toBe(404);
 
@@ -33,16 +33,6 @@ describeFlow("Флоу B: сессия лаунчера", () => {
     expect(config.status).toBe(200);
     const configBody = (await config.json()) as Record<string, unknown>;
     expect(configBody["projectName"]).toBeString();
-
-    const versions = await api(flow.baseUrl).get("/v1/launcher/update/version");
-    expect(versions.status).toBe(200);
-    const versionsBody = (await versions.json()) as {
-      version: string;
-      platforms: unknown[];
-      versions: { version: string; platforms: unknown[] }[];
-    };
-    expect(versionsBody.version).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(Array.isArray(versionsBody.versions)).toBeTrue();
   });
 
   it("B2: регистрация из лаунчера — сессии нет до одобрения, повторная 409", async () => {

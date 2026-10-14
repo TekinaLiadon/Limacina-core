@@ -1,4 +1,13 @@
-import { existsSync, renameSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  type Stats,
+} from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { Logger } from "@nestjs/common";
 import { PUBLIC_DIR } from "../launcher/launcher-files";
@@ -51,24 +60,39 @@ export function recoverPanelBackups(publicRoot: string, logger: Logger): void {
   const panelDir = join(publicRoot, PANEL_DIR_NAME);
   if (existsSync(panelDir)) return;
 
+  const entry = newestPanelBackupEntry(publicRoot);
+  if (!entry) return;
+
+  const backupPath = join(publicRoot, entry);
+  try {
+    renameSync(backupPath, panelDir);
+    logger.warn(
+      { backup: entry, restored: panelDir },
+      "Каталог панели восстановлен из резервной копии после сбоя деплоя",
+    );
+  } catch (error) {
+    logger.error(
+      { err: error, backup: backupPath },
+      "Не удалось восстановить каталог панели из резервной копии",
+    );
+  }
+}
+
+function newestPanelBackupEntry(publicRoot: string): string | undefined {
+  let newest: { entry: string; mtimeMs: number } | undefined;
   for (const entry of listDirEntriesQuietly(publicRoot)) {
     if (!isPanelBackupEntry(entry)) continue;
-
-    const backupPath = join(publicRoot, entry);
+    let stat: Stats;
     try {
-      renameSync(backupPath, panelDir);
-      logger.warn(
-        { backup: entry, restored: panelDir },
-        "Каталог панели восстановлен из резервной копии после сбоя деплоя",
-      );
-      return;
-    } catch (error) {
-      logger.error(
-        { err: error, backup: backupPath },
-        "Не удалось восстановить каталог панели из резервной копии",
-      );
+      stat = statSync(join(publicRoot, entry));
+    } catch {
+      continue;
+    }
+    if (newest === undefined || stat.mtimeMs > newest.mtimeMs) {
+      newest = { entry, mtimeMs: stat.mtimeMs };
     }
   }
+  return newest?.entry;
 }
 
 export function cleanupPanelBackups(publicRoot: string, logger: Logger): void {
@@ -87,5 +111,35 @@ export function cleanupPanelBackups(publicRoot: string, logger: Logger): void {
         "Не удалось удалить служебный каталог деплоя панели",
       );
     }
+  }
+}
+
+export function moveDirectory(source: string, target: string): void {
+  try {
+    renameSync(source, target);
+    return;
+  } catch (error) {
+    if (!isCrossDeviceError(error)) throw error;
+  }
+  copyDirectorySync(source, target);
+  rmSync(source, { recursive: true, force: true });
+}
+
+function isCrossDeviceError(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && (error as NodeJS.ErrnoException).code === "EXDEV"
+  );
+}
+
+function copyDirectorySync(source: string, target: string): void {
+  mkdirSync(target, { recursive: true });
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    const entryPath = join(source, entry.name);
+    const entryTarget = join(target, entry.name);
+    if (entry.isDirectory()) {
+      copyDirectorySync(entryPath, entryTarget);
+      continue;
+    }
+    copyFileSync(entryPath, entryTarget);
   }
 }

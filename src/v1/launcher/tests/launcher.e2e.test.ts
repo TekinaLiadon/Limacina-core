@@ -20,14 +20,9 @@ import { FilesService, FILES_LIST_EXCLUDED_FOLDERS } from "../../../files/files.
 import { AppConfigToken } from "../../../config/app-config.provider";
 import GlobalConfig from "../../../config/global-config";
 
-const DOWNLOAD_DIR = "public/linux/x86_64";
-const TEST_ZIP = `${DOWNLOAD_DIR}/Limacina-9.9.9-linux-x86_64.zip`;
 const TEST_MOD_FILE = "public/launcher/mods/limacina-exclusion-test-mod.jar";
 const TEST_MOD_KEY = "mods/limacina-exclusion-test-mod.jar";
 const CONFIG_FILE = "config.toml";
-const VERSION_FILE = "public/version.json";
-const TEST_VERSION = "9.9.9";
-const TEST_ZIP_NAME = `Limacina-${TEST_VERSION}-linux-x86_64.zip`;
 
 const DOWNLOAD_FILE = "public/launcher/authlib-injector.jar";
 const NESTED_DOWNLOAD_FILE = "public/launcher/mods/abnormals_core-1.16.5-3.3.1.jar";
@@ -79,16 +74,10 @@ const binaryParser = (
 describe("V1 launcher эндпоинты", (): void => {
   let app: INestApplication;
   let filesService: FilesService;
-  let hadVersionFile = false;
-  let originalVersionContent = "";
   let hadConfigFile = false;
   let originalConfigContent = "";
 
   beforeAll(async () => {
-    if (existsSync(VERSION_FILE)) {
-      hadVersionFile = true;
-      originalVersionContent = readFileSync(VERSION_FILE, "utf-8");
-    }
     if (existsSync(CONFIG_FILE)) {
       hadConfigFile = true;
       originalConfigContent = readFileSync(CONFIG_FILE, "utf-8");
@@ -119,91 +108,9 @@ describe("V1 launcher эндпоинты", (): void => {
   afterAll(async () => {
     await app.close();
 
-    if (hadVersionFile) {
-      writeFileSync(VERSION_FILE, originalVersionContent);
-    } else if (existsSync(VERSION_FILE)) {
-      unlinkSync(VERSION_FILE);
-    }
     if (hadConfigFile && !existsSync(CONFIG_FILE)) {
       writeFileSync(CONFIG_FILE, originalConfigContent);
     }
-  });
-
-  describe("GET /v1/launcher/update/version", () => {
-    it("возвращает версию и список платформ", async () => {
-      const res = await supertest(app.getHttpServer())
-        .get("/v1/launcher/update/version")
-        .expect(200);
-
-      expect(typeof res.body.version).toBe("string");
-      expect(Array.isArray(res.body.platforms)).toBe(true);
-    });
-
-    it("использует 0.0.0, если version.json не соответствует форме", async () => {
-      await sleep(MUTATION_SETTLE_MS);
-      writeFileSync(VERSION_FILE, JSON.stringify({ version: 123 }));
-
-      try {
-        let version = "";
-        await waitFor(async () => {
-          const res = await supertest(app.getHttpServer())
-            .get("/v1/launcher/update/version")
-            .expect(200);
-          ({ version } = res.body);
-          return version === "0.0.0";
-        });
-
-        expect(version).toBe("0.0.0");
-      } finally {
-        if (hadVersionFile) {
-          writeFileSync(VERSION_FILE, originalVersionContent);
-        } else if (existsSync(VERSION_FILE)) {
-          unlinkSync(VERSION_FILE);
-        }
-      }
-    });
-  });
-
-  describe("GET /v1/launcher/update/:os/:arch/download", () => {
-    it("возвращает 400 для неподдерживаемой платформы", async () => {
-      const res = await supertest(app.getHttpServer())
-        .get("/v1/launcher/update/invalid/invalid/download")
-        .expect(400);
-
-      expect(res.body.statusCode).toBe(400);
-    });
-
-    it("отдаёт zip-файл для поддерживаемой платформы", async () => {
-      const zipContent = "fake-zip-content-v1";
-      await sleep(MUTATION_SETTLE_MS);
-      writeFileSync(TEST_ZIP, zipContent);
-      writeFileSync(VERSION_FILE, JSON.stringify({ version: TEST_VERSION }));
-
-      try {
-        let status = 0;
-        await waitFor(async () => {
-          const res = await supertest(app.getHttpServer())
-            .get("/v1/launcher/update/linux/x86_64/download")
-            .parse(binaryParser);
-          if (res.status === 200) {
-            expect(res.headers["content-type"]).toBe("application/zip");
-            expect(res.headers["content-disposition"]).toContain(TEST_ZIP_NAME);
-            expect(res.body.toString()).toBe(zipContent);
-          }
-          ({ status } = res);
-          return status === 200;
-        });
-
-        expect(status).toBe(200);
-      } finally {
-        unlinkSync(TEST_ZIP);
-        if (hadVersionFile) {
-          writeFileSync(VERSION_FILE, originalVersionContent);
-        } else {
-          unlinkSync(VERSION_FILE);
-        }
-      }
-    });
   });
 
   describe("GET /v1/launcher/config", () => {

@@ -1,6 +1,11 @@
 import type { QueryResult, SqlValue } from "../types";
 import { replaceSqlPlaceholders } from "../placeholders";
-import { queryRowsFromResult, renderReturningClause, type SqlDialect } from "./dialect";
+import {
+  renderReturningClause,
+  queryRowsFromResult,
+  type ReturningStatement,
+  type SqlDialect,
+} from "./dialect";
 
 interface MariaResult {
   count?: number;
@@ -36,7 +41,8 @@ export const mariadbDialect: SqlDialect = {
     const count = rows.length > 0 ? rows.length : (affectedRows ?? (raw as MariaResult).count ?? 0);
     return { rows, count };
   },
-  renderReturning(columns: string[]): string | null {
+  renderReturning(columns: string[], statement: ReturningStatement): string | null {
+    if (statement === "update") return null;
     return renderReturningClause(columns);
   },
 };

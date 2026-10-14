@@ -15,7 +15,6 @@ import type {
   SignoutDto,
   JoinDto,
   GameProfileDto,
-  SessionProfileDto,
 } from "../dto/dto";
 import {
   YggdrasilStoreToken,
@@ -354,7 +353,7 @@ export class YggdrasilService {
     return payload;
   }
 
-  async hasJoined(username: string, serverId: string): Promise<SessionProfileDto | null> {
+  async hasJoined(username: string, serverId: string): Promise<GameProfileDto | null> {
     const session = await this.sessionStore.findSession(serverId);
     if (!session) return null;
 
@@ -368,7 +367,7 @@ export class YggdrasilService {
     };
   }
 
-  async getProfile(uuid: string, signed: boolean): Promise<SessionProfileDto | null> {
+  async getProfile(uuid: string, signed: boolean): Promise<GameProfileDto | null> {
     const normalized = this.normalizeProfileUuid(uuid, HttpStatus.NOT_FOUND);
     const profile = await this.store.findProfileByUuid(normalized);
     if (!profile) return null;

@@ -266,3 +266,45 @@ describe("AuthPostgresStore (мок SQL-клиента)", () => {
     expect(restored?.values).toEqual([false, null, "uuid-1"]);
   });
 });
+
+describe("AuthPostgresStore — идентификаторы установки", () => {
+  const INSTALL_ID = "v1-0123456789abcdef0123456789abcdef";
+
+  it("recordInstallId делает атомарный upsert с историей в SQL", async () => {
+    fake.onSql(() => []);
+
+    await store.recordInstallId("uuid-1", INSTALL_ID);
+
+    const [call] = lastCalls(1);
+    expect(call?.sql).toContain("INSERT INTO user_install_ids");
+    expect(call?.sql).toContain("ON CONFLICT (user_uuid) DO UPDATE SET");
+    expect(call?.sql).toContain("install_id_history = CASE");
+    expect(call?.sql).toContain("= '[]' THEN '[\"' || user_install_ids.install_id || '\"]'");
+    expect(call?.sql).toContain("LIKE '%\"' || user_install_ids.install_id || '\"%'");
+    expect(call?.sql).toContain("LEFT(user_install_ids.install_id_history");
+    expect(call?.values).toEqual(["uuid-1", INSTALL_ID]);
+  });
+
+  it("findInstallId читает current и разбирает историю", async () => {
+    fake.onSql(() => [{ install_id: "v1-aaaa", install_id_history: '["v1-bbbb","v1-cccc"]' }]);
+
+    const record = await store.findInstallId("uuid-1");
+
+    expect(record).toEqual({ current: "v1-aaaa", history: ["v1-bbbb", "v1-cccc"] });
+    const [call] = lastCalls(1);
+    expect(call?.sql).toContain("SELECT install_id, install_id_history FROM user_install_ids");
+    expect(call?.values).toEqual(["uuid-1"]);
+  });
+
+  it("findInstallId без строки отвечает undefined", async () => {
+    fake.onSql(() => []);
+
+    expect(await store.findInstallId("uuid-miss")).toBeUndefined();
+  });
+
+  it("findInstallId с битой историей отвечает пустым массивом", async () => {
+    fake.onSql(() => [{ install_id: "v1-aaaa", install_id_history: "not-json" }]);
+
+    expect(await store.findInstallId("uuid-1")).toEqual({ current: "v1-aaaa", history: [] });
+  });
+});

@@ -45,22 +45,30 @@ interface CapturedReply {
   headers: Record<string, string>;
   streams: Readable[];
   raw: import("node:events").EventEmitter;
+  statusCodes: number[];
 }
 
-function captureReply(): CapturedReply {
+function captureReply(requestHeaders: Record<string, string> = {}): CapturedReply {
   const headers: Record<string, string> = {};
   const streams: Readable[] = [];
+  const statusCodes: number[] = [];
   const raw = new EventEmitter();
   const reply = {
+    request: { headers: requestHeaders },
     header: (name: string, value: string) => {
       headers[name] = value;
+      return reply;
     },
-    send: (stream: Readable) => {
-      streams.push(stream);
+    code: (code: number) => {
+      statusCodes.push(code);
+      return reply;
+    },
+    send: (stream?: Readable) => {
+      if (stream !== undefined) streams.push(stream);
     },
     raw,
   } as unknown as FastifyReply;
-  return { reply, headers, streams, raw };
+  return { reply, headers, streams, raw, statusCodes };
 }
 
 describe("FilesService — watcher и стриминг", () => {
@@ -129,6 +137,30 @@ describe("FilesService — watcher и стриминг", () => {
     const [stream] = streams;
     expect(stream).toBeDefined();
     expect(stream?.emit("error", new Error("stream failed"))).toBeTrue();
+    raw.emit("close");
+  });
+
+  it("sendFile отдаёт 206 и Content-Range при Range-запросе", async () => {
+    writeFileSync(FIXTURE_PATH, "stream-body");
+    const { reply, headers, statusCodes, raw } = captureReply({ range: "bytes=0-3" });
+
+    await files.sendFile({ url: FIXTURE_NAME } as FileDto, reply);
+
+    expect(statusCodes).toEqual([206]);
+    expect(headers["Content-Range"]).toBe(`bytes 0-3/${"stream-body".length}`);
+    expect(headers["Content-Length"]).toBe("4");
+    expect(headers["Accept-Ranges"]).toBe("bytes");
+    raw.emit("close");
+  });
+
+  it("sendFile без Range отдаёт полный файл со статусом 200", async () => {
+    const { reply, headers, statusCodes, streams, raw } = captureReply();
+
+    await files.sendFile({ url: FIXTURE_NAME } as FileDto, reply);
+
+    expect(statusCodes).toEqual([]);
+    expect(headers["Content-Length"]).toBe(String("stream-body".length));
+    expect(streams).toHaveLength(1);
     raw.emit("close");
   });
 

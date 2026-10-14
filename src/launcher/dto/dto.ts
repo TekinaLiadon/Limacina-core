@@ -2,39 +2,6 @@ import { ApiProperty, getSchemaPath } from "@nestjs/swagger";
 import { IsArray, IsBoolean, IsString } from "class-validator";
 import { validationMessages } from "../../common/validation-messages";
 
-export class LauncherPlatformDto {
-  @ApiProperty()
-  os!: string;
-
-  @ApiProperty()
-  arch!: string;
-}
-
-export class LauncherVersionInfoDto {
-  @ApiProperty({ description: "Версия лаунчера", example: "1.2.3" })
-  version!: string;
-
-  @ApiProperty({ type: [LauncherPlatformDto], description: "Платформы, доступные для версии" })
-  platforms!: LauncherPlatformDto[];
-}
-
-export class LauncherVersionsDto {
-  @ApiProperty({ description: "Последняя (актуальная) версия лаунчера" })
-  version!: string;
-
-  @ApiProperty({
-    type: [LauncherPlatformDto],
-    description: "Платформы, доступные для последней версии",
-  })
-  platforms!: LauncherPlatformDto[];
-
-  @ApiProperty({
-    type: [LauncherVersionInfoDto],
-    description: "Все доступные версии (от новых к старым), включая последнюю",
-  })
-  versions!: LauncherVersionInfoDto[];
-}
-
 export class UpdaterPlatformReleaseDto {
   @ApiProperty({
     description: "URL артефакта релиза (раздаётся статикой из public/releases)",
@@ -127,14 +94,6 @@ export class LauncherConfigDto {
   @ApiProperty({ description: "Онлайн-режим", example: true })
   @IsBoolean({ message: validationMessages.boolean("online") })
   online!: boolean;
-}
-
-export class LauncherUpdateResponseDto {
-  @ApiProperty({ example: "1.2.3" })
-  version!: string;
-
-  @ApiProperty({ type: [String], example: ["linux/x86_64", "macos/arm64", "windows/x86_64"] })
-  updated!: string[];
 }
 
 export class LauncherReleaseResponseDto {

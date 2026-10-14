@@ -9,6 +9,11 @@ export interface RefreshEntry {
   username: string;
 }
 
+export interface InstallIdRecord {
+  current: string;
+  history: string[];
+}
+
 export const AuthStoreToken = Symbol("AuthMapStore");
 
 export interface IAuthStore {
@@ -31,6 +36,8 @@ export interface IAuthStore {
   findRefresh(jti: string): Promise<RefreshEntry | undefined>;
   deleteRefresh(jti: string): Promise<void>;
   deleteRefreshByUserId(userId: string): Promise<void>;
+  recordInstallId(uuid: string, installId: string): Promise<void>;
+  findInstallId(uuid: string): Promise<InstallIdRecord | undefined>;
 }
 
 interface StoredRefreshEntry extends RefreshEntry {
@@ -42,6 +49,7 @@ interface StoredRefreshEntry extends RefreshEntry {
 export class AuthMapStore implements IAuthStore {
   private readonly users: Map<string, MemoryUserRecord>;
   private readonly tokens = new Map<string, StoredRefreshEntry>();
+  private readonly installIds = new Map<string, InstallIdRecord>();
 
   constructor(@Optional() db: MemoryDb = new MemoryDb()) {
     this.users = db.users;
@@ -149,6 +157,24 @@ export class AuthMapStore implements IAuthStore {
 
   async deleteRefreshByUserId(userId: string): Promise<void> {
     this.deleteTokensOfUser(userId);
+  }
+
+  async recordInstallId(uuid: string, installId: string): Promise<void> {
+    const stored = this.installIds.get(uuid);
+    if (!stored) {
+      this.installIds.set(uuid, { current: installId, history: [] });
+      return;
+    }
+    if (stored.current === installId) return;
+
+    const history = stored.history.includes(stored.current)
+      ? stored.history
+      : [...stored.history, stored.current];
+    this.installIds.set(uuid, { current: installId, history });
+  }
+
+  async findInstallId(uuid: string): Promise<InstallIdRecord | undefined> {
+    return this.installIds.get(uuid);
   }
 
   private liveRefreshEntry(jti: string): StoredRefreshEntry | undefined {

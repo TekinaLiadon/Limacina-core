@@ -13,8 +13,12 @@ describe("postgresDialect", () => {
     expect(adapted.values).toEqual(["uuid-1", true]);
   });
 
-  it("рендерит RETURNING", () => {
-    expect(postgresDialect.renderReturning(["id", "username"])).toBe(" RETURNING id, username");
+  it("рендерит RETURNING для любого стейтмента", () => {
+    expect(postgresDialect.renderReturning(["id", "username"], "insert")).toBe(
+      " RETURNING id, username",
+    );
+    expect(postgresDialect.renderReturning(["id"], "update")).toBe(" RETURNING id");
+    expect(postgresDialect.renderReturning(["id"], "delete")).toBe(" RETURNING id");
   });
 
   it("нормализует объектный результат", () => {
@@ -73,6 +77,31 @@ describe("mariadbDialect", () => {
     expect(adapted.values).toEqual(["uuid-1"]);
   });
 
+  it("не переписывает $n внутри литерала с бэкслэш-экранированной кавычкой", () => {
+    const adapted = mariadbDialect.toClientQuery("WHERE name = 'O\\'Brien $1' AND uuid = $1", [
+      "uuid-1",
+    ]);
+
+    expect(adapted.sql).toBe("WHERE name = 'O\\'Brien $1' AND uuid = ?");
+    expect(adapted.values).toEqual(["uuid-1"]);
+  });
+
+  it("не переписывает $n внутри литерала с бэкслэш-экранированным бэкслэшем", () => {
+    const adapted = mariadbDialect.toClientQuery("note = 'a\\\\b $1' AND uuid = $1", ["uuid-1"]);
+
+    expect(adapted.sql).toBe("note = 'a\\\\b $1' AND uuid = ?");
+    expect(adapted.values).toEqual(["uuid-1"]);
+  });
+
+  it("не переписывает $n внутри двойных кавычек идентификатора", () => {
+    const adapted = mariadbDialect.toClientQuery('SELECT "rank$1" FROM t WHERE uuid = $1', [
+      "uuid-1",
+    ]);
+
+    expect(adapted.sql).toBe('SELECT "rank$1" FROM t WHERE uuid = ?');
+    expect(adapted.values).toEqual(["uuid-1"]);
+  });
+
   it("не переписывает $n внутри доллар-квотированных литералов", () => {
     const adapted = mariadbDialect.toClientQuery("note = $$цена $2$$ AND uuid = $1", ["uuid-1"]);
 
@@ -98,8 +127,13 @@ describe("mariadbDialect", () => {
     expect(() => mariadbDialect.toClientQuery("uuid = $1", ["uuid-1", "extra"])).toThrow("значени");
   });
 
-  it("рендерит RETURNING — клиент Bun поддерживает его для INSERT и DELETE", () => {
-    expect(mariadbDialect.renderReturning(["id"])).toBe(" RETURNING id");
+  it("возвращает null для UPDATE — MariaDB не поддерживает UPDATE..RETURNING", () => {
+    expect(mariadbDialect.renderReturning(["id"], "update")).toBeNull();
+  });
+
+  it("рендерит RETURNING для INSERT и DELETE — клиент Bun поддерживает оба", () => {
+    expect(mariadbDialect.renderReturning(["id"], "insert")).toBe(" RETURNING id");
+    expect(mariadbDialect.renderReturning(["id"], "delete")).toBe(" RETURNING id");
   });
 
   it("нормализует результат с affectedRows", () => {

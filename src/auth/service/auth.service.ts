@@ -8,6 +8,7 @@ import type { AppConfigType } from "../../config/global-config";
 import type { AuthResponseDto, UserTokensDto } from "../dto/dto";
 import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS } from "../token.constants";
 import { validatePasswordPolicy } from "../password-policy";
+import { resolveLauncherInstallId } from "../install-id-policy";
 import { generateUuid } from "../../utils/uuid";
 
 const INVALID_CREDENTIALS_MESSAGE = "Неверное имя пользователя или пароль";
@@ -40,9 +41,26 @@ export class AuthService {
     }
   }
 
-  async login(username: string, password: string): Promise<AuthResponseDto> {
+  async login(
+    username: string,
+    password: string,
+    launcherInstallId?: string,
+  ): Promise<AuthResponseDto> {
     const user = await this.validateUserCredentials(username, password);
-    return this.buildAuthResponse(user);
+    const response = await this.buildAuthResponse(user);
+
+    const installId = resolveLauncherInstallId(launcherInstallId);
+    if (!installId) return response;
+
+    try {
+      await this.authStore.recordInstallId(user.uuid, installId);
+    } catch (error) {
+      this.logger.error(
+        { err: error, uuid: user.uuid },
+        "Не удалось сохранить идентификатор установки при логине",
+      );
+    }
+    return response;
   }
 
   async refresh(refreshToken: string): Promise<AuthResponseDto> {

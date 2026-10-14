@@ -22,6 +22,7 @@ export const TABLES = {
   user_skins: "user_skins",
   user_models: "user_models",
   user_capes: "user_capes",
+  user_install_ids: "user_install_ids",
 } as const;
 
 export type TableName = (typeof TABLES)[keyof typeof TABLES];

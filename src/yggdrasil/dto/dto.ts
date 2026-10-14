@@ -29,6 +29,11 @@ export class ProfilePropertyDto {
   @ApiProperty()
   @IsString({ message: validationMessages.string("profile.properties.value") })
   value!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString({ message: validationMessages.string("profile.properties.signature") })
+  signature?: string;
 }
 
 export class GameProfileDto {
@@ -220,17 +225,6 @@ export class YggdrasilErrorDto {
 
   @ApiPropertyOptional()
   cause?: string;
-}
-
-export class SessionProfileDto {
-  @ApiProperty()
-  id!: string;
-
-  @ApiProperty()
-  name!: string;
-
-  @ApiProperty({ type: [ProfilePropertyDto] })
-  properties!: ProfilePropertyDto[];
 }
 
 export class ApiMetaLinksDto {

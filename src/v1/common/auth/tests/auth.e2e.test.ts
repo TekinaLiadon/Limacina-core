@@ -696,4 +696,62 @@ describe("V1 common/auth эндпоинты", (): void => {
         .expect(201);
     });
   });
+
+  describe("POST /v1/common/auth/login — заголовок X-Launcher-Id", () => {
+    const headerUsername = "headeriduser";
+    let headerUserUuid: string;
+
+    beforeAll(async () => {
+      const res = await supertest(app.getHttpServer())
+        .post("/v1/common/auth/registration")
+        .send({ username: headerUsername, password: "pass123" })
+        .expect(201);
+      headerUserUuid = res.body.uuid;
+      await authStore.setApproved(headerUserUuid, true);
+    });
+
+    it("логин с валидным заголовком сохраняет ID установки пользователя", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .set("X-Launcher-Id", "v1-0123456789abcdef0123456789abcdef")
+        .send({ username: headerUsername, password: "pass123" })
+        .expect(201);
+
+      expect(await authStore.findInstallId(headerUserUuid)).toEqual({
+        current: "v1-0123456789abcdef0123456789abcdef",
+        history: [],
+      });
+    });
+
+    it("логин со сменой ID сдвигает предыдущий в историю без дублей", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .set("X-Launcher-Id", "v1-fedcba0987654321fedcba0987654321")
+        .send({ username: headerUsername, password: "pass123" })
+        .expect(201);
+
+      expect(await authStore.findInstallId(headerUserUuid)).toEqual({
+        current: "v1-fedcba0987654321fedcba0987654321",
+        history: ["v1-0123456789abcdef0123456789abcdef"],
+      });
+    });
+
+    it("логин без заголовка и с невалидным заголовком не меняет запись", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .send({ username: headerUsername, password: "pass123" })
+        .expect(201);
+
+      await supertest(app.getHttpServer())
+        .post("/v1/common/auth/login")
+        .set("X-Launcher-Id", "spoofed-value")
+        .send({ username: headerUsername, password: "pass123" })
+        .expect(201);
+
+      expect(await authStore.findInstallId(headerUserUuid)).toEqual({
+        current: "v1-fedcba0987654321fedcba0987654321",
+        history: ["v1-0123456789abcdef0123456789abcdef"],
+      });
+    });
+  });
 });

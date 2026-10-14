@@ -235,6 +235,7 @@ export class FilesService implements OnModuleDestroy {
       contentDisposition: `attachment; filename*=UTF-8''${encodeAttachmentFilename(fileInfo.url)}`,
       notFoundMessage: `Файл не найден: ${fileInfo.url}`,
       fileLabel: fileInfo.url,
+      rangeHeader: reply.request.headers.range,
     });
   }
 

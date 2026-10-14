@@ -44,7 +44,7 @@ cp .env.example .env   # затем отредактировать .env
 ### 3. Структура public/ и ключи
 
 ```bash
-bun run setup:public        # создать public/launcher, public/textures, public/linux, public/windows и version.json
+bun run setup:public        # создать public/launcher, public/textures, public/releases
 bun run generate:keypair    # сгенерировать RSA-ключи в keys/ (подпись текстур Yggdrasil)
 ```
 
@@ -56,7 +56,7 @@ bun run generate:keypair    # сгенерировать RSA-ключи в keys/
 bun run download:authlib <mc_version>   # скачать authlib-injector в public/launcher/
 ```
 
-Моды и платформенные zip (`public/linux/x86_64`, `public/windows/x86_64` и т.д.) кладутся вручную или загружаются через панель (`PATCH /v1/panel/launcher`).
+Моды кладутся в `public/launcher/` вручную или через панель, релизы лаунчера публикуются через `PATCH /v1/panel/launcher/release` (tauri-plugin-updater).
 
 ### 5. Миграции (только для `DB_DRIVER=postgres`)
 

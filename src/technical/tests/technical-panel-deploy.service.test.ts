@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -24,6 +25,7 @@ import {
   acquirePanelDeployLock,
   releasePanelDeployLock,
   resolveDefaultBranch,
+  resolveDeployRevision,
   runPanelStep,
   swapPanelDirectory,
   TechnicalPanelDeployService,
@@ -348,6 +350,50 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
       } finally {
         chmodSync(publicDir, 0o755);
       }
+    });
+
+    it("переносит сборку на другую файловую систему через копирование (EXDEV)", (): void => {
+      const shmRoot = "/dev/shm";
+      if (!existsSync(shmRoot) || statSync(shmRoot).dev === statSync(tmpdir()).dev) return;
+      const publicDir = makeWorkDir();
+      mkdirSync(join(publicDir, PANEL_DIR_NAME), { recursive: true });
+      writeFileSync(join(publicDir, PANEL_DIR_NAME, "index.html"), "panel-old");
+      const buildOutputDir = mkdtempSync(join(shmRoot, "limacina-panel-exdev-"));
+      writeFileSync(join(buildOutputDir, "index.html"), "panel-new");
+
+      swapPanelDirectory(logger, publicDir, buildOutputDir);
+
+      expect(panelContent(publicDir)).toBe("panel-new");
+      expect(backupEntries(publicDir)).toHaveLength(0);
+      expect(existsSync(buildOutputDir)).toBe(false);
+    });
+  });
+
+  describe("resolveDeployRevision", (): void => {
+    it("возвращает ревизию чекаута", async (): Promise<void> => {
+      const repo = join(fixtureRoot, "revision-repo");
+      git(["init", "-b", "main", repo], fixtureRoot);
+      writeFileSync(join(repo, "file.txt"), "r");
+      git(["add", "-A"], repo);
+      git([...GIT_AUTHOR, "commit", "-m", "r"], repo);
+
+      const revision = await resolveDeployRevision(logger, repo);
+      const expected = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: repo,
+        encoding: "utf-8",
+      }).trim();
+
+      expect(revision).toBe(expected);
+    });
+
+    it("сбой определения ревизии даёт unknown и не роняет вызов", async (): Promise<void> => {
+      const repoDir = makeWorkDir();
+
+      await expect(
+        resolveDeployRevision(logger, repoDir, async () => {
+          throw new Error("превышен таймаут определения ревизии");
+        }),
+      ).resolves.toBe("unknown");
     });
   });
 

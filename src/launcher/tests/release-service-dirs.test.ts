@@ -8,13 +8,11 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { Logger } from "@nestjs/common";
 import {
-  buildReplacedZipName,
   buildReleaseBackupName,
   buildReleaseLockName,
   buildReleaseStagingName,
   cleanupReleaseServiceDirs,
   isReleaseServiceEntry,
-  isZipReplacedEntry,
   parseReleaseBackupEntry,
   recoverReleaseBackups,
 } from "../release-service-dirs";
@@ -32,9 +30,6 @@ describe("release-service-dirs — служебные имена", (): void => {
     expect(buildReleaseStagingName("abc")).toBe(".staging-abc");
     expect(buildReleaseLockName("1.2.3")).toBe(".lock-1.2.3");
     expect(buildReleaseBackupName("1.2.3", "abc")).toBe(".old-1.2.3-abc");
-    expect(buildReplacedZipName("Limacina-1.2.3-linux-x86_64.zip")).toBe(
-      ".Limacina-1.2.3-linux-x86_64.zip.replaced",
-    );
   });
 
   it("isReleaseServiceEntry матчит staging, lock и backup-имена обоих форматов", (): void => {
@@ -44,13 +39,6 @@ describe("release-service-dirs — служебные имена", (): void => {
     expect(isReleaseServiceEntry(`1.2.3.old-${randomUUID()}`)).toBe(true);
     expect(isReleaseServiceEntry("1.2.3")).toBe(false);
     expect(isReleaseServiceEntry("1.2.3-old")).toBe(false);
-  });
-
-  it("isZipReplacedEntry матчит replaced-имена обоих форматов", (): void => {
-    expect(isZipReplacedEntry(buildReplacedZipName("a.zip"))).toBe(true);
-    expect(isZipReplacedEntry("a.zip.replaced")).toBe(true);
-    expect(isZipReplacedEntry("a.zip")).toBe(false);
-    expect(isZipReplacedEntry(".replaced-dir/a.zip")).toBe(false);
   });
 
   it("parseReleaseBackupEntry разбирает оба формата имён бэкапа", (): void => {

@@ -75,6 +75,8 @@ export async function streamFileToReply(
       );
   };
 
+  reply.raw.once("close", closeHandle);
+
   try {
     const { size } = await handle.stat();
     const range =
@@ -90,7 +92,6 @@ export async function streamFileToReply(
       return;
     }
 
-    reply.raw.once("close", closeHandle);
     if (range) {
       reply.code(206);
       reply.header("Content-Range", `bytes ${range.start}-${range.end}/${size}`);

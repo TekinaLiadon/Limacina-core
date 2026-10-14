@@ -11,6 +11,7 @@ const PNG_COLOR_TYPE_BIT_DEPTHS: Record<number, number[]> = {
   6: [8, 16],
 };
 const PLTE_FORBIDDEN_COLOR_TYPES = [0, 4];
+const TRNS_ALLOWED_COLOR_TYPES = [0, 2, 3];
 
 export const MAX_PNG_DIMENSION = 1024;
 
@@ -210,20 +211,21 @@ export function sanitizePng(file: Uint8Array): Buffer {
   const ihdr = chunks.find((chunk) => chunk.type === "IHDR")!.data;
   const colorType = ihdr[9]!;
   const idatChunks = chunks.filter((chunk) => chunk.type === "IDAT");
+  const trnsAllowed = TRNS_ALLOWED_COLOR_TYPES.includes(colorType);
   const hasForeignChunks = chunks.some(
     (chunk) =>
       chunk.type !== "IHDR" &&
       chunk.type !== "IEND" &&
       chunk.type !== "IDAT" &&
       !(chunk.type === "PLTE" && colorType === 3) &&
-      chunk.type !== "tRNS",
+      !(chunk.type === "tRNS" && trnsAllowed),
   );
   if (!hasForeignChunks && idatChunks.length === 1) {
     return Buffer.from(file);
   }
 
   const plte = colorType === 3 ? chunks.find((chunk) => chunk.type === "PLTE")?.data : undefined;
-  const trns = chunks.find((chunk) => chunk.type === "tRNS")?.data;
+  const trns = trnsAllowed ? chunks.find((chunk) => chunk.type === "tRNS")?.data : undefined;
   const idat = Buffer.concat(idatChunks.map((chunk) => Buffer.from(chunk.data)));
 
   let rawImageData: Buffer;

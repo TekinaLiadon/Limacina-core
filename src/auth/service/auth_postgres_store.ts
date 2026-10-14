@@ -10,10 +10,11 @@ import {
   executeInTransactionReturning,
   toBoolean,
   isUniqueViolation,
+  sqlDialect,
   TABLES,
   type SqlValue,
 } from "../../utils/sql";
-import type { IAuthStore, StoredUser, RefreshEntry } from "./auth_store";
+import type { IAuthStore, InstallIdRecord, StoredUser, RefreshEntry } from "./auth_store";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../token.constants";
 
 interface UserRow extends Record<string, unknown> {
@@ -31,6 +32,50 @@ interface RefreshRow extends Record<string, unknown> {
   user_id: string;
   username: string;
 }
+
+interface InstallIdRow extends Record<string, unknown> {
+  install_id: string;
+  install_id_history: string;
+}
+
+const buildInstallIdUpsert = (): string => {
+  const table = TABLES.user_install_ids;
+  if (sqlDialect() === "mariadb") {
+    return `INSERT INTO ${table} (user_uuid, install_id, install_id_history)
+      VALUES ($1, $2, '[]')
+      ON DUPLICATE KEY UPDATE
+        install_id = VALUES(install_id),
+        install_id_history = CASE
+          WHEN install_id = VALUES(install_id) THEN install_id_history
+          WHEN install_id_history = '[]' THEN CONCAT('["', install_id, '"]')
+          WHEN install_id_history LIKE CONCAT('%"', install_id, '"%') THEN install_id_history
+          ELSE CONCAT(LEFT(install_id_history, CHAR_LENGTH(install_id_history) - 1), ',"', install_id, '"]')
+        END`;
+  }
+  const dq = '"';
+  const appendFragment = `LEFT(${table}.install_id_history, LENGTH(${table}.install_id_history) - 1) || ',${dq}' || ${table}.install_id || '${dq}]'`;
+  const likeFragment = `'%${dq}' || ${table}.install_id || '${dq}%'`;
+  return `INSERT INTO ${table} (user_uuid, install_id, install_id_history)
+    VALUES ($1, $2, '[]')
+    ON CONFLICT (user_uuid) DO UPDATE SET
+      install_id = EXCLUDED.install_id,
+      install_id_history = CASE
+        WHEN ${table}.install_id = EXCLUDED.install_id THEN ${table}.install_id_history
+        WHEN ${table}.install_id_history = '[]' THEN '["' || ${table}.install_id || '"]'
+        WHEN ${table}.install_id_history LIKE ${likeFragment} THEN ${table}.install_id_history
+        ELSE ${appendFragment}
+      END`;
+};
+
+const parseInstallIdHistory = (raw: string): string[] => {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === "string");
+  } catch {
+    return [];
+  }
+};
 
 @Injectable()
 export class AuthPostgresStore implements IAuthStore {
@@ -248,5 +293,23 @@ export class AuthPostgresStore implements IAuthStore {
     const query = deleteQuery().from(TABLES.refresh_tokens).where("user_id = $1", userId).build();
 
     await execute(query.sql, query.values);
+  }
+
+  async recordInstallId(uuid: string, installId: string): Promise<void> {
+    await execute(buildInstallIdUpsert(), [uuid, installId]);
+  }
+
+  async findInstallId(uuid: string): Promise<InstallIdRecord | undefined> {
+    const query = selectQuery("install_id", "install_id_history")
+      .from(TABLES.user_install_ids)
+      .where("user_uuid = $1", uuid)
+      .limit(1)
+      .build();
+
+    const { rows } = await execute<InstallIdRow>(query.sql, query.values);
+    const [row] = rows;
+    if (!row) return undefined;
+
+    return { current: row.install_id, history: parseInstallIdHistory(row.install_id_history) };
   }
 }

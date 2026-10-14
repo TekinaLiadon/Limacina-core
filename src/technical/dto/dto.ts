@@ -64,7 +64,7 @@ export class RestartServerDto {
     required: false,
     default: false,
     description:
-      "Запустить конвейер пересборки (git pull → bun install → миграции → bun run build) в фоне перед перезапуском",
+      "Запустить конвейер пересборки (git pull → bun install → bun run build → миграции) в фоне перед перезапуском",
   })
   @IsOptional()
   @IsBoolean({ message: validationMessages.boolean("rebuild") })

@@ -1,4 +1,4 @@
-import { overrideSqlClient, resetSqlClient, type SqlClient } from "../sql";
+import { overrideSqlClient, resetSqlClient, type SqlClient, type SqlDialectName } from "../sql";
 
 export interface SqlCall {
   sql: string;
@@ -36,9 +36,9 @@ function createFakeClient(): {
   return { client, sqlCalls, resolverRef };
 }
 
-export function installFakeSqlClient(): FakeSqlHandle {
+export function installFakeSqlClient(dialect?: SqlDialectName): FakeSqlHandle {
   const { client, sqlCalls, resolverRef } = createFakeClient();
-  overrideSqlClient(client);
+  overrideSqlClient(client, dialect);
 
   return {
     sqlCalls,

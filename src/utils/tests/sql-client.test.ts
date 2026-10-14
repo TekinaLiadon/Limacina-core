@@ -3,7 +3,7 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 setupTestEnv();
 
 import { afterAll, describe, expect, it } from "bun:test";
-import { resetSqlClient, sqlDialect } from "../sql";
+import { resetSqlClient, sqlDialect, updateQuery } from "../sql";
 
 describe("currentDialect — ленивый кеш диалекта", () => {
   const originalDatabaseUrl = process.env["DATABASE_URL"];
@@ -33,6 +33,25 @@ describe("currentDialect — ленивый кеш диалекта", () => {
     expect(sqlDialect()).toBe("postgres");
 
     restoreEnv();
+  });
+
+  it("updateQuery().returning() на mariadb бросает понятную ошибку билдера", () => {
+    process.env["DATABASE_URL"] = "mariadb://user:pass@localhost:3306/db";
+    delete process.env["SECRETS"];
+    resetSqlClient();
+
+    try {
+      expect(() =>
+        updateQuery()
+          .from("users")
+          .set("approved", true)
+          .where("uuid = $1", "u1")
+          .returning("uuid")
+          .build(),
+      ).toThrow("не поддерживает RETURNING");
+    } finally {
+      restoreEnv();
+    }
   });
 
   it("mergeSecretsIntoEnv не вызывается на каждый SQL-вызов — один раз на кеш", () => {
