@@ -94,10 +94,6 @@ describe("Bootstrap реального AppModule", () => {
     writeFileSync(join(stagingDir, "artifact.exe"), "unpublished-payload");
     mkdirSync(backupDir, { recursive: true });
     writeFileSync(join(backupDir, "artifact.exe"), "backup-payload");
-    const platformDir = join(process.cwd(), "public", "linux", "x86_64");
-    const replacedZip = join(platformDir, ".Limacina-9.9.9-linux-x86_64.zip.replaced");
-    const platformDirExisted = existsSync(platformDir);
-    writeFileSync(replacedZip, "replaced-payload");
     mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
     const uploadLeftover = join(UPLOAD_TMP_DIR, "leftover.exe");
     writeFileSync(uploadLeftover, "upload-payload");
@@ -113,11 +109,6 @@ describe("Bootstrap реального AppModule", () => {
       const lock = await fetch(`${baseUrl}/releases/.lock-9.9.9-e2e`);
       expect(lock.status).toBe(404);
 
-      const replaced = await fetch(
-        `${baseUrl}/linux/x86_64/.Limacina-9.9.9-linux-x86_64.zip.replaced`,
-      );
-      expect(replaced.status).toBe(404);
-
       const uploadTmpStatic = await fetch(`${baseUrl}/${uploadTmpUrlPath}/leftover.exe`);
       expect(uploadTmpStatic.status).toBe(404);
 
@@ -129,12 +120,8 @@ describe("Bootstrap реального AppModule", () => {
     } finally {
       rmSync(stagingDir, { recursive: true, force: true });
       rmSync(backupDir, { recursive: true, force: true });
-      rmSync(replacedZip, { force: true });
       rmSync(uploadLeftover, { force: true });
       rmSync(UPLOAD_TMP_DIR, { recursive: true, force: true });
-      if (!platformDirExisted) {
-        rmSync(join(process.cwd(), "public", "linux"), { recursive: true, force: true });
-      }
       if (!releasesRootExisted) {
         rmSync(releasesRoot, { recursive: true, force: true });
       }

@@ -1,5 +1,12 @@
-import { Body, Controller, Patch, Post } from "@nestjs/common";
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
+import { Body, Controller, Headers, Patch, Post } from "@nestjs/common";
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiHeaders,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from "@nestjs/swagger";
 import { Public } from "../../../common/public.decorator";
 import { CurrentUser, type RequestUser } from "../../../common/current-user.decorator";
 import { SuccessResponseDto } from "../../../common/dto/dto";
@@ -10,6 +17,7 @@ import {
   AUTH_REGISTRATION_SEGMENT,
 } from "../../../common/auth-routes";
 import { AuthService } from "../../../auth/service/auth.service";
+import { LAUNCHER_ID_HEADER } from "../../../auth/install-id-policy";
 import {
   AuthDto,
   AuthResponseDto,
@@ -57,10 +65,21 @@ export class V1AuthController {
   })
   @ApiResponse({
     status: 400,
-    description: "Ошибка валидации: username — до 64 символов, password — 6–128 символов",
+    description: "Ошибка валидации: username — до 64 символов, password — от 3 до 128 символов",
   })
-  async postLogin(@Body() dto: AuthDto): Promise<AuthResponseDto> {
-    return this.authService.login(dto.username, dto.password);
+  @ApiHeaders([
+    {
+      name: LAUNCHER_ID_HEADER,
+      required: false,
+      description:
+        "Идентификатор установки лаунчера (v1- + 32 hex-символа); сохраняется при логине",
+    },
+  ])
+  async postLogin(
+    @Body() dto: AuthDto,
+    @Headers(LAUNCHER_ID_HEADER) launcherInstallId: string | undefined,
+  ): Promise<AuthResponseDto> {
+    return this.authService.login(dto.username, dto.password, launcherInstallId);
   }
 
   @Post("refresh")

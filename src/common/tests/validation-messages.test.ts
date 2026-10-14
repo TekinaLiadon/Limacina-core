@@ -128,6 +128,11 @@ describe("Сообщения валидации DTO на русском", () => 
     expect(errors).toContain("approved: ожидается true или false");
   });
 
+  it("UsersQueryDto: длинный поисковый username", () => {
+    const errors = validate(UsersQueryDto, { username: "a".repeat(65) });
+    expect(errors).toEqual(["username: максимум 64 символов"]);
+  });
+
   it("V1LogsQueryDto: фильтры логов", () => {
     const errors = validate(V1LogsQueryDto, {
       date: "08-07-2026",
@@ -242,6 +247,15 @@ describe("Сообщения валидации DTO на русском", () => 
     expect(errors).toContain("profile.name: ожидается строка");
     expect(errors).toContain("profile.properties.name: ожидается строка");
     expect(errors).toContain("profile.properties.value: ожидается строка");
+  });
+
+  it("GameProfileDto: signature свойства не строка", () => {
+    const errors = validate(GameProfileDto, {
+      id: "a1b2c3d4e5f67890abcdef1234567890",
+      name: "player1",
+      properties: [{ name: "textures", value: "v", signature: 1 }],
+    });
+    expect(errors).toEqual(["profile.properties.signature: ожидается строка"]);
   });
 
   it("все сообщения на русском", () => {

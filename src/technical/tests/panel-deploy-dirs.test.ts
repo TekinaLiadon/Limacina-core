@@ -10,6 +10,8 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,6 +22,7 @@ import {
   PANEL_DIR_NAME,
   buildPanelBackupName,
   cleanupPanelBackups,
+  moveDirectory,
   recoverPanelBackups,
   resolvePanelRepoDir,
 } from "../panel-deploy-dirs";
@@ -57,16 +60,17 @@ describe("panel-deploy-dirs — свип резервных копий пане�
     expect(existsSync(backupPath)).toBe(false);
   });
 
-  it("при нескольких бэкапах восстанавливает ровно один и не создаёт панель повторно", (): void => {
+  it("при нескольких бэкапах восстанавливает самый свежий по mtime", (): void => {
     const publicDir = makeWorkDir();
-    makeBackup(publicDir, "panel-first");
-    makeBackup(publicDir, "panel-second");
+    const older = makeBackup(publicDir, "panel-older");
+    const newer = makeBackup(publicDir, "panel-newer");
+    utimesSync(older, new Date(1_000_000), new Date(1_000_000));
+    utimesSync(newer, new Date(2_000_000), new Date(2_000_000));
 
     recoverPanelBackups(publicDir, logger);
 
-    expect(["panel-first", "panel-second"]).toContain(
-      readPanelIndex(join(publicDir, PANEL_DIR_NAME)),
-    );
+    expect(readPanelIndex(join(publicDir, PANEL_DIR_NAME))).toBe("panel-newer");
+    expect(existsSync(older)).toBe(true);
     expect(readdirNames(publicDir).filter((entry) => entry.startsWith(".panel.old-"))).toHaveLength(
       1,
     );
@@ -84,7 +88,7 @@ describe("panel-deploy-dirs — свип резервных копий пане�
     expect(existsSync(backupPath)).toBe(true);
   });
 
-  it("переживает отсутствие каталога public", (): void => {
+  it("recoverPanelBackups переживает отсутствие каталога public", (): void => {
     expect(() => recoverPanelBackups(join(makeWorkDir(), "absent"), logger)).not.toThrow();
   });
 
@@ -114,8 +118,54 @@ describe("panel-deploy-dirs — свип резервных копий пане�
     expect(existsSync(backupPath)).toBe(true);
   });
 
-  it("переживает отсутствие каталога public", (): void => {
+  it("cleanupPanelBackups переживает отсутствие каталога public", (): void => {
     expect(() => cleanupPanelBackups(join(makeWorkDir(), "absent"), logger)).not.toThrow();
+  });
+});
+
+describe("panel-deploy-dirs — moveDirectory", (): void => {
+  function makeSource(root: string): { source: string; content: string } {
+    const source = mkdtempSync(join(root, "limacina-move-"));
+    const content = "panel-move";
+    mkdirSync(join(source, "assets"), { recursive: true });
+    writeFileSync(join(source, "index.html"), content);
+    writeFileSync(join(source, "assets", "app.js"), "js");
+    return { source, content };
+  }
+
+  function makeTarget(): string {
+    return join(mkdtempSync(join(tmpdir(), "limacina-move-target-")), "panel");
+  }
+
+  it("переименовывает каталог внутри одной файловой системы", (): void => {
+    const { source, content } = makeSource(tmpdir());
+    const target = makeTarget();
+
+    moveDirectory(source, target);
+
+    expect(readFileSync(join(target, "index.html"), "utf-8")).toBe(content);
+    expect(readFileSync(join(target, "assets", "app.js"), "utf-8")).toBe("js");
+    expect(existsSync(source)).toBe(false);
+  });
+
+  it("переносит каталог на другую файловую систему через копирование (EXDEV)", (): void => {
+    const shmRoot = "/dev/shm";
+    if (!existsSync(shmRoot) || statSync(shmRoot).dev === statSync(tmpdir()).dev) return;
+    const { source, content } = makeSource(shmRoot);
+    const target = makeTarget();
+
+    moveDirectory(source, target);
+
+    expect(readFileSync(join(target, "index.html"), "utf-8")).toBe(content);
+    expect(readFileSync(join(target, "assets", "app.js"), "utf-8")).toBe("js");
+    expect(existsSync(source)).toBe(false);
+  });
+
+  it("пробрасывает ошибку, не связанную с EXDEV", (): void => {
+    const { source } = makeSource(tmpdir());
+    const missingParent = join(makeTarget(), "absent", "panel");
+
+    expect(() => moveDirectory(source, missingParent)).toThrow();
   });
 });
 

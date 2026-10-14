@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { selectQuery, updateColumnQuery, setSoftDeletedQuery, TABLES } from "../sql";
+import {
+  insertQuery,
+  selectQuery,
+  updateColumnQuery,
+  updateQuery,
+  setSoftDeletedQuery,
+  TABLES,
+} from "../sql";
 
 describe("selectQuery", () => {
   it("строит запрос без where, сортировки и пагинации", () => {
@@ -83,6 +90,41 @@ describe("selectQuery", () => {
 
     expect(query.sql).toBe("SELECT uuid FROM users WHERE uuid = $1 FOR UPDATE");
     expect(query.values).toEqual(["abc"]);
+  });
+});
+
+describe("гарды пустых стейтментов и защита фрагментов", () => {
+  it("INSERT без значений бросает ошибку до СУБД", () => {
+    expect(() => insertQuery("uuid").from(TABLES.users).build()).toThrow("INSERT без значений");
+  });
+
+  it("INSERT без колонок бросает ошибку до СУБД", () => {
+    expect(() => insertQuery().from(TABLES.users).values().build()).toThrow("INSERT без колонок");
+  });
+
+  it("UPDATE без set() бросает ошибку до СУБД", () => {
+    expect(() => updateQuery().from(TABLES.users).build()).toThrow("UPDATE без set()");
+  });
+
+  it("колонки SELECT проходят защиту статических фрагментов", () => {
+    expect(() => selectQuery("uuid; DROP TABLE users")).toThrow("запрещённую последовательность");
+  });
+
+  it("колонки INSERT и returning проходят защиту статических фрагментов", () => {
+    expect(() => insertQuery("uuid--x").from(TABLES.users).values("u").build()).toThrow(
+      "запрещённую последовательность",
+    );
+    expect(() =>
+      insertQuery("uuid").from(TABLES.users).values("u").returning("id/*x*/").build(),
+    ).toThrow("запрещённую последовательность");
+  });
+
+  it("type-параметр join проходит защиту статических фрагментов", () => {
+    expect(() =>
+      selectQuery("uuid")
+        .from(TABLES.users, "u")
+        .join("LEFT JOIN; DROP TABLE users", TABLES.user_textures, "t", "t.uuid = u.uuid"),
+    ).toThrow("запрещённую последовательность");
   });
 });
 

@@ -41,7 +41,6 @@ import {
   JoinDto,
   HasJoinedQueryDto,
   YggdrasilErrorDto,
-  SessionProfileDto,
   ApiMetadataResponseDto,
   GameProfileDto,
 } from "./dto/dto";
@@ -123,12 +122,12 @@ export class YggdrasilController {
   @ApiOperation({ summary: "Server verifies client session" })
   @ApiQuery({ name: "username", required: true })
   @ApiQuery({ name: "serverId", required: true })
-  @ApiResponse({ status: 200, type: SessionProfileDto })
+  @ApiResponse({ status: 200, type: GameProfileDto })
   @ApiResponse({ status: 204, description: "Session not found" })
   async getHasJoined(
     @Query() query: HasJoinedQueryDto,
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<SessionProfileDto | undefined> {
+  ): Promise<GameProfileDto | undefined> {
     const profile = await this.yggdrasilService.hasJoined(query.username, query.serverId);
     if (!profile) {
       reply.status(HttpStatus.NO_CONTENT).send();
@@ -146,7 +145,7 @@ export class YggdrasilController {
     enum: ["true", "false"],
     description: "false — вернуть текстуры с цифровой подписью; по умолчанию без подписи",
   })
-  @ApiResponse({ status: 200, type: SessionProfileDto })
+  @ApiResponse({ status: 200, type: GameProfileDto })
   @ApiResponse({ status: 204, description: "Profile not found" })
   async getProfile(
     @Param("uuid") uuid: string,
@@ -159,7 +158,7 @@ export class YggdrasilController {
     )
     unsigned: "true" | "false",
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<SessionProfileDto | undefined> {
+  ): Promise<GameProfileDto | undefined> {
     const profile = await this.yggdrasilService.getProfile(uuid, unsigned === "false");
     if (!profile) {
       reply.status(HttpStatus.NO_CONTENT).send();

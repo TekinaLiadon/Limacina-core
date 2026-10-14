@@ -116,21 +116,7 @@ export class AdminService implements OnModuleInit {
     }
 
     await this.applyUserMutation(username, actor, "setRole", "Роль пользователя изменён", (user) =>
-      this.statusPairSteps(
-        username,
-        {
-          write: (value) => this.adminStore.setRole(username, value, user.role),
-          restore: (value) => this.adminStore.setRole(username, value),
-          read: async () => (await this.adminStore.findByUsername(username))?.role,
-        },
-        {
-          write: (value) => this.authStore.updateRole(user.uuid, value, user.role),
-          restore: (value) => this.authStore.updateRole(user.uuid, value),
-          read: async () => (await this.authStore.findByUsername(username))?.role,
-        },
-        role,
-        user.role,
-      ),
+      this.rolePairSteps(username, user, role),
     );
   }
 
@@ -150,23 +136,7 @@ export class AdminService implements OnModuleInit {
     }
 
     try {
-      await this.applyWithRollback(
-        this.statusPairSteps(
-          username,
-          {
-            write: (value) => this.adminStore.setRole(username, value, user.role),
-            restore: (value) => this.adminStore.setRole(username, value),
-            read: async () => (await this.adminStore.findByUsername(username))?.role,
-          },
-          {
-            write: (value) => this.authStore.updateRole(user.uuid, value, user.role),
-            restore: (value) => this.authStore.updateRole(user.uuid, value),
-            read: async () => (await this.authStore.findByUsername(username))?.role,
-          },
-          "owner",
-          user.role,
-        ),
-      );
+      await this.applyWithRollback(this.rolePairSteps(username, user, "owner"));
     } catch (error) {
       this.logger.error(this.audit(actor, username, "setOwner"), "Отказ: мутация не применена");
       throw error;
@@ -320,6 +290,24 @@ export class AdminService implements OnModuleInit {
       this.statusStep(username, admin, next, previous),
       this.statusStep(username, auth, next, previous),
     ];
+  }
+
+  private rolePairSteps(username: string, user: AdminUser, next: string): MutationStep[] {
+    return this.statusPairSteps(
+      username,
+      {
+        write: (value) => this.adminStore.setRole(username, value, user.role),
+        restore: (value) => this.adminStore.setRole(username, value),
+        read: async () => (await this.adminStore.findByUsername(username))?.role,
+      },
+      {
+        write: (value) => this.authStore.updateRole(user.uuid, value, next),
+        restore: (value) => this.authStore.updateRole(user.uuid, value),
+        read: async () => (await this.authStore.findByUsername(username))?.role,
+      },
+      next,
+      user.role,
+    );
   }
 
   private statusStep<Value extends boolean | string>(

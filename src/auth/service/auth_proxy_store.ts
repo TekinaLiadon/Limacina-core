@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotImplementedException } from "@nestjs/common";
-import type { IAuthStore, RefreshEntry, StoredUser } from "./auth_store";
+import type { IAuthStore, InstallIdRecord, RefreshEntry, StoredUser } from "./auth_store";
 
 const UNSUPPORTED_MESSAGE =
   "Прокси-режим авторизации не поддерживает мутации — режим не реализован";
@@ -84,6 +84,15 @@ export class AuthProxyStore implements IAuthStore {
   async deleteRefreshByUserId(userId: string): Promise<void> {
     this.warnUnsupported("deleteRefreshByUserId", { userId });
     throw new NotImplementedException(UNSUPPORTED_MESSAGE);
+  }
+
+  async recordInstallId(uuid: string, installId: string): Promise<void> {
+    this.warnUnsupported("recordInstallId", { uuid, installId });
+    throw new NotImplementedException(UNSUPPORTED_MESSAGE);
+  }
+
+  async findInstallId(_uuid: string): Promise<InstallIdRecord | undefined> {
+    return undefined;
   }
 
   private warnUnsupported(operation: string, details: Record<string, unknown>): void {

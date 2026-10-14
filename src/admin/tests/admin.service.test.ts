@@ -8,6 +8,7 @@ import { AdminService } from "../admin.service";
 import { AdminMapStore } from "../admin_store";
 import { AuthMapStore } from "../../auth/service/auth_store";
 import { CronService } from "../../cron/cron.service";
+import { MemoryDb } from "../../memory/memory-db";
 
 const ACTOR = {
   uuid: "rollback-owner-uuid",
@@ -21,16 +22,10 @@ describe("AdminService: атомарность мутаций", (): void => {
     authStore: AuthMapStore;
     service: AdminService;
   }> => {
-    const adminStore = new AdminMapStore();
-    const authStore = new AuthMapStore();
+    const db = new MemoryDb();
+    const adminStore = new AdminMapStore(db);
+    const authStore = new AuthMapStore(db);
     const service = new AdminService(adminStore, authStore, new CronService());
-    await adminStore.saveUser({
-      uuid: "rollback-target-uuid",
-      username: "rollbacktarget",
-      role: "user",
-      approved: true,
-      banned: false,
-    });
     await authStore.saveUser({
       uuid: "rollback-target-uuid",
       username: "rollbacktarget",
@@ -49,6 +44,15 @@ describe("AdminService: атомарность мутаций", (): void => {
 
     expect((await adminStore.findByUsername("rollbacktarget"))?.role).toBe("admin");
     expect((await authStore.findByUsername("rollbacktarget"))?.role).toBe("admin");
+  });
+
+  it("setOwnerRole синхронизирует роль владельца в обоих сторах", async (): Promise<void> => {
+    const { adminStore, authStore, service } = await seed();
+
+    await service.setOwnerRole("rollbacktarget", ACTOR);
+
+    expect((await adminStore.findByUsername("rollbacktarget"))?.role).toBe("owner");
+    expect((await authStore.findByUsername("rollbacktarget"))?.role).toBe("owner");
   });
 
   it("setApproved синхронизирует статус одобрения в обоих сторах", async (): Promise<void> => {
@@ -130,6 +134,23 @@ describe("AdminService: атомарность мутаций", (): void => {
 
     await expect(service.setRole("rollbacktarget", "moderator", ACTOR)).rejects.toThrow(
       "auth store down",
+    );
+
+    expect((await adminStore.findByUsername("rollbacktarget"))?.role).toBe("admin");
+    expect((await authStore.findByUsername("rollbacktarget"))?.role).toBe("admin");
+    updateRole.mockRestore();
+  });
+
+  it("гонка между шагами смены роли отменяет мутацию и не затирает конкурента", async (): Promise<void> => {
+    const { adminStore, authStore, service } = await seed();
+    const originalUpdateRole = authStore.updateRole.bind(authStore);
+    const updateRole = spyOn(authStore, "updateRole").mockImplementationOnce(async () => {
+      await adminStore.setRole("rollbacktarget", "admin");
+      return originalUpdateRole("rollback-target-uuid", "moderator", "moderator");
+    });
+
+    await expect(service.setRole("rollbacktarget", "moderator", ACTOR)).rejects.toThrow(
+      NotFoundException,
     );
 
     expect((await adminStore.findByUsername("rollbacktarget"))?.role).toBe("admin");

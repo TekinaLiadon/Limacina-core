@@ -66,3 +66,22 @@ describe("AuthProxyStore — мутации не имитируют успех",
     );
   });
 });
+
+describe("AuthProxyStore — идентификатор установки", (): void => {
+  it("recordInstallId бросает NotImplementedException", async (): Promise<void> => {
+    const store = new AuthProxyStore("http://upstream.test");
+
+    const error = await store.recordInstallId("uuid-1", "v1-0123456789abcdef0123456789abcdef").then(
+      (): string => "no-error",
+      (e: unknown): string => (e as Error).constructor.name,
+    );
+
+    expect(error).toBe("NotImplementedException");
+  });
+
+  it("findInstallId отвечает undefined", async (): Promise<void> => {
+    const store = new AuthProxyStore("http://upstream.test");
+
+    expect(await store.findInstallId("uuid-1")).toBeUndefined();
+  });
+});

@@ -28,6 +28,7 @@ import {
   PANEL_REPO_URL,
   buildPanelBackupName,
   buildPanelDeployLockPath,
+  moveDirectory,
   recoverPanelBackups,
 } from "./panel-deploy-dirs";
 
@@ -183,6 +184,22 @@ export async function resolveDefaultBranch(logger: Logger, repoDir: string): Pro
   return branch;
 }
 
+export async function resolveDeployRevision(
+  logger: Logger,
+  repoDir: string,
+  resolveRevision: (logger: Logger, repoDir: string) => Promise<string> = currentRevision,
+): Promise<string> {
+  try {
+    return await resolveRevision(logger, repoDir);
+  } catch (error) {
+    logger.warn(
+      { err: error, repoDir },
+      "Не удалось определить ревизию деплоя панели, в результате будет unknown",
+    );
+    return "unknown";
+  }
+}
+
 export function swapPanelDirectory(
   logger: Logger,
   publicDir: string,
@@ -195,7 +212,7 @@ export function swapPanelDirectory(
     renameSync(panelDir, backupPath);
   }
   try {
-    renameSync(buildOutputDir, panelDir);
+    moveDirectory(buildOutputDir, panelDir);
   } catch (error) {
     if (panelExists) {
       restorePanelBackup(logger, backupPath, panelDir);
@@ -259,8 +276,8 @@ export class TechnicalPanelDeployService {
     await this.installDependencies();
     await this.buildPanel();
     const buildOutputDir = this.verifyBuildOutput();
+    const revision = await resolveDeployRevision(this.logger, this.repoDir);
     swapPanelDirectory(this.logger, this.publicDir, buildOutputDir);
-    const revision = await currentRevision(this.logger, this.repoDir);
     const panelDir = join(this.publicDir, PANEL_DIR_NAME);
     this.logger.log({ ref: targetRef, revision, panelDir }, "Админ-панель развёрнута");
     return { ref: targetRef, revision, panelDir };

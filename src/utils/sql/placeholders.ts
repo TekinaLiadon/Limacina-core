@@ -1,5 +1,5 @@
 const SQL_LITERAL_OR_PLACEHOLDER =
-  /'(?:[^']|'')*'|\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$|\$(\d+)/g;
+  /'(?:[^'\\]|''|\\[\s\S])*'|"(?:[^"\\]|""|\\[\s\S])*"|\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$|\$(\d+)/g;
 
 export function replaceSqlPlaceholders(
   sql: string,

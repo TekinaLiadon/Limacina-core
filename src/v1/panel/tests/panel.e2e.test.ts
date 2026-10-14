@@ -37,7 +37,6 @@ import { V1PanelServerController } from "../server.controller";
 import { AdminService } from "../../../admin/admin.service";
 import { CronService } from "../../../cron/cron.service";
 import { LogsService } from "../../../admin/logs.service";
-import { LauncherUpdateService } from "../../../launcher/launcher-update.service";
 import { ReleasePublishService } from "../../../launcher/release-publish.service";
 import { ConfigUpdateService } from "../../../launcher/config-update.service";
 import { TechnicalBootstrapService } from "../../../technical/technical-bootstrap.service";
@@ -45,7 +44,8 @@ import { TechnicalRestartService } from "../../../technical/technical-restart.se
 import { TechnicalRebuildService } from "../../../technical/technical-rebuild.service";
 import { AdminMapStore, AdminMapStoreToken } from "../../../admin/admin_store";
 import { AuthMapStore, AuthStoreToken } from "../../../auth/service/auth_store";
-import { UPLOAD_TMP_DIR, buildLauncherZipName } from "../../../launcher/launcher-files";
+import { MemoryDb } from "../../../memory/memory-db";
+import { UPLOAD_TMP_DIR } from "../../../launcher/launcher-files";
 import GlobalConfig from "../../../config/global-config";
 import { AppConfigToken } from "../../../config/app-config.provider";
 import { Jwt_authGuard } from "../../../common/jwt_auth.guard";
@@ -53,8 +53,6 @@ import { RolesGuard } from "../../../common/roles.guard";
 
 const CONFIG_FILE = "config.toml";
 const CONFIG_BACKUP = "config.toml.bak";
-const VERSION_FILE = "public/version.json";
-const VERSION_BACKUP = "public/version.json.bak";
 
 function requestLine(id: string, url: string, remoteAddress: string, statusCode: number): string {
   return JSON.stringify({
@@ -94,6 +92,7 @@ class TestJwtStrategy extends PassportStrategy(Strategy) {
 }
 
 describe("V1 panel эндпоинты", (): void => {
+  const memoryDb = new MemoryDb();
   let app: INestApplication;
   let jwtService: JwtService;
   let adminToken: string;
@@ -119,7 +118,6 @@ describe("V1 panel эндпоинты", (): void => {
         AdminService,
         CronService,
         LogsService,
-        LauncherUpdateService,
         ReleasePublishService,
         ConfigUpdateService,
         TechnicalBootstrapService,
@@ -129,11 +127,11 @@ describe("V1 panel эндпоинты", (): void => {
         TestJwtStrategy,
         {
           provide: AdminMapStoreToken,
-          useClass: AdminMapStore,
+          useFactory: () => new AdminMapStore(memoryDb),
         },
         {
           provide: AuthStoreToken,
-          useClass: AuthMapStore,
+          useFactory: () => new AuthMapStore(memoryDb),
         },
       ],
     }).compile();
@@ -167,42 +165,6 @@ describe("V1 panel эндпоинты", (): void => {
       role: "user",
     });
 
-    const storeInstance = moduleFixture.get(AdminMapStoreToken);
-    await storeInstance.saveUser({
-      uuid: "admin-uuid",
-      username: "admin",
-      role: "admin",
-      approved: true,
-      banned: false,
-    });
-    await storeInstance.saveUser({
-      uuid: "user-uuid",
-      username: "user",
-      role: "user",
-      approved: false,
-      banned: false,
-    });
-
-    const users = [
-      { uuid: "alice-uuid", username: "alice", role: "user", approved: true },
-      { uuid: "bob-uuid", username: "bob", role: "user", approved: false },
-      { uuid: "carol-uuid", username: "carol", role: "user", approved: true },
-      { uuid: "roleuser-uuid", username: "roleuser", role: "user", approved: true },
-      { uuid: "futureowner-uuid", username: "futureowner", role: "user", approved: true },
-      { uuid: "owner-uuid", username: "owner", role: "owner", approved: true },
-      { uuid: "secondadmin-uuid", username: "secondadmin", role: "admin", approved: true },
-      { uuid: "modtarget-uuid", username: "modtarget", role: "moderator", approved: true },
-    ];
-    for (const { uuid, username, role, approved } of users) {
-      await storeInstance.saveUser({
-        uuid,
-        username,
-        role,
-        approved,
-        banned: false,
-      });
-    }
-
     const authStoreInstance = moduleFixture.get(AuthStoreToken);
     await authStoreInstance.saveUser({
       uuid: "user-uuid",
@@ -212,14 +174,18 @@ describe("V1 panel эндпоинты", (): void => {
       approved: false,
       banned: false,
     });
-    await authStoreInstance.saveUser({
-      uuid: "futureowner-uuid",
-      username: "futureowner",
-      passwordHash: "placeholder-hash",
-      role: "user",
-      approved: true,
-      banned: false,
-    });
+
+    const users = [
+      { uuid: "admin-uuid", username: "admin", role: "admin", approved: true },
+      { uuid: "alice-uuid", username: "alice", role: "user", approved: true },
+      { uuid: "bob-uuid", username: "bob", role: "user", approved: false },
+      { uuid: "carol-uuid", username: "carol", role: "user", approved: true },
+      { uuid: "roleuser-uuid", username: "roleuser", role: "user", approved: true },
+      { uuid: "futureowner-uuid", username: "futureowner", role: "user", approved: true },
+      { uuid: "owner-uuid", username: "owner", role: "owner", approved: true },
+      { uuid: "secondadmin-uuid", username: "secondadmin", role: "admin", approved: true },
+      { uuid: "modtarget-uuid", username: "modtarget", role: "moderator", approved: true },
+    ];
     for (const { uuid, username, role, approved } of users) {
       await authStoreInstance.saveUser({
         uuid,
@@ -240,14 +206,15 @@ describe("V1 panel эндпоинты", (): void => {
       ["deletedmod", "moderator"],
     ];
     for (const [username, role] of deletedTargets) {
-      await storeInstance.saveUser({
+      await authStoreInstance.saveUser({
         uuid: `${username}-uuid`,
         username,
+        passwordHash: "placeholder-hash",
         role,
         approved: true,
         banned: false,
       });
-      await storeInstance.deleteUser(username);
+      await authStoreInstance.deleteUser(`${username}-uuid`);
     }
   });
 
@@ -410,6 +377,13 @@ describe("V1 panel эндпоинты", (): void => {
     it("возвращает 400 при пустом username", async () => {
       await supertest(app.getHttpServer())
         .get("/v1/panel/users?username=")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(400);
+    });
+
+    it("возвращает 400 при username длиннее 64 символов", async () => {
+      await supertest(app.getHttpServer())
+        .get(`/v1/panel/users?username=${"a".repeat(65)}`)
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(400);
     });
@@ -1548,7 +1522,7 @@ describe("V1 panel эндпоинты", (): void => {
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(200);
 
-      expect(Array.isArray(res.body)).toBe(true);
+      expect(Array.isArray(res.body.dates)).toBe(true);
     });
   });
 
@@ -1642,143 +1616,6 @@ describe("V1 panel эндпоинты", (): void => {
         .patch("/v1/panel/launcher/config")
         .send(validConfig)
         .expect(401);
-    });
-  });
-
-  describe("PATCH /v1/panel/launcher", () => {
-    beforeAll(() => {
-      if (existsSync(VERSION_FILE)) {
-        renameSync(VERSION_FILE, VERSION_BACKUP);
-      }
-    });
-
-    afterAll(() => {
-      if (existsSync(VERSION_FILE)) {
-        unlinkSync(VERSION_FILE);
-      }
-      if (existsSync(VERSION_BACKUP)) {
-        renameSync(VERSION_BACKUP, VERSION_FILE);
-      }
-    });
-
-    it("возвращает 400 при невалидной версии", async () => {
-      await supertest(app.getHttpServer())
-        .patch("/v1/panel/launcher")
-        .set("Authorization", `Bearer ${ownerToken}`)
-        .field("version", "bad-version")
-        .expect(400);
-    });
-
-    it("возвращает 400 при неизвестном имени файлового поля", async () => {
-      await supertest(app.getHttpServer())
-        .patch("/v1/panel/launcher")
-        .set("Authorization", `Bearer ${ownerToken}`)
-        .field("version", "9.9.9")
-        .attach("linux_x64", Buffer.from("zip-content"), "launcher.zip")
-        .expect(400);
-    });
-
-    it("PATCH без файлов отклоняется и не публикует версию без артефактов", async () => {
-      const versionBefore = existsSync(VERSION_FILE)
-        ? readFileSync(VERSION_FILE, "utf-8")
-        : undefined;
-
-      await supertest(app.getHttpServer())
-        .patch("/v1/panel/launcher")
-        .set("Authorization", `Bearer ${ownerToken}`)
-        .field("version", "9.9.9")
-        .expect(400);
-
-      const versionAfter = existsSync(VERSION_FILE)
-        ? readFileSync(VERSION_FILE, "utf-8")
-        : undefined;
-      expect(versionAfter).toBe(versionBefore);
-    });
-
-    it("загрузка zip через multipart стримится в temp и не оставляет временных файлов", async () => {
-      const zipDir = join("public", "linux", "x86_64");
-      try {
-        const res = await supertest(app.getHttpServer())
-          .patch("/v1/panel/launcher")
-          .set("Authorization", `Bearer ${ownerToken}`)
-          .field("version", "7.7.7")
-          .attach("linux_x86_64", Buffer.from("streamed-zip-content"), "launcher.zip")
-          .expect(200);
-
-        expect(res.body.updated).toContain("linux/x86_64");
-
-        const leftovers = existsSync(UPLOAD_TMP_DIR) ? readdirSync(UPLOAD_TMP_DIR) : [];
-        expect(leftovers).toEqual([]);
-        expect(readFileSync(join(zipDir, "Limacina-7.7.7-linux-x86_64.zip"), "utf-8")).toBe(
-          "streamed-zip-content",
-        );
-      } finally {
-        for (const dir of [zipDir, join(zipDir, "old")]) {
-          const zipPath = join(dir, "Limacina-7.7.7-linux-x86_64.zip");
-          if (existsSync(zipPath)) unlinkSync(zipPath);
-        }
-        rmSync(UPLOAD_TMP_DIR, { recursive: true, force: true });
-      }
-    });
-
-    it("конкурентные PATCH оставляют консистентное состояние", async () => {
-      const versions = ["8.8.1", "8.8.2", "8.8.3"];
-      const platformDir = join("public", "linux", "x86_64");
-      const oldDir = join(platformDir, "old");
-      const existingZips = existsSync(platformDir)
-        ? readdirSync(platformDir).filter((file) => file.endsWith(".zip"))
-        : [];
-      try {
-        const responses = await Promise.all(
-          versions.map((version) =>
-            supertest(app.getHttpServer())
-              .patch("/v1/panel/launcher")
-              .set("Authorization", `Bearer ${ownerToken}`)
-              .field("version", version)
-              .attach("linux_x86_64", Buffer.from(`zip-${version}`), "launcher.zip"),
-          ),
-        );
-
-        for (const res of responses) {
-          expect(res.status).toBe(200);
-          expect(versions).toContain(res.body.version);
-          expect(res.body.updated).toContain("linux/x86_64");
-        }
-
-        const data = JSON.parse(readFileSync(VERSION_FILE, "utf-8")) as { version: string };
-        expect(versions).toContain(data.version);
-        expect(
-          existsSync(join(platformDir, buildLauncherZipName(data.version, "linux", "x86_64"))),
-        ).toBe(true);
-        expect(existsSync(`${VERSION_FILE}.tmp`)).toBe(false);
-      } finally {
-        for (const dir of [platformDir, oldDir]) {
-          for (const version of versions) {
-            const zipPath = join(dir, buildLauncherZipName(version, "linux", "x86_64"));
-            if (existsSync(zipPath)) unlinkSync(zipPath);
-          }
-        }
-        for (const file of existingZips) {
-          if (existsSync(join(oldDir, file))) {
-            renameSync(join(oldDir, file), join(platformDir, file));
-          }
-        }
-        if (existsSync(oldDir) && readdirSync(oldDir).length === 0) {
-          rmSync(oldDir, { recursive: true });
-        }
-      }
-    });
-
-    it("возвращает 401 без токена", async () => {
-      await supertest(app.getHttpServer()).patch("/v1/panel/launcher").expect(401);
-    });
-
-    it("возвращает 403 для админа — обновление лаунчера привилегия овнера", async () => {
-      await supertest(app.getHttpServer())
-        .patch("/v1/panel/launcher")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .field("version", "9.9.9")
-        .expect(403);
     });
   });
 

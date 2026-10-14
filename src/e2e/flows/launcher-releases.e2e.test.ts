@@ -12,8 +12,6 @@ const WINDOWS_ARTIFACT = "windows-updater-binary";
 const LINUX_ARTIFACT = "linux-updater-binary";
 const WINDOWS_SIGNATURE = "windows-minisign-signature";
 const LINUX_SIGNATURE = "linux-minisign-signature";
-const ZIP_V2 = "launcher-zip-2.0.0-payload";
-const ZIP_V21 = "launcher-zip-2.1.0-payload";
 
 const describeFlow = describe.skipIf(!flowTestsEnabled());
 
@@ -41,20 +39,6 @@ async function fetchArtifact(url: string): Promise<Response> {
   return api(flow.baseUrl).get(new URL(url).pathname);
 }
 
-async function waitForVersion(version: string): Promise<void> {
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const response = await api(flow.baseUrl).get("/v1/launcher/update/version");
-    if (
-      response.status === 200 &&
-      ((await response.json()) as { version: string }).version === version
-    ) {
-      return;
-    }
-    await Bun.sleep(100);
-  }
-  throw new Error(`version.json так и не обновился до ${version}`);
-}
-
 async function waitForConfig(projectName: string): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt++) {
     const response = await api(flow.baseUrl).get("/v1/launcher/config");
@@ -71,7 +55,7 @@ describeFlow("Флоу F: релизы и файлы лаунчера", () => {
   beforeAll(async () => {
     flow = await bootFlowApp({
       owner: OWNER,
-      moveAside: ["config.toml", "public/version.json", "public/releases"],
+      moveAside: ["config.toml", "public/releases"],
     });
     owner = flow.owner!;
   });
@@ -145,54 +129,6 @@ describeFlow("Флоу F: релизы и файлы лаунчера", () => {
     expect(missingRollback.status).toBe(404);
   });
 
-  it("F2: zip-протокол — публикация версии, скачивание текущей и архивной", async () => {
-    const beforePublish = await api(flow.baseUrl).get("/v1/launcher/update/version");
-    expect(beforePublish.status).toBe(200);
-    expect(((await beforePublish.json()) as { version: string }).version).toBe("0.0.0");
-
-    const published = await api(flow.baseUrl).patchForm(
-      "/v1/panel/launcher",
-      publishZipForm("2.0.0", ZIP_V2),
-      owner.tokens.access_token,
-    );
-    expect(published.status).toBe(200);
-    await waitForVersion("2.0.0");
-
-    const versions = (await (
-      await api(flow.baseUrl).get("/v1/launcher/update/version")
-    ).json()) as { version: string; versions: { version: string }[] };
-    expect(versions.version).toBe("2.0.0");
-    expect(versions.versions.map((entry) => entry.version)).toContain("2.0.0");
-
-    const download = await api(flow.baseUrl).get("/v1/launcher/update/linux/x86_64/download");
-    expect(download.status).toBe(200);
-    expect(download.headers.get("content-length")).toBe(String(ZIP_V2.length));
-    expect(await download.text()).toBe(ZIP_V2);
-
-    const publishedNext = await api(flow.baseUrl).patchForm(
-      "/v1/panel/launcher",
-      publishZipForm("2.1.0", ZIP_V21),
-      owner.tokens.access_token,
-    );
-    expect(publishedNext.status).toBe(200);
-    await waitForVersion("2.1.0");
-
-    const current = await api(flow.baseUrl).get("/v1/launcher/update/linux/x86_64/download");
-    expect(await current.text()).toBe(ZIP_V21);
-    const archived = await api(flow.baseUrl).get(
-      "/v1/launcher/update/linux/x86_64/download?version=2.0.0",
-    );
-    expect(archived.status).toBe(200);
-    expect(await archived.text()).toBe(ZIP_V2);
-
-    const badPlatform = await api(flow.baseUrl).get("/v1/launcher/update/solaris/sparc/download");
-    expect(badPlatform.status).toBe(400);
-    const missingVersion = await api(flow.baseUrl).get(
-      "/v1/launcher/update/linux/x86_64/download?version=3.3.3",
-    );
-    expect(missingVersion.status).toBe(404);
-  });
-
   it("F3: конфиг лаунчера — 404 до первой записи, PATCH создаёт и обновляет", async () => {
     const missing = await api(flow.baseUrl).get("/v1/launcher/config");
     expect(missing.status).toBe(404);
@@ -255,10 +191,3 @@ describeFlow("Флоу F: релизы и файлы лаунчера", () => {
     expect(rereadBody["online"]).toBeFalse();
   });
 });
-
-function publishZipForm(version: string, payload: string): FormData {
-  const form = new FormData();
-  form.append("version", version);
-  form.append("linux_x86_64", new Blob([payload]), `limacina-${version}.zip`);
-  return form;
-}

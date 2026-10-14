@@ -301,3 +301,105 @@ describe("AuthService — восстановление сессии при сб�
     expect((await service.login("passrb", "user-pass-123")).username).toBe("passrb");
   });
 });
+
+describe("AuthService — заголовок X-Launcher-Id при логине", () => {
+  const INSTALL_ID = "v1-0123456789abcdef0123456789abcdef";
+  const OTHER_INSTALL_ID = "v1-fedcba0987654321fedcba0987654321";
+  let service: AuthService;
+  let store: IAuthStore;
+  let userUuid: string;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [
+        JwtModule.register({
+          secret: "test-access-secret-0123456789abcdef0123",
+          signOptions: { expiresIn: 3600 },
+        }),
+      ],
+      providers: [
+        AuthService,
+        { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
+        { provide: AuthStoreToken, useClass: AuthMapStore },
+      ],
+    }).compile();
+
+    service = moduleFixture.get(AuthService);
+    store = moduleFixture.get<IAuthStore>(AuthStoreToken);
+    const registered = await service.register("headeruser", "user-pass-123");
+    await store.setApproved(registered.uuid, true);
+    userUuid = registered.uuid;
+  });
+
+  it("логин с валидным заголовком сохраняет ID установки", async () => {
+    const res = await service.login("headeruser", "user-pass-123", INSTALL_ID);
+
+    expect(res.uuid).toBe(userUuid);
+    expect(await store.findInstallId(userUuid)).toEqual({ current: INSTALL_ID, history: [] });
+  });
+
+  it("логин без заголовка не меняет сохранённый ID", async () => {
+    await service.login("headeruser", "user-pass-123");
+
+    expect(await store.findInstallId(userUuid)).toEqual({ current: INSTALL_ID, history: [] });
+  });
+
+  it("невалидный заголовок игнорируется, логин проходит", async () => {
+    const res = await service.login("headeruser", "user-pass-123", "spoofed-value");
+
+    expect(res.uuid).toBe(userUuid);
+    expect(await store.findInstallId(userUuid)).toEqual({ current: INSTALL_ID, history: [] });
+  });
+
+  it("смена ID сдвигает предыдущий в историю", async () => {
+    await service.login("headeruser", "user-pass-123", OTHER_INSTALL_ID);
+
+    expect(await store.findInstallId(userUuid)).toEqual({
+      current: OTHER_INSTALL_ID,
+      history: [INSTALL_ID],
+    });
+  });
+});
+
+describe("AuthService — сбой записи X-Launcher-Id не ломает логин", () => {
+  class FailingInstallStore extends AuthMapStore {
+    override async recordInstallId(): Promise<void> {
+      throw new Error("recordInstallId недоступен");
+    }
+  }
+
+  let service: AuthService;
+  let store: IAuthStore;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [
+        JwtModule.register({
+          secret: "test-access-secret-0123456789abcdef0123",
+          signOptions: { expiresIn: 3600 },
+        }),
+      ],
+      providers: [
+        AuthService,
+        { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
+        { provide: AuthStoreToken, useClass: FailingInstallStore },
+      ],
+    }).compile();
+
+    service = moduleFixture.get(AuthService);
+    store = moduleFixture.get<IAuthStore>(AuthStoreToken);
+    const registered = await service.register("failinstall", "user-pass-123");
+    await store.setApproved(registered.uuid, true);
+  });
+
+  it("логин успешен и выдаёт токены при недоступной записи ID", async () => {
+    const res = await service.login(
+      "failinstall",
+      "user-pass-123",
+      "v1-0123456789abcdef0123456789abcdef",
+    );
+
+    expect(res.tokens.access_token).toBeDefined();
+    expect(res.tokens.refresh_token).toBeDefined();
+  });
+});

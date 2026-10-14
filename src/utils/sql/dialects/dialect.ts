@@ -2,11 +2,13 @@ import type { QueryResult, SqlValue } from "../types";
 
 export type SqlDialectName = "postgres" | "mariadb";
 
+export type ReturningStatement = "insert" | "update" | "delete";
+
 export interface SqlDialect {
   readonly name: SqlDialectName;
   toClientQuery(sql: string, values: SqlValue[]): { sql: string; values: unknown[] };
   toQueryResult(raw: unknown): QueryResult<Record<string, unknown>>;
-  renderReturning(columns: string[]): string | null;
+  renderReturning(columns: string[], statement: ReturningStatement): string | null;
 }
 
 export function toBoolean(value: unknown): boolean {

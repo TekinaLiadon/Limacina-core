@@ -118,6 +118,34 @@ contractDescribeEach("контракт IAuthStore", (driver) => {
     expect(await ctx.store.userExists(`missing_${generateUuid().slice(0, 12)}`)).toBe(false);
   });
 
+  it("recordInstallId ведёт current и историю без дублей одинаково на обоих драйверах", async () => {
+    const user = await ctx.makeUser();
+    const first = "v1-0123456789abcdef0123456789abcdef";
+    const second = "v1-fedcba0987654321fedcba0987654321";
+    const third = "v1-aaaa0000bbbb1111cccc2222dddd3333";
+
+    expect(await ctx.store.findInstallId(user.uuid)).toBeUndefined();
+
+    await ctx.store.recordInstallId(user.uuid, first);
+    expect(await ctx.store.findInstallId(user.uuid)).toEqual({ current: first, history: [] });
+
+    await ctx.store.recordInstallId(user.uuid, first);
+    expect(await ctx.store.findInstallId(user.uuid)).toEqual({ current: first, history: [] });
+
+    await ctx.store.recordInstallId(user.uuid, second);
+    expect(await ctx.store.findInstallId(user.uuid)).toEqual({
+      current: second,
+      history: [first],
+    });
+
+    await ctx.store.recordInstallId(user.uuid, third);
+    await ctx.store.recordInstallId(user.uuid, first);
+    expect(await ctx.store.findInstallId(user.uuid)).toEqual({
+      current: first,
+      history: [first, second, third],
+    });
+  });
+
   it("setApproved переключает одобрение в обе стороны", async () => {
     const user = await ctx.makeUser();
 

@@ -38,11 +38,15 @@ export class UsersSearchQueryDto {
   @ApiProperty({
     example: "john",
     required: false,
+    maxLength: MAX_USERNAME_LENGTH,
     description: "Поиск по началу юзернейма (без учёта регистра)",
   })
   @IsOptional()
   @IsString({ message: validationMessages.string("username") })
   @IsNotEmpty({ message: validationMessages.notEmpty("username") })
+  @MaxLength(MAX_USERNAME_LENGTH, {
+    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
+  })
   username?: string;
 }
 
@@ -285,4 +289,13 @@ export class LogsResponseDto {
     ],
   })
   lines!: string[];
+}
+
+export class LogDatesResponseDto {
+  @ApiProperty({
+    type: [String],
+    example: ["2026-07-08", "2026-07-07", "2026-07-06"],
+    description: "Даты YYYY-MM-DD с лог-файлами, от новых к старым",
+  })
+  dates!: string[];
 }

@@ -7,7 +7,6 @@ import { listDirEntriesQuietly } from "../utils/fs";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BACKUP_INFIX = ".old-";
 const UUID_LENGTH = 36;
-const REPLACED_SUFFIX = ".replaced";
 
 export function buildReleaseStagingName(uuid: string): string {
   return `.staging-${uuid}`;
@@ -27,16 +26,6 @@ export function buildReleaseStolenLockName(version: string, uuid: string): strin
 
 export function buildReleaseBackupName(version: string, uuid: string): string {
   return `${BACKUP_INFIX}${version}-${uuid}`;
-}
-
-export function buildReplacedZipName(zipName: string): string {
-  return `.${zipName}${REPLACED_SUFFIX}`;
-}
-
-export function parseReplacedZipName(entry: string): string | null {
-  if (!entry.startsWith(".") || !entry.endsWith(REPLACED_SUFFIX)) return null;
-  const original = entry.slice(1, -REPLACED_SUFFIX.length);
-  return original.length > 0 ? original : null;
 }
 
 export function isReleaseStagingEntry(entry: string): boolean {
@@ -59,10 +48,6 @@ export function isReleaseBackupEntry(entry: string): boolean {
 
 export function isReleaseServiceEntry(entry: string): boolean {
   return isReleaseStagingEntry(entry) || isReleaseLockEntry(entry) || isReleaseBackupEntry(entry);
-}
-
-export function isZipReplacedEntry(entry: string): boolean {
-  return entry.endsWith(".replaced");
 }
 
 export function parseReleaseBackupEntry(entry: string): string | null {

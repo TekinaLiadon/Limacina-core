@@ -1,4 +1,5 @@
 import { currentDialect } from "./client";
+import type { ReturningStatement } from "./dialects/dialect";
 import {
   addAnd,
   addWhere,
@@ -22,11 +23,18 @@ interface WithReturning {
 
 interface InsertFrom {
   values: (...vals: SqlValue[]) => InsertAfterValues;
+  returning: (...ret: string[]) => WithBuild;
+  build: () => BuiltQuery;
 }
 
 interface InsertAfterValues {
   values: (...vals: SqlValue[]) => InsertAfterValues;
   returning: (...ret: string[]) => WithBuild;
+  build: () => BuiltQuery;
+}
+
+interface UpdateFrom {
+  set: (column: string, value: SqlValue) => UpdateSet;
   build: () => BuiltQuery;
 }
 
@@ -55,8 +63,13 @@ function assertHasWhere(parts: string[], statement: string): void {
   }
 }
 
-function appendReturning(baseSql: string, columns: string[]): string {
-  const clause = currentDialect().renderReturning(columns);
+function appendReturning(
+  baseSql: string,
+  columns: string[],
+  statement: ReturningStatement,
+): string {
+  for (const column of columns) assertStaticFragment(column);
+  const clause = currentDialect().renderReturning(columns, statement);
   if (clause === null) {
     throw new Error(
       `Диалект "${currentDialect().name}" не поддерживает RETURNING — используйте SELECT после записи`,
@@ -71,6 +84,13 @@ function buildInsert(
   allValues: SqlValue[][],
   returning?: string[],
 ): BuiltQuery {
+  if (columns.length === 0) {
+    throw new Error("INSERT без колонок — перечислите колонки в insertQuery()");
+  }
+  if (allValues.length === 0) {
+    throw new Error("INSERT без значений — вызовите values()");
+  }
+  for (const column of columns) assertStaticFragment(column);
   const rows: string[] = [];
   let placeholderIndex = 0;
   for (const rowValues of allValues) {
@@ -83,13 +103,14 @@ function buildInsert(
     rows.push(`(${placeholders})`);
   }
   const base = `INSERT INTO ${table} (${columns.join(", ")}) VALUES ${rows.join(", ")}`;
-  const sqlStr = returning ? appendReturning(base, returning) : base;
+  const sqlStr = returning ? appendReturning(base, returning, "insert") : base;
   return { sql: sqlStr, values: allValues.flat() };
 }
 
 export function selectQuery(...columns: string[]): {
   from: (table: TableName, alias?: string) => SelectBuilder;
 } {
+  for (const column of columns) assertStaticFragment(column);
   const cols = columns.length > 0 ? columns.join(", ") : "*";
 
   return {
@@ -116,6 +137,7 @@ export function selectQuery(...columns: string[]): {
 
       const builder: SelectBuilder = {
         join: (type: string, joinTable: TableName, joinAlias: string, on: string) => {
+          assertStaticFragment(type);
           assertStaticFragment(on);
           fromClause += ` ${type} ${joinTable} ${joinAlias} ON ${on}`;
           return builder;
@@ -167,28 +189,31 @@ export function insertQuery(...columns: string[]): {
       const allValues: SqlValue[][] = [];
 
       const withRows = (): InsertAfterValues => ({
-        values: (...vals: SqlValue[]) => {
-          allValues.push(vals);
-          return withRows();
-        },
+        values: pushRow,
         returning: (...ret: string[]) => ({
           build: () => buildInsert(table, columns, allValues, ret),
         }),
         build: () => buildInsert(table, columns, allValues),
       });
 
+      const pushRow = (...vals: SqlValue[]): InsertAfterValues => {
+        allValues.push(vals);
+        return withRows();
+      };
+
       return {
-        values: (...vals: SqlValue[]) => {
-          allValues.push(vals);
-          return withRows();
-        },
+        values: pushRow,
+        returning: (...ret: string[]) => ({
+          build: () => buildInsert(table, columns, allValues, ret),
+        }),
+        build: () => buildInsert(table, columns, allValues),
       };
     },
   };
 }
 
 export function updateQuery(): {
-  from: (table: TableName) => { set: (column: string, value: SqlValue) => UpdateSet };
+  from: (table: TableName) => UpdateFrom;
 } {
   return {
     from: (table: TableName) => {
@@ -197,6 +222,9 @@ export function updateQuery(): {
       const whereState: WhereState = createWhereState();
 
       const buildUpdate = (): BuiltQuery => {
+        if (setClauses.length === 0) {
+          throw new Error("UPDATE без set() запрещён — укажите изменяемые колонки");
+        }
         assertHasWhere(whereState.parts, "UPDATE");
         const whereClause = buildWhereClause(whereState);
         const sqlStr = `UPDATE ${table} SET ${setClauses.join(", ")}${whereClause}`;
@@ -220,7 +248,7 @@ export function updateQuery(): {
                 build: () => {
                   const built = buildUpdate();
                   return {
-                    sql: appendReturning(built.sql, ret),
+                    sql: appendReturning(built.sql, ret, "update"),
                     values: built.values,
                   };
                 },
@@ -232,7 +260,7 @@ export function updateQuery(): {
         };
       };
 
-      return { set: addSet };
+      return { set: addSet, build: buildUpdate };
     },
   };
 }

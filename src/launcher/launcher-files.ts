@@ -26,8 +26,6 @@ export const MULTIPART_FILE_SIZE_LIMIT_BYTES = 50 * 1024 * 1024;
 
 export const UPLOAD_TMP_DIR = join("tmp", "upload-tmp");
 
-export const OLD_VERSIONS_DIR = "old";
-
 export const RELEASES_DIR = "releases";
 
 export const SUPPORTED_PLATFORMS: Record<string, string[]> = {
@@ -79,40 +77,6 @@ export function matchUpdaterArtifactSuffix(filename: string, key: string): strin
   const lower = filename.toLowerCase();
   const matched = platform.artifactSuffixes.find((suffix) => lower.endsWith(suffix.toLowerCase()));
   return matched ?? null;
-}
-
-export const SUPPORTED_OS: string[] = Object.keys(SUPPORTED_PLATFORMS);
-
-export const SUPPORTED_ARCHS: string[] = [...new Set(Object.values(SUPPORTED_PLATFORMS).flat())];
-
-export interface PlatformField {
-  os: string;
-  arch: string;
-}
-
-export const PLATFORM_FIELDS: Record<string, PlatformField> = Object.fromEntries(
-  Object.entries(SUPPORTED_PLATFORMS).flatMap(([os, archs]) =>
-    archs.map((arch) => [`${os}_${arch}`, { os, arch }]),
-  ),
-);
-
-export const PLATFORM_FIELD_NAMES: string[] = Object.keys(PLATFORM_FIELDS);
-
-export function isSupportedPlatform(os: string, arch: string): boolean {
-  const archs = Object.hasOwn(SUPPORTED_PLATFORMS, os) ? SUPPORTED_PLATFORMS[os] : undefined;
-  return archs?.includes(arch) ?? false;
-}
-
-export function buildLauncherZipName(version: string, os: string, arch: string): string {
-  return `Limacina-${version}-${os}-${arch}.zip`;
-}
-
-export function parseLauncherZipName(filename: string, os: string, arch: string): string | null {
-  const suffix = `-${os}-${arch}.zip`;
-  if (!filename.startsWith("Limacina-") || !filename.endsWith(suffix)) return null;
-
-  const version = filename.slice("Limacina-".length, filename.length - suffix.length);
-  return LAUNCHER_VERSION_REGEX.test(version) ? version : null;
 }
 
 export function compareVersions(a: string, b: string): number {

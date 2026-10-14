@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { inflateSync } from "node:zlib";
+import { deflateSync, inflateSync } from "node:zlib";
 import {
   MAX_PNG_DIMENSION,
   PngStructureError,
@@ -333,10 +333,58 @@ describe("sanitizePng", (): void => {
     expect(sanitizePng(clean).equals(clean)).toBe(true);
   });
 
+  const buildWithTrns = (colorType: number): Buffer => {
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(64, 0);
+    ihdr.writeUInt32BE(64, 4);
+    ihdr[8] = 8;
+    ihdr[9] = colorType;
+    const chunks = [pngChunk("IHDR", ihdr)];
+    if (colorType === 3) chunks.push(pngChunk("PLTE", Buffer.alloc(9)));
+    chunks.push(pngChunk("tRNS", Buffer.alloc(colorType === 2 ? 6 : 2, 1)));
+    chunks.push(pngChunk("IDAT", deflateSync(Buffer.alloc(4))));
+    chunks.push(pngChunk("IEND", Buffer.alloc(0)));
+    return Buffer.concat([TEST_PNG_SIGNATURE, ...chunks]);
+  };
+
+  it("сохраняет tRNS для colorType 0/2/3", (): void => {
+    for (const colorType of [0, 2, 3]) {
+      const source = buildWithTrns(colorType);
+      const sanitized = sanitizePng(source);
+
+      expect(() => validatePngStructure(sanitized)).not.toThrow();
+      expect(hasChunk(sanitized, "tRNS")).toBe(true);
+      expect(sanitized.equals(source)).toBe(true);
+    }
+  });
+
+  it("убирает tRNS для colorType 4/6", (): void => {
+    for (const colorType of [4, 6]) {
+      const source = buildWithTrns(colorType);
+      const sanitized = sanitizePng(source);
+
+      expect(() => validatePngStructure(sanitized)).not.toThrow();
+      expect(hasChunk(sanitized, "tRNS")).toBe(false);
+      expect(sanitized.equals(source)).toBe(false);
+    }
+  });
+
   it("структурно битый файл отклоняется", (): void => {
     expect(() => sanitizePng(Buffer.from("not a png at all"))).toThrow(PngStructureError);
   });
 });
+
+function hasChunk(file: Buffer, type: string): boolean {
+  let offset = 8;
+  while (offset < file.length) {
+    const chunkLength = file.readUInt32BE(offset);
+    const chunkType = file.toString("ascii", offset + 4, offset + 8);
+    if (chunkType === type) return true;
+    offset += 12 + chunkLength;
+    if (chunkType === "IEND") break;
+  }
+  return false;
+}
 
 function idatPayload(file: Buffer): Buffer {
   let offset = 8;
