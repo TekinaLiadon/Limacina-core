@@ -41,7 +41,8 @@ jobs:
         run: bun install
 
       - name: Audit dependencies
-        run: bun audit --only-prod
+        # braces через pm2>chokidar@3 не имеет фиксовой версии — игнор до релиза патча (см. Исключения в AGENTS.md)
+        run: bun audit --only-prod --ignore GHSA-vfj7-8cjw-p6xm
 
       - name: Tests
         run: bun test
