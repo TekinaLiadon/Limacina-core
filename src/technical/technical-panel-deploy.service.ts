@@ -37,6 +37,7 @@ const FETCH_TIMEOUT_MS = 60_000;
 const CHECKOUT_TIMEOUT_MS = 30_000;
 const BRANCH_TIMEOUT_MS = 10_000;
 const INSTALL_TIMEOUT_MS = 300_000;
+const PREPARE_TIMEOUT_MS = 300_000;
 const BUILD_TIMEOUT_MS = 300_000;
 const PANEL_REF_PATTERN = /^[0-9A-Za-z._/-]+$/;
 const PANEL_DEPLOY_LOCK_TIMEOUT_MS = 10_000;
@@ -132,6 +133,17 @@ function readPanelLockToken(lockDir: string): string | undefined {
     return readFileSync(join(lockDir, PANEL_DEPLOY_LOCK_TOKEN_FILENAME), "utf-8");
   } catch {
     return undefined;
+  }
+}
+
+function hasPanelScript(repoDir: string, script: string): boolean {
+  try {
+    const manifest = JSON.parse(readFileSync(join(repoDir, "package.json"), "utf-8")) as {
+      scripts?: Record<string, string>;
+    };
+    return Boolean(manifest.scripts?.[script]);
+  } catch {
+    return false;
   }
 }
 
@@ -274,7 +286,10 @@ export class TechnicalPanelDeployService {
     recoverPanelBackups(this.publicDir, this.logger);
     const targetRef = await this.syncRepository(ref);
     await this.installDependencies();
-    await this.buildPanel();
+    if (hasPanelScript(this.repoDir, "postinstall")) {
+      await this.runPanelScript("postinstall", PREPARE_TIMEOUT_MS);
+    }
+    await this.runPanelScript("build", BUILD_TIMEOUT_MS);
     const buildOutputDir = this.verifyBuildOutput();
     const revision = await resolveDeployRevision(this.logger, this.repoDir);
     swapPanelDirectory(this.logger, this.publicDir, buildOutputDir);
@@ -371,18 +386,18 @@ export class TechnicalPanelDeployService {
     await runPanelStep(
       this.logger,
       "bun install",
-      buildInstallCommand(await hasLockfile(this.repoDir)),
+      [...buildInstallCommand(await hasLockfile(this.repoDir)), "--ignore-scripts"],
       INSTALL_TIMEOUT_MS,
       this.repoDir,
     );
   }
 
-  private async buildPanel(): Promise<void> {
+  private async runPanelScript(script: string, timeoutMs: number): Promise<void> {
     await runPanelStep(
       this.logger,
-      "bun run build",
-      ["bun", "run", "build"],
-      BUILD_TIMEOUT_MS,
+      `bun run ${script}`,
+      ["bun", "--bun", "run", script],
+      timeoutMs,
       this.repoDir,
     );
   }
