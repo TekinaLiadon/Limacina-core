@@ -40,10 +40,26 @@ import {
   isPanelBackupEntry,
 } from "../panel-deploy-dirs";
 
+const PANEL_RUNTIME_PROBE = `#!/usr/bin/env node
+import { appendFileSync, copyFileSync, mkdirSync } from "node:fs";
+
+const phase = process.argv[2];
+const runtime = process.versions.bun ? "bun" : "node";
+appendFileSync(".panel-runtimes", \`\${phase}: \${runtime}\\n\`);
+
+if (phase === "build") {
+  mkdirSync(".output/public", { recursive: true });
+  copyFileSync("page.html", ".output/public/index.html");
+}
+`;
+
 const FIXTURE_PACKAGE = JSON.stringify({
   name: "limacina-panel-fixture",
   private: true,
-  scripts: { build: "mkdir -p .output/public && cp page.html .output/public/index.html" },
+  scripts: {
+    postinstall: "./panel-runtime-probe.js postinstall",
+    build: "./panel-runtime-probe.js build",
+  },
 });
 
 const GIT_AUTHOR = ["-c", "user.name=fixture", "-c", "user.email=fixture@limacina.local"];
@@ -96,6 +112,8 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
   beforeAll((): void => {
     git(["init", "-b", "main", panelFixture], fixtureRoot);
     writeFileSync(join(panelFixture, "package.json"), FIXTURE_PACKAGE);
+    writeFileSync(join(panelFixture, "panel-runtime-probe.js"), PANEL_RUNTIME_PROBE);
+    chmodSync(join(panelFixture, "panel-runtime-probe.js"), 0o755);
     writeFileSync(join(panelFixture, "page.html"), "panel-v1");
     git(["add", "-A"], panelFixture);
     git([...GIT_AUTHOR, "commit", "-m", "v1"], panelFixture);
@@ -137,7 +155,7 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
   });
 
   it("разворачивает сборку панели в public/panel: clone → install → build → swap", async (): Promise<void> => {
-    const { service, publicDir } = createService(panelFixture);
+    const { service, repoDir, publicDir } = createService(panelFixture);
 
     const result = await service.deploy();
 
@@ -145,6 +163,9 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
     expect(result.revision).toMatch(/^[0-9a-f]{40}$/);
     expect(result.panelDir).toBe(join(publicDir, PANEL_DIR_NAME));
     expect(panelContent(publicDir)).toBe("panel-v2");
+    const runtimes = readFileSync(join(repoDir, ".panel-runtimes"), "utf-8");
+    expect(runtimes).toContain("postinstall: bun");
+    expect(runtimes).toContain("build: bun");
   }, 30_000);
 
   it("повторный деплой переиспользует чекаут и обновляет панель", async (): Promise<void> => {
