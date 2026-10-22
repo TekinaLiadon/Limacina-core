@@ -24,26 +24,16 @@ async function downloadFile(url: string, dest: string): Promise<void> {
   await Bun.write(dest, data);
 }
 
-function parseArgs(): { mcVersion: string; authlibVersion: string | undefined } {
-  const args = process.argv.slice(2);
-  if (args.length === 0) {
-    console.error("Usage: bun run download:authlib <mc_version> [authlib_version]");
-    console.error("Example: bun run download:authlib 1.20.4");
-    console.error("Example: bun run download:authlib 1.20.4 1.2.7");
-    process.exit(1);
-  }
-
-  return {
-    mcVersion: args[0]!,
-    authlibVersion: args[1],
-  };
+function parseArgs(): { authlibVersion: string | undefined } {
+  const [authlibVersion] = process.argv.slice(2);
+  return { authlibVersion };
 }
 
 async function main() {
-  const { mcVersion, authlibVersion } = parseArgs();
+  const { authlibVersion } = parseArgs();
 
   const version = authlibVersion ?? (await getLatestVersion());
-  console.log(`authlib-injector v${version} for MC ${mcVersion}`);
+  console.log(`authlib-injector v${version}`);
 
   const url = await getDownloadUrl(version);
   const filename = "authlib-injector.jar";
