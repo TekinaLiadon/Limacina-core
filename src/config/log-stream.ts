@@ -1,5 +1,5 @@
-import { createWriteStream, type WriteStream } from "node:fs";
-import { mkdir, readdir, stat, unlink } from "node:fs/promises";
+import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
+import { readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 
@@ -40,15 +40,11 @@ async function cleanupOldLogs(): Promise<void> {
   }
 }
 
-async function ensureLogsDir(): Promise<void> {
+function ensureLogsDir(): void {
   try {
-    await readdir(LOGS_DIR);
-  } catch {
-    try {
-      await mkdir(LOGS_DIR, { recursive: true });
-    } catch (error) {
-      logToStderr(`ошибка создания каталога логов: ${String(error)}`);
-    }
+    mkdirSync(LOGS_DIR, { recursive: true });
+  } catch (error) {
+    logToStderr(`ошибка создания каталога логов: ${String(error)}`);
   }
 }
 
@@ -66,7 +62,7 @@ function closeLogStream(stream: WriteStream): void {
 }
 
 export function createLogStream(): Writable {
-  void ensureLogsDir();
+  ensureLogsDir();
   void cleanupOldLogs();
 
   let currentDate = today();
@@ -99,7 +95,7 @@ export function createLogStream(): Writable {
       if (date !== currentDate || streamFailed) {
         closeLogStream(stream);
         currentDate = date;
-        void ensureLogsDir();
+        ensureLogsDir();
         stream = openLogStream(currentDate);
         streamFailed = false;
       }

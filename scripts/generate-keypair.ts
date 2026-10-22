@@ -1,5 +1,5 @@
-import { generateKeyPairSync, createPublicKey } from "node:crypto";
-import { writeFileSync, mkdirSync, existsSync, chmodSync, statSync } from "node:fs";
+import { generateKeyPairSync } from "node:crypto";
+import { writeFileSync, mkdirSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { resolveKeysDir } from "../src/yggdrasil/service/keys-dir";
 
@@ -28,21 +28,12 @@ function main() {
   writeFileSync(publicKeyPath, publicKey);
 
   chmodSync(privateKeyPath, 0o600);
-  if (statSync(KEYS_DIR).isDirectory() === false) {
-    process.exit(1);
-  }
 
   console.log(`Private key: ${privateKeyPath}`);
   console.log(`Public key: ${publicKeyPath}`);
-
-  const pub = createPublicKey(publicKey);
-  const der = pub.export({ type: "spki", format: "der" });
-  const b64 = der.toString("base64");
-  const lines = b64.match(/.{1,64}/g) ?? [];
-  const pem = `-----BEGIN PUBLIC KEY-----\n${lines.join("\n")}\n-----END PUBLIC KEY-----`;
-
-  console.log("\nAdd to .env (SECRETS or directly):");
-  console.log(`YGGDRASIL_PUBLIC_KEY=${pem}`);
+  console.log(
+    `\nThe server reads keys from ${KEYS_DIR} automatically. Set KEYS_DIR only when the server runs from another working directory.`,
+  );
 }
 
 main();
