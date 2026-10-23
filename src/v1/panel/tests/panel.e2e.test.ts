@@ -1522,7 +1522,7 @@ describe("V1 panel эндпоинты", (): void => {
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(200);
 
-      expect(Array.isArray(res.body.dates)).toBe(true);
+      expect(Array.isArray(res.body)).toBe(true);
     });
   });
 

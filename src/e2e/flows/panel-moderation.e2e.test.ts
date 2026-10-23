@@ -204,9 +204,9 @@ describeFlow("Флоу E: панель — модерация", () => {
   it("E4: логи — dates перед logs, контракт страницы, фильтры на пустой день", async () => {
     const dates = await api(flow.baseUrl).get("/v1/panel/logs/dates", owner.tokens.access_token);
     expect(dates.status).toBe(200);
-    const datesBody = (await dates.json()) as { dates: string[] };
+    const datesBody = (await dates.json()) as string[];
     const today = new Date().toISOString().slice(0, 10);
-    expect(datesBody.dates).toContain(today);
+    expect(datesBody).toContain(today);
 
     const empty = await api(flow.baseUrl).get(
       "/v1/panel/logs?date=2000-01-01&offset=0&limit=100",

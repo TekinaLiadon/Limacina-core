@@ -2,7 +2,7 @@ import { Controller, Get, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { Roles } from "../../common/roles.decorator";
 import { LogsService, type LogsFilter } from "../../admin/logs.service";
-import { LogDatesResponseDto, LogsResponseDto, V1LogsQueryDto } from "../../admin/dto/dto";
+import { LogsResponseDto, V1LogsQueryDto } from "../../admin/dto/dto";
 
 @ApiTags("panel_logs")
 @ApiBearerAuth()
@@ -76,9 +76,9 @@ export class V1PanelLogsController {
   @ApiResponse({
     status: 200,
     description: "Даты (YYYY-MM-DD), отсортированные от новых к старым",
-    type: LogDatesResponseDto,
+    type: [String],
   })
-  async getLogDates(): Promise<LogDatesResponseDto> {
-    return { dates: await this.logsService.listAvailableDates() };
+  async getLogDates(): Promise<string[]> {
+    return this.logsService.listAvailableDates();
   }
 }
