@@ -290,12 +290,3 @@ export class LogsResponseDto {
   })
   lines!: string[];
 }
-
-export class LogDatesResponseDto {
-  @ApiProperty({
-    type: [String],
-    example: ["2026-07-08", "2026-07-07", "2026-07-06"],
-    description: "Даты YYYY-MM-DD с лог-файлами, от новых к старым",
-  })
-  dates!: string[];
-}
