@@ -1,6 +1,7 @@
 import { Optional } from "@nestjs/common";
 
-import { MemoryDb, type MemoryUserRecord } from "../memory/memory-db";
+import { MemoryDb, type MemoryInstallIdRecord, type MemoryUserRecord } from "../memory/memory-db";
+import { toInstallIdList } from "../auth/install-id";
 
 export const AdminMapStoreToken = Symbol("AdminMapStore");
 
@@ -18,15 +19,20 @@ export interface DeletedUser extends AdminUser {
   deletedAt: Date;
 }
 
+export interface UserWithInstallIds extends AdminUser {
+  installIds: string[];
+}
+
 export interface UsersFilter {
   limit: number;
   offset: number;
   username?: string | undefined;
   approved?: boolean | undefined;
+  installId?: string | undefined;
 }
 
 export interface UsersPage {
-  items: AdminUser[];
+  items: UserWithInstallIds[];
   total: number;
 }
 
@@ -49,6 +55,12 @@ export interface IAdminStore {
   removeDeletedDuplicates(username: string): Promise<number>;
   purgeOldDeletedUsers(retentionDays: number): Promise<number>;
   hasOwner(): Promise<boolean>;
+}
+
+function matchesInstallId(installIds: string[], query: string | undefined): boolean {
+  if (query === undefined) return true;
+  const needle = query.toLowerCase();
+  return installIds.some((id) => id.toLowerCase().includes(needle));
 }
 
 function userMatchesFilter(user: AdminUser, filter: UsersFilter): boolean {
@@ -95,9 +107,11 @@ function toAdminView(user: MemoryUserRecord): AdminUser {
 
 export class AdminMapStore implements IAdminStore {
   private readonly users: Map<string, MemoryUserRecord>;
+  private readonly installIds: Map<string, MemoryInstallIdRecord>;
 
   constructor(@Optional() db: MemoryDb = new MemoryDb()) {
     this.users = db.users;
+    this.installIds = db.installIds;
   }
 
   async findByUsername(username: string): Promise<AdminUser | undefined> {
@@ -123,7 +137,10 @@ export class AdminMapStore implements IAdminStore {
   }
 
   async searchUsers(filter: UsersFilter): Promise<UsersPage> {
-    return this.searchUserRecords(filter, false, toAdminView);
+    return this.searchUserRecords(filter, false, (user, installIds) => ({
+      ...toAdminView(user),
+      installIds,
+    }));
   }
 
   async setApproved(username: string, approved: boolean, expectedRole?: string): Promise<boolean> {
@@ -164,19 +181,27 @@ export class AdminMapStore implements IAdminStore {
   }
 
   async searchDeletedUsers(filter: UsersFilter): Promise<DeletedUsersPage> {
-    return this.searchUserRecords(filter, true, deletedUserView);
+    return this.searchUserRecords(filter, true, (user) => deletedUserView(user));
+  }
+
+  private listInstallIds(uuid: string): string[] {
+    const stored = this.installIds.get(uuid);
+    if (!stored) return [];
+    return toInstallIdList(stored);
   }
 
   private searchUserRecords<View extends AdminUser>(
     filter: UsersFilter,
     deleted: boolean,
-    toView: (user: MemoryUserRecord) => View | undefined,
+    toView: (user: MemoryUserRecord, installIds: string[]) => View | undefined,
   ): { items: View[]; total: number } {
     const matched: View[] = [];
     for (const user of this.users.values()) {
       if (user.deleted !== deleted) continue;
       if (!userMatchesFilter(user, filter)) continue;
-      const view = toView(user);
+      const installIds = this.listInstallIds(user.uuid);
+      if (!matchesInstallId(installIds, filter.installId)) continue;
+      const view = toView(user, installIds);
       if (!view) continue;
       matched.push(view);
     }

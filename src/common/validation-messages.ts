@@ -16,4 +16,5 @@ export const validationMessages = {
   nestedObject: (field: string) => `${field}: ожидается объект`,
   nestedArrayItem: (field: string) => `${field}: каждый элемент должен быть объектом`,
   usernamePattern: "username: только латиница, цифры и _",
+  installIdPattern: "installId: только латинские буквы, цифры и дефис, до 35 символов",
 } as const;

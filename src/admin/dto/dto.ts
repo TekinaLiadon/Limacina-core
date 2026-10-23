@@ -16,6 +16,7 @@ import { Transform, Type } from "class-transformer";
 import { validationMessages } from "../../common/validation-messages";
 import { LimitQuery, OffsetQuery } from "../../common/dto/dto";
 import { MIN_PASSWORD_LENGTH } from "../../auth/password-policy";
+import { INSTALL_ID_SEARCH_PATTERN } from "../../auth/install-id-policy";
 import { ASSIGNABLE_ROLES, type AssignableRole } from "../../common/roles";
 import { MAX_USERNAME_LENGTH } from "../../common/username-policy";
 
@@ -65,6 +66,19 @@ export class UsersQueryDto extends UsersSearchQueryDto {
   })
   @IsBoolean({ message: validationMessages.boolean("approved") })
   approved?: boolean;
+
+  @ApiProperty({
+    example: "v1-0123456789abcdef0123456789abcdef",
+    required: false,
+    maxLength: 35,
+    description:
+      "Поиск по ID установки лаунчера: подстрока текущего ID или истории (без учёта регистра). Доступно только владельцу",
+  })
+  @IsOptional()
+  @IsString({ message: validationMessages.string("installId") })
+  @IsNotEmpty({ message: validationMessages.notEmpty("installId") })
+  @Matches(INSTALL_ID_SEARCH_PATTERN, { message: validationMessages.installIdPattern })
+  installId?: string;
 }
 
 export class ApproveUserDto {
@@ -156,6 +170,14 @@ export class UserListItemDto {
 
   @ApiProperty({ example: false })
   banned!: boolean;
+
+  @ApiProperty({
+    type: [String],
+    example: ["v1-22222222222222222222222222222222", "v1-11111111111111111111111111111111"],
+    description:
+      "ID установок лаунчера: текущий и история предыдущих. Отдаётся только владельцу, остальным — пустой массив",
+  })
+  installIds!: string[];
 }
 
 export class UsersListResponseDto {

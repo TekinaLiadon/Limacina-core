@@ -64,12 +64,14 @@ export class V1PanelUsersController {
   @ApiOperation({
     summary: "Получить список пользователей",
     description:
-      "Возвращает страницу пользователей с пагинацией (сортировка по юзернейму). " +
-      "Поддерживается поиск по началу юзернейма (без учёта регистра) и фильтр по статусу одобрения.\n\nПримеры:\n" +
+      "Возвращает страницу пользователей с пагинацией (сортировка по юзернейму) и поддерживает " +
+      "поиск по началу юзернейма и фильтр по статусу одобрения. ID установок лаунчера " +
+      "(X-Launcher-Id) и поиск по ним доступны только владельцу.\n\nПримеры:\n" +
       "- `GET /v1/panel/users` — первая страница\n" +
       "- `GET /v1/panel/users?limit=20&offset=20` — вторая страница\n" +
       '- `GET /v1/panel/users?username=joh` — юзернеймы, начинающиеся с "joh"\n' +
       "- `GET /v1/panel/users?approved=false` — только неодобренные\n" +
+      "- `GET /v1/panel/users?installId=v1-0123` — пользователи с этим ID установки (или его частью)\n" +
       '- `GET /v1/panel/users?username=o&approved=true&limit=5` — одобренные, чей юзернейм начинается с "o"',
   })
   @ApiQuery({
@@ -96,14 +98,33 @@ export class V1PanelUsersController {
     example: false,
     description: "Фильтр по статусу одобрения (false — только неодобренные)",
   })
+  @ApiQuery({
+    name: "installId",
+    required: false,
+    example: "v1-0123456789abcdef0123456789abcdef",
+    description:
+      "Поиск по ID установки лаунчера из заголовка X-Launcher-Id: подстрока текущего ID или истории (без учёта регистра). Только для владельца",
+  })
   @ApiResponse({
     status: 200,
-    description: "Страница пользователей с пагинацией",
+    description:
+      "Страница пользователей с пагинацией; ID установок лаунчера заполняются только для владельца",
     type: UsersListResponseDto,
   })
-  async getUsers(@Query() query: UsersQueryDto): Promise<UsersListResponseDto> {
-    const filter: UsersFilter = { ...this.buildUsersFilter(query), approved: query.approved };
-    const { items, total } = await this.adminService.searchUsers(filter);
+  @ApiResponse({
+    status: 403,
+    description: "Поиск по ID установки доступен только владельцу",
+  })
+  async getUsers(
+    @CurrentUser() user: RequestUser,
+    @Query() query: UsersQueryDto,
+  ): Promise<UsersListResponseDto> {
+    const filter: UsersFilter = {
+      ...this.buildUsersFilter(query),
+      approved: query.approved,
+      installId: query.installId,
+    };
+    const { items, total } = await this.adminService.searchUsers(filter, user);
     return { items, total, limit: filter.limit, offset: filter.offset };
   }
 

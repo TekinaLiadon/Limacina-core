@@ -39,6 +39,9 @@ import { CronService } from "../../../cron/cron.service";
 import { LogsService } from "../../../admin/logs.service";
 import { ReleasePublishService } from "../../../launcher/release-publish.service";
 import { ConfigUpdateService } from "../../../launcher/config-update.service";
+import { ModsService } from "../../../files/mods.service";
+import { CacheStoreToken } from "../../../cache/cache_store";
+import { CacheMapStore } from "../../../memory/cache_map_store";
 import { TechnicalBootstrapService } from "../../../technical/technical-bootstrap.service";
 import { TechnicalRestartService } from "../../../technical/technical-restart.service";
 import { TechnicalRebuildService } from "../../../technical/technical-rebuild.service";
@@ -120,6 +123,8 @@ describe("V1 panel эндпоинты", (): void => {
         LogsService,
         ReleasePublishService,
         ConfigUpdateService,
+        ModsService,
+        { provide: CacheStoreToken, useFactory: () => new CacheMapStore(memoryDb) },
         TechnicalBootstrapService,
         TechnicalRestartService,
         TechnicalRebuildService,
@@ -196,6 +201,9 @@ describe("V1 panel эндпоинты", (): void => {
         banned: false,
       });
     }
+
+    await authStoreInstance.recordInstallId("alice-uuid", "v1-11111111111111111111111111111111");
+    await authStoreInstance.recordInstallId("alice-uuid", "v1-22222222222222222222222222222222");
 
     const deletedTargets: Array<[string, string]> = [
       ["dana", "user"],
@@ -309,6 +317,90 @@ describe("V1 panel эндпоинты", (): void => {
 
       expect(res.body.items.map((u: { username: string }) => u.username)).toEqual(["carol"]);
       expect(res.body.total).toBe(1);
+    });
+
+    it("овнеру отдаёт installIds: текущий ID и историю", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?username=alice")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      expect(res.body.items).toHaveLength(1);
+      expect(res.body.items[0].installIds).toEqual([
+        "v1-22222222222222222222222222222222",
+        "v1-11111111111111111111111111111111",
+      ]);
+    });
+
+    it("овнеру отдаёт пустой installIds без телеметрии", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?username=carol")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      expect(res.body.items[0].installIds).toEqual([]);
+    });
+
+    it("админу не отдаёт installIds", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?username=alice")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(res.body.items).toHaveLength(1);
+      expect(res.body.items[0].installIds).toEqual([]);
+    });
+
+    it("овнер ищет по текущему и историческому install ID", async () => {
+      for (const installId of [
+        "v1-22222222222222222222222222222222",
+        "v1-11111111111111111111111111111111",
+      ]) {
+        const res = await supertest(app.getHttpServer())
+          .get(`/v1/panel/users?installId=${installId}`)
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+
+        expect(res.body.items.map((u: { username: string }) => u.username)).toEqual(["alice"]);
+        expect(res.body.total).toBe(1);
+      }
+    });
+
+    it("овнер ищет по подстроке install ID без учёта регистра", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?installId=V1-1111")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      expect(res.body.items.map((u: { username: string }) => u.username)).toEqual(["alice"]);
+    });
+
+    it("овнер получает пустой список при отсутствии совпадений по install ID", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?installId=v1-ffffffffffffffffffffffffffffffff")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(200);
+
+      expect(res.body.items).toEqual([]);
+      expect(res.body.total).toBe(0);
+    });
+
+    it("админу запрещает поиск по install ID", async () => {
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/panel/users?installId=v1-11111111111111111111111111111111")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(403);
+
+      expect(res.body.message).toBe("Поиск по ID установки доступен только владельцу");
+    });
+
+    it("возвращает 400 при невалидном installId", async () => {
+      for (const installId of ["zzz", "a".repeat(36), ""]) {
+        await supertest(app.getHttpServer())
+          .get(`/v1/panel/users?installId=${installId}`)
+          .set("Authorization", `Bearer ${adminToken}`)
+          .expect(400);
+      }
     });
 
     it("пагинрует через limit и offset", async () => {
@@ -1616,6 +1708,172 @@ describe("V1 panel эндпоинты", (): void => {
         .patch("/v1/panel/launcher/config")
         .send(validConfig)
         .expect(401);
+    });
+  });
+
+  describe("Моды лаунчера (/v1/panel/launcher/mods)", () => {
+    const MODS_ROOT = join("public", "launcher", "mods");
+    const MODS_BACKUP = join("public", "launcher", `.mods-backup-${process.pid}`);
+    let hadModsDir = false;
+
+    beforeAll(() => {
+      hadModsDir = existsSync(MODS_ROOT);
+      if (hadModsDir) {
+        renameSync(MODS_ROOT, MODS_BACKUP);
+      }
+    });
+
+    afterAll(() => {
+      rmSync(MODS_ROOT, { recursive: true, force: true });
+      rmSync(UPLOAD_TMP_DIR, { recursive: true, force: true });
+      if (hadModsDir) {
+        mkdirSync(join("public", "launcher"), { recursive: true });
+        renameSync(MODS_BACKUP, MODS_ROOT);
+      }
+    });
+
+    it("возвращает 401 без токена и 403 для не-овнера", async () => {
+      await supertest(app.getHttpServer()).get("/v1/panel/launcher/mods").expect(401);
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/launcher/mods")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(403);
+      await supertest(app.getHttpServer())
+        .get("/v1/panel/launcher/mods")
+        .set("Authorization", `Bearer ${userToken}`)
+        .expect(403);
+      await supertest(app.getHttpServer())
+        .post("/v1/panel/launcher/mods")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .attach("file", Buffer.from("mod"), "admin-mod.jar")
+        .expect(403);
+      await supertest(app.getHttpServer())
+        .delete("/v1/panel/launcher/mods/admin-mod.jar")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(403);
+    });
+
+    it("загружает несколько модов, отдаёт список и удаляет по одному", async () => {
+      try {
+        const upload = await supertest(app.getHttpServer())
+          .post("/v1/panel/launcher/mods")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .attach("file", Buffer.from("one"), "e2e-one.jar")
+          .attach("files", Buffer.from("two-bytes"), "e2e-two.jar")
+          .expect(201);
+
+        expect(upload.body).toEqual({ uploaded: ["e2e-one.jar", "e2e-two.jar"] });
+        expect(readFileSync(join(MODS_ROOT, "e2e-one.jar"), "utf-8")).toBe("one");
+        expect(readFileSync(join(MODS_ROOT, "e2e-two.jar"), "utf-8")).toBe("two-bytes");
+
+        const list = await supertest(app.getHttpServer())
+          .get("/v1/panel/launcher/mods")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+        expect(list.body.mods).toContainEqual({ name: "e2e-one.jar", size: 3 });
+        expect(list.body.mods).toContainEqual({ name: "e2e-two.jar", size: 9 });
+
+        const deleted = await supertest(app.getHttpServer())
+          .delete("/v1/panel/launcher/mods/e2e-one.jar")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+        expect(deleted.body).toEqual({ success: true });
+        expect(existsSync(join(MODS_ROOT, "e2e-one.jar"))).toBeFalse();
+
+        const afterDelete = await supertest(app.getHttpServer())
+          .get("/v1/panel/launcher/mods")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+        const names = afterDelete.body.mods.map((mod: { name: string }) => mod.name);
+        expect(names).not.toContain("e2e-one.jar");
+        expect(names).toContain("e2e-two.jar");
+      } finally {
+        rmSync(join(MODS_ROOT, "e2e-one.jar"), { force: true });
+        rmSync(join(MODS_ROOT, "e2e-two.jar"), { force: true });
+      }
+    });
+
+    it("заменяет мод с тем же именем", async () => {
+      try {
+        mkdirSync(MODS_ROOT, { recursive: true });
+        writeFileSync(join(MODS_ROOT, "e2e-replace.jar"), "old-content");
+
+        await supertest(app.getHttpServer())
+          .post("/v1/panel/launcher/mods")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .attach("file", Buffer.from("new-content"), "e2e-replace.jar")
+          .expect(201);
+
+        expect(readFileSync(join(MODS_ROOT, "e2e-replace.jar"), "utf-8")).toBe("new-content");
+        expect(existsSync(UPLOAD_TMP_DIR) ? readdirSync(UPLOAD_TMP_DIR) : []).toEqual([]);
+      } finally {
+        rmSync(join(MODS_ROOT, "e2e-replace.jar"), { force: true });
+      }
+    });
+
+    it("кеширует список на 30 секунд и сбрасывает кеш после загрузки", async () => {
+      const externalPath = join(MODS_ROOT, "e2e-external.jar");
+      const uploadPath = join(MODS_ROOT, "e2e-invalidate.jar");
+      try {
+        mkdirSync(MODS_ROOT, { recursive: true });
+        await supertest(app.getHttpServer())
+          .get("/v1/panel/launcher/mods")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+
+        writeFileSync(externalPath, "external");
+
+        const cached = await supertest(app.getHttpServer())
+          .get("/v1/panel/launcher/mods")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+        expect(cached.body.mods.map((mod: { name: string }) => mod.name)).not.toContain(
+          "e2e-external.jar",
+        );
+
+        await supertest(app.getHttpServer())
+          .post("/v1/panel/launcher/mods")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .attach("file", Buffer.from("fresh"), "e2e-invalidate.jar")
+          .expect(201);
+
+        const fresh = await supertest(app.getHttpServer())
+          .get("/v1/panel/launcher/mods")
+          .set("Authorization", `Bearer ${ownerToken}`)
+          .expect(200);
+        const names = fresh.body.mods.map((mod: { name: string }) => mod.name);
+        expect(names).toContain("e2e-external.jar");
+        expect(names).toContain("e2e-invalidate.jar");
+      } finally {
+        rmSync(externalPath, { force: true });
+        rmSync(uploadPath, { force: true });
+      }
+    });
+
+    it("отклоняет не-.jar и загрузку без файлов", async () => {
+      await supertest(app.getHttpServer())
+        .post("/v1/panel/launcher/mods")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .attach("file", Buffer.from("zip"), "e2e-mod.zip")
+        .expect(400);
+
+      await supertest(app.getHttpServer())
+        .post("/v1/panel/launcher/mods")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .field("comment", "no-files")
+        .expect(400);
+    });
+
+    it("возвращает 404 для отсутствующего мода и 400 для недопустимого имени", async () => {
+      await supertest(app.getHttpServer())
+        .delete("/v1/panel/launcher/mods/e2e-missing.jar")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(404);
+
+      await supertest(app.getHttpServer())
+        .delete(`/v1/panel/launcher/mods/${encodeURIComponent("..\\secret.jar")}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(400);
     });
   });
 

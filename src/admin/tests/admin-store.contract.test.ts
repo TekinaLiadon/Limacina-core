@@ -6,7 +6,8 @@ import { afterAll, beforeAll, beforeEach, expect, it } from "bun:test";
 import { AdminMapStore, type AdminUser, type IAdminStore, type UsersFilter } from "../admin_store";
 import { AdminPostgresStore } from "../admin_postgres_store";
 import { AuthPostgresStore } from "../../auth/service/auth_postgres_store";
-import type { StoredUser } from "../../auth/service/auth_store";
+import { AuthMapStore, type IAuthStore, type StoredUser } from "../../auth/service/auth_store";
+import { MemoryDb } from "../../memory/memory-db";
 import { generateUuid } from "../../utils/uuid";
 import {
   cleanupTrackedUsers,
@@ -17,8 +18,11 @@ import { contractDescribeEach } from "../../utils/tests/driver-contract";
 
 interface AdminDriverContext {
   store: IAdminStore;
+  authStore: IAuthStore;
   makeUser: (overrides?: Partial<AdminUser> & { username?: string }) => Promise<AdminUser>;
 }
+
+const newInstallId = (): string => `v1-${generateUuid().replaceAll("-", "")}`;
 
 const uniqueUsername = (stem: string): string => `${stem}_${generateUuid().slice(0, 8)}`;
 
@@ -31,7 +35,9 @@ const adminView = (user: StoredUser): AdminUser => ({
 });
 
 const mapContext = (): AdminDriverContext => {
-  const store = new AdminMapStore();
+  const db = new MemoryDb();
+  const store = new AdminMapStore(db);
+  const authStore = new AuthMapStore(db);
   const makeUser = async (
     overrides: Partial<AdminUser> & { username?: string } = {},
   ): Promise<AdminUser> => {
@@ -46,7 +52,7 @@ const mapContext = (): AdminDriverContext => {
     await store.saveUser(user);
     return user;
   };
-  return { store, makeUser };
+  return { store, authStore, makeUser };
 };
 
 const postgresContext = (): AdminDriverContext => {
@@ -72,7 +78,7 @@ const postgresContext = (): AdminDriverContext => {
     trackPostgresUser(seeded);
     return adminView(seeded);
   };
-  return { store, makeUser };
+  return { store, authStore, makeUser };
 };
 
 const collectUsernames = async (store: IAdminStore, filter: UsersFilter): Promise<string[]> => {
@@ -164,6 +170,45 @@ contractDescribeEach("контракт IAdminStore", (driver) => {
     const page = await ctx.store.searchUsers({ limit: 2, offset: 1, username: stem });
     expect(page.total).toBe(4);
     expect(page.items.map((item) => item.username)).toEqual([`${stem}_Aab`, `${stem}_BBB`]);
+  });
+
+  it("searchUsers отдаёт installIds и фильтрует по текущему и историческому ID", async () => {
+    const user = await ctx.makeUser();
+    const other = await ctx.makeUser();
+    const plain = await ctx.makeUser();
+    const oldId = newInstallId();
+    const currentId = newInstallId();
+    const otherId = newInstallId();
+
+    await ctx.authStore.recordInstallId(user.uuid, oldId);
+    await ctx.authStore.recordInstallId(user.uuid, currentId);
+    await ctx.authStore.recordInstallId(other.uuid, otherId);
+
+    const page = await ctx.store.searchUsers({ limit: 100, offset: 0, username: user.username });
+    expect(page.items[0]?.installIds).toEqual([currentId, oldId]);
+
+    const plainPage = await ctx.store.searchUsers({
+      limit: 100,
+      offset: 0,
+      username: plain.username,
+    });
+    expect(plainPage.items[0]?.installIds).toEqual([]);
+
+    const byCurrent = await ctx.store.searchUsers({ limit: 100, offset: 0, installId: currentId });
+    expect(byCurrent.items.map((item) => item.uuid)).toEqual([user.uuid]);
+
+    const byHistory = await ctx.store.searchUsers({ limit: 100, offset: 0, installId: oldId });
+    expect(byHistory.items.map((item) => item.uuid)).toEqual([user.uuid]);
+
+    const byOther = await ctx.store.searchUsers({ limit: 100, offset: 0, installId: otherId });
+    expect(byOther.items.map((item) => item.uuid)).toEqual([other.uuid]);
+
+    const missing = await ctx.store.searchUsers({
+      limit: 100,
+      offset: 0,
+      installId: newInstallId(),
+    });
+    expect(missing.total).toBe(0);
   });
 
   it("setApproved/setBanned/setRole меняют пользователя по нику", async () => {

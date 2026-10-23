@@ -5,6 +5,11 @@ export interface CacheEntryRecord {
   expiresAt: number;
 }
 
+export interface MemoryInstallIdRecord {
+  current: string;
+  history: string[];
+}
+
 export interface MemoryUserRecord {
   uuid: string;
   username: string;
@@ -43,6 +48,7 @@ export interface YggdrasilSessionRecord {
 @Injectable()
 export class MemoryDb {
   readonly users = new Map<string, MemoryUserRecord>();
+  readonly installIds = new Map<string, MemoryInstallIdRecord>();
   readonly yggdrasilTokens = new Map<string, YggdrasilTokenRecord>();
   readonly yggdrasilSessions = new Map<string, YggdrasilSessionRecord>();
   readonly cacheEntries = new Map<string, CacheEntryRecord>();

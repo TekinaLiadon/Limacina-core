@@ -58,8 +58,21 @@ export class AdminService implements OnModuleInit {
     }
   }
 
-  async searchUsers(filter: UsersFilter): Promise<UsersPage> {
-    return this.adminStore.searchUsers(filter);
+  async searchUsers(filter: UsersFilter, actor: RequestUser): Promise<UsersPage> {
+    if (actor.role === "owner") {
+      return this.adminStore.searchUsers(filter);
+    }
+
+    if (filter.installId !== undefined) {
+      this.logger.error(
+        this.audit(actor, "users", "searchByInstallId"),
+        "Отказ: поиск по телеметрии доступен только владельцу",
+      );
+      throw new ForbiddenException("Поиск по ID установки доступен только владельцу");
+    }
+
+    const page = await this.adminStore.searchUsers(filter);
+    return { ...page, items: page.items.map((item) => ({ ...item, installIds: [] })) };
   }
 
   async searchDeletedUsers(filter: UsersFilter): Promise<DeletedUsersPage> {

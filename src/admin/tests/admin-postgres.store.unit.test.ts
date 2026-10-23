@@ -75,21 +75,48 @@ describe("AdminPostgresStore (мок SQL-клиента)", () => {
   });
 
   it("searchUsers применяет фильтры и считает total", async () => {
-    fake.onSql(({ sql }) =>
-      sql.includes("count(*)") ? [{ total: "7" }] : [userRow(), userRow({ uuid: "uuid-2" })],
-    );
+    fake.onSql(({ sql }) => {
+      if (sql.includes("count(*)")) return [{ total: "7" }];
+      if (sql.startsWith("SELECT user_uuid")) {
+        return [
+          { user_uuid: "uuid-1", install_id: "v1-b", install_id_history: '["v1-a"]' },
+          { user_uuid: "uuid-2", install_id: "v1-c", install_id_history: "[]" },
+        ];
+      }
+      return [userRow(), userRow({ uuid: "uuid-2" })];
+    });
 
     const page = await store.searchUsers({ username: "pg", approved: true, limit: 10, offset: 5 });
 
     expect(page.total).toBe(7);
-    expect(page.items).toEqual([adminUser(), adminUser({ uuid: "uuid-2" })]);
-    const [items, count] = lastCalls(2);
+    expect(page.items).toEqual([
+      { ...adminUser(), installIds: ["v1-b", "v1-a"] },
+      { ...adminUser({ uuid: "uuid-2" }), installIds: ["v1-c"] },
+    ]);
+    const [items, count, installs] = lastCalls(3);
     expect(items?.sql).toContain("ORDER BY lower(username) ASC");
     expect(items?.sql).toContain("LIMIT 10");
     expect(items?.sql).toContain("OFFSET 5");
     expect(items?.values).toEqual(["pg%", true]);
     expect(count?.sql).toContain("count(*) AS total");
     expect(count?.values).toEqual(["pg%", true]);
+    expect(installs?.sql).toContain("FROM user_install_ids");
+    expect(installs?.values).toEqual(["uuid-1", "uuid-2"]);
+  });
+
+  it("searchUsers фильтрует по installId через EXISTS и нормализует регистр", async () => {
+    fake.onSql(({ sql }) => {
+      if (sql.includes("count(*)")) return [{ total: "1" }];
+      if (sql.startsWith("SELECT user_uuid")) return [];
+      return [userRow()];
+    });
+
+    await store.searchUsers({ limit: 10, offset: 0, installId: "V1-ABC" });
+
+    const [items, count] = lastCalls(3);
+    expect(items?.sql).toContain("EXISTS (SELECT 1 FROM user_install_ids");
+    expect(items?.values).toEqual(["%v1-abc%"]);
+    expect(count?.values).toEqual(["%v1-abc%"]);
   });
 
   it("searchUsers без фильтров не добавляет условий", async () => {
