@@ -13,19 +13,19 @@
 
 Все актуальные маршруты живут под префиксом `/v1`. Теги в спеке совпадают с URL-группами:
 
-| Тег               | Что там                                                      | Доступ                      |
-| ----------------- | ------------------------------------------------------------ | --------------------------- |
-| `common_auth`     | регистрация, логин, refresh, invalidate, смена пароля        | публичный                   |
-| `common_content`  | скины, плащи, модели                                         | JWT                         |
-| `common_status`   | онлайн игрового сервера                                      | публичный                   |
-| `launcher_update` | latest.json и релизы tauri-plugin-updater                    | публичный                   |
-| `launcher_files`  | манифест файлов игры и моды                                  | публичный                   |
-| `launcher_config` | config.toml на чтение                                        | публичный                   |
-| `panel_users`     | пользователи: списки, approve, ban, роли, пароли, init-owner | admin, часть действий owner |
-| `panel_logs`      | чтение логов сервера                                         | admin                       |
-| `panel_launcher`  | запись лаунчера: релизы, конфиг                              | owner                       |
-| `panel_server`    | рестарт, rebuild, RCON-консоль                               | owner                       |
-| `yggdrasil`       | протокол authlib-injector                                    | протокольная авторизация    |
+| Тег               | Что там                                                                                | Доступ                      |
+| ----------------- | -------------------------------------------------------------------------------------- | --------------------------- |
+| `common_auth`     | регистрация, логин, refresh, invalidate, смена пароля                                  | публичный                   |
+| `common_content`  | скины, плащи, модели                                                                   | JWT                         |
+| `common_status`   | онлайн игрового сервера                                                                | публичный                   |
+| `launcher_update` | latest.json и релизы tauri-plugin-updater                                              | публичный                   |
+| `launcher_files`  | манифест файлов игры и моды                                                            | публичный                   |
+| `launcher_config` | config.toml на чтение                                                                  | публичный                   |
+| `panel_users`     | пользователи: списки (с ID установок лаунчера), approve, ban, роли, пароли, init-owner | admin, часть действий owner |
+| `panel_logs`      | чтение логов сервера                                                                   | admin                       |
+| `panel_launcher`  | запись лаунчера: релизы, конфиг, моды                                                  | owner                       |
+| `panel_server`    | рестарт, rebuild, RCON-консоль                                                         | owner                       |
+| `yggdrasil`       | протокол authlib-injector                                                              | протокольная авторизация    |
 
 Исключение из префикса одно: `yggdrasil`. Пути `/authserver/*`, `/sessionserver/*`, `/api/*` и метадата на `GET /` продиктованы authlib-injector и живут в корне сервера. Новые эндпоинты проекта добавляются только под `/v1`.
 

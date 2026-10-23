@@ -58,7 +58,7 @@
 
 Модерация (`@Roles("admin")`, часть действий только owner):
 
-- `GET /v1/panel/users` список с пагинацией и поиском. `GET /v1/panel/users/deleted` и `PATCH /v1/panel/users/password` (задать пароль без старого) и `PATCH /v1/panel/users/owner` (передать роль владельца) только owner.
+- `GET /v1/panel/users` список с пагинацией и поиском. ID установок лаунчера (`installIds`, фильтр `installId` по текущему ID и истории) доступны только owner; админ получает пустые `installIds`, поиск по `installId` — 403. `GET /v1/panel/users/deleted` и `PATCH /v1/panel/users/password` (задать пароль без старого) и `PATCH /v1/panel/users/owner` (передать роль владельца) только owner.
 - `PATCH /v1/panel/users/approve`, `ban`, `role`, удаление `DELETE /v1/panel/users/:username` (soft delete) и возврат `PATCH /v1/panel/users/:username/restore`.
 
 Все мутации проверяют иерархию: роль вызывающего строго выше роли цели, выдаваемая роль тоже должна быть ниже собственной. Админ не может повысить второго админа. Каждая мутация пишет аудит в лог: актор, роль, цель, действие.
@@ -67,7 +67,7 @@
 
 - `GET /v1/panel/logs` и `GET /v1/panel/logs/:date`: чтение дневных логов с фильтром и пагинацией, файл не буферизуется целиком.
 - RCON (только owner, требует `RCON_HOST` и `RCON_PASSWORD`): `GET /v1/panel/server/rcon` показывает доступность, `POST /v1/panel/server/rcon/execute` исполняет команду на игровом сервере. Пароль в ответы не попадает.
-- Запись лаунчера (только owner): `PATCH /v1/panel/launcher/release` (релизы апдейтера), `PATCH /v1/panel/launcher/config` (конфиг). Детали в [deployment.md](deployment.md).
+- Запись лаунчера (только owner): `PATCH /v1/panel/launcher/release` (релизы апдейтера), `PATCH /v1/panel/launcher/config` (конфиг), `GET/POST/DELETE /v1/panel/launcher/mods` (список, загрузка `.jar` и удаление модов). Список модов кешируется на 30 секунд, мутации сбрасывают кеш; загрузка атомарна, существующее имя заменяется. Детали в [deployment.md](deployment.md).
 
 ## Рестарт и пересборка
 

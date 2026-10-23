@@ -1,17 +1,15 @@
 import { Injectable, Optional } from "@nestjs/common";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../token.constants";
 import { MemoryDb, type MemoryUserRecord } from "../../memory/memory-db";
+import type { InstallIdRecord } from "../install-id";
+
+export type { InstallIdRecord };
 
 export type StoredUser = Omit<MemoryUserRecord, "deleted" | "deletedAt">;
 
 export interface RefreshEntry {
   userId: string;
   username: string;
-}
-
-export interface InstallIdRecord {
-  current: string;
-  history: string[];
 }
 
 export const AuthStoreToken = Symbol("AuthMapStore");
@@ -48,11 +46,12 @@ interface StoredRefreshEntry extends RefreshEntry {
 @Injectable()
 export class AuthMapStore implements IAuthStore {
   private readonly users: Map<string, MemoryUserRecord>;
+  private readonly installIds: Map<string, InstallIdRecord>;
   private readonly tokens = new Map<string, StoredRefreshEntry>();
-  private readonly installIds = new Map<string, InstallIdRecord>();
 
   constructor(@Optional() db: MemoryDb = new MemoryDb()) {
     this.users = db.users;
+    this.installIds = db.installIds;
   }
 
   async findByUsername(username: string): Promise<StoredUser | undefined> {
@@ -174,7 +173,9 @@ export class AuthMapStore implements IAuthStore {
   }
 
   async findInstallId(uuid: string): Promise<InstallIdRecord | undefined> {
-    return this.installIds.get(uuid);
+    const stored = this.installIds.get(uuid);
+    if (!stored) return undefined;
+    return { current: stored.current, history: [...stored.history] };
   }
 
   private liveRefreshEntry(jti: string): StoredRefreshEntry | undefined {

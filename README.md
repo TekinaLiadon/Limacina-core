@@ -117,7 +117,7 @@ bun run setup:public
 bun run generate:keypair
 ```
 
-`setup:public` создаёт `public/launcher`, `public/launcher/mods`, `public/releases`, `public/textures`, `public/capes`, `public/models`. Моды кладутся в `public/launcher/mods`, остальное наполняется через API и панель.
+`setup:public` создаёт `public/launcher`, `public/launcher/mods`, `public/releases`, `public/textures`, `public/capes`, `public/models`. Моды кладутся в `public/launcher/mods` вручную или через панель, остальное наполняется через API и панель.
 
 Опционально: `bun run download:authlib [authlib_version]` скачивает `authlib-injector.jar` в `public/launcher`. Без аргумента берётся последний релиз.
 

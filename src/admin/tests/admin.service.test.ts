@@ -3,7 +3,12 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 setupTestEnv();
 
 import { describe, expect, it, spyOn } from "bun:test";
-import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from "@nestjs/common";
 import { AdminService } from "../admin.service";
 import { AdminMapStore } from "../admin_store";
 import { AuthMapStore } from "../../auth/service/auth_store";
@@ -361,5 +366,53 @@ describe("AdminService: атомарность мутаций", (): void => {
     );
 
     restoreUser.mockRestore();
+  });
+});
+
+describe("AdminService: телеметрия установок только для владельца", (): void => {
+  const INSTALL_ID = "v1-11111111111111111111111111111111";
+  const ADMIN = { uuid: "rollback-admin-uuid", username: "rollbackadmin", role: "admin" };
+  const FILTER = { limit: 100, offset: 0, username: "rollbacktarget" };
+
+  const seedWithTelemetry = async (): Promise<AdminService> => {
+    const db = new MemoryDb();
+    const adminStore = new AdminMapStore(db);
+    const authStore = new AuthMapStore(db);
+    const service = new AdminService(adminStore, authStore, new CronService());
+    await authStore.saveUser({
+      uuid: "rollback-target-uuid",
+      username: "rollbacktarget",
+      passwordHash: await Bun.password.hash("rollbackpass"),
+      role: "user",
+      approved: true,
+      banned: false,
+    });
+    await authStore.recordInstallId("rollback-target-uuid", INSTALL_ID);
+    return service;
+  };
+
+  it("владелец видит installIds в списке", async (): Promise<void> => {
+    const service = await seedWithTelemetry();
+
+    const page = await service.searchUsers(FILTER, ACTOR);
+
+    expect(page.items[0]?.installIds).toEqual([INSTALL_ID]);
+  });
+
+  it("админ получает список без телеметрии", async (): Promise<void> => {
+    const service = await seedWithTelemetry();
+
+    const page = await service.searchUsers(FILTER, ADMIN);
+
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]?.installIds).toEqual([]);
+  });
+
+  it("админ не может искать по installId", async (): Promise<void> => {
+    const service = await seedWithTelemetry();
+
+    await expect(service.searchUsers({ ...FILTER, installId: INSTALL_ID }, ADMIN)).rejects.toThrow(
+      ForbiddenException,
+    );
   });
 });

@@ -10,6 +10,7 @@ import {
   type SelectBuilder,
   type SqlValue,
 } from "../utils/sql";
+import { parseInstallIdHistory, toInstallIdList } from "../auth/install-id";
 import type {
   IAdminStore,
   AdminUser,
@@ -38,6 +39,12 @@ interface DeletedUserRow extends Record<string, unknown> {
 
 interface CountRow extends Record<string, unknown> {
   total: string | number;
+}
+
+interface InstallIdRow extends Record<string, unknown> {
+  user_uuid: string;
+  install_id: string;
+  install_id_history: string;
 }
 
 function toAdminUser(row: UserRow): AdminUser {
@@ -84,6 +91,15 @@ function withUsersFilter(query: SelectBuilder, filter: UsersFilter): SelectBuild
     chained = chained.where(`approved = $${placeholders}`, approved);
   }
 
+  const { installId } = filter;
+  if (installId !== undefined) {
+    placeholders += 1;
+    chained = chained.where(
+      `EXISTS (SELECT 1 FROM ${TABLES.user_install_ids} ui WHERE ui.user_uuid = ${TABLES.users}.uuid AND (ui.install_id LIKE $${placeholders} OR ui.install_id_history LIKE $${placeholders}))`,
+      `%${escapeLikePattern(installId.toLowerCase())}%`,
+    );
+  }
+
   return chained;
 }
 
@@ -126,29 +142,42 @@ export class AdminPostgresStore implements IAdminStore {
   }
 
   async searchUsers(filter: UsersFilter): Promise<UsersPage> {
-    return this.searchUsersPage(
-      filter,
-      false,
-      ["uuid", "username", "role", "approved", "banned"],
-      toAdminUser,
-    );
+    const { rows, total } = await this.queryUserRows<UserRow>(filter, false, [
+      "uuid",
+      "username",
+      "role",
+      "approved",
+      "banned",
+    ]);
+    const installIds = await this.findInstallIdsByUuids(rows.map((row) => row.uuid));
+
+    return {
+      items: rows.map((row) => ({
+        ...toAdminUser(row),
+        installIds: installIds.get(row.uuid) ?? [],
+      })),
+      total,
+    };
   }
 
   async searchDeletedUsers(filter: UsersFilter): Promise<DeletedUsersPage> {
-    return this.searchUsersPage(
-      filter,
-      true,
-      ["uuid", "username", "role", "approved", "banned", "deleted_at"],
-      toDeletedUser,
-    );
+    const { rows, total } = await this.queryUserRows<DeletedUserRow>(filter, true, [
+      "uuid",
+      "username",
+      "role",
+      "approved",
+      "banned",
+      "deleted_at",
+    ]);
+
+    return { items: rows.map(toDeletedUser), total };
   }
 
-  private async searchUsersPage<Row extends Record<string, unknown>, View>(
+  private async queryUserRows<Row extends Record<string, unknown>>(
     filter: UsersFilter,
     deleted: boolean,
     columns: string[],
-    mapRow: (row: Row) => View,
-  ): Promise<{ items: View[]; total: number }> {
+  ): Promise<{ rows: Row[]; total: number }> {
     const deletedClause = deleted ? "deleted = true" : "deleted = false";
     const itemsQuery = withUsersFilter(
       selectQuery(...columns)
@@ -171,10 +200,28 @@ export class AdminPostgresStore implements IAdminStore {
     const [countRow] = countRows;
     const total = countRow ? Number(countRow.total) : 0;
 
-    return {
-      items: rows.map(mapRow),
-      total,
-    };
+    return { rows, total };
+  }
+
+  private async findInstallIdsByUuids(uuids: string[]): Promise<Map<string, string[]>> {
+    const result = new Map<string, string[]>();
+    if (uuids.length === 0) return result;
+
+    const placeholders = uuids.map((_, index) => `$${index + 1}`).join(", ");
+    const query = selectQuery("user_uuid", "install_id", "install_id_history")
+      .from(TABLES.user_install_ids)
+      .where(`user_uuid IN (${placeholders})`, ...uuids)
+      .build();
+    const { rows } = await execute<InstallIdRow>(query.sql, query.values);
+
+    for (const row of rows) {
+      const installIds = toInstallIdList({
+        current: row.install_id,
+        history: parseInstallIdHistory(row.install_id_history),
+      });
+      result.set(row.user_uuid, installIds);
+    }
+    return result;
   }
 
   async setApproved(username: string, approved: boolean, expectedRole?: string): Promise<boolean> {

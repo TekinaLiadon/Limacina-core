@@ -12,7 +12,7 @@ import { watch, type FSWatcher } from "chokidar";
 import { FileDto } from "./dto/dto";
 import { streamFileToReply } from "../utils/file-stream";
 
-const LAUNCHER_DIR = "public/launcher";
+export const LAUNCHER_DIR = "public/launcher";
 
 export const MODS_FOLDER = "mods";
 

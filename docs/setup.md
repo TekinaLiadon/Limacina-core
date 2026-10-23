@@ -77,7 +77,7 @@ bun run generate:keypair   # keys/ для подписи текстур Yggdrasi
 bun run setup:public       # public/launcher, public/launcher/mods, public/releases, public/textures, public/capes, public/models
 ```
 
-Без ключей профили Yggdrasil отдаются без подписи, протокол это допускает (в лог пишется ошибка). `public/textures` и `public/capes` наполняются сами при загрузке скинов и плащей. Артефакты релизов лаунчера публикуются через панель в `public/releases/<version>/`, моды кладутся в `public/launcher/mods` (их хеши манифест подхватывает сам).
+Без ключей профили Yggdrasil отдаются без подписи, протокол это допускает (в лог пишется ошибка). `public/textures` и `public/capes` наполняются сами при загрузке скинов и плащей. Артефакты релизов лаунчера публикуются через панель в `public/releases/<version>/`, моды кладутся в `public/launcher/mods` вручную или через панель (`/v1/panel/launcher/mods`), их хеши манифест подхватывает сам.
 
 Опционально: `cp config.example.toml config.toml` для дефолтного конфига лаунчера. Его же можно записать через панель: `PATCH /v1/panel/launcher/config`.
 

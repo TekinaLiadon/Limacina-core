@@ -127,7 +127,7 @@ export async function bootstrap(): Promise<INestApplication> {
     .addTag("panel_logs", "Просмотр логов сервера (/v1/panel/logs)")
     .addTag(
       "panel_launcher",
-      "Публикация релизов и конфиг лаунчера — только owner (/v1/panel/launcher)",
+      "Публикация релизов, конфиг и моды лаунчера — только owner (/v1/panel/launcher)",
     )
     .addTag(
       "panel_server",

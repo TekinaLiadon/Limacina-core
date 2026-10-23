@@ -15,6 +15,7 @@ import {
   type SqlValue,
 } from "../../utils/sql";
 import type { IAuthStore, InstallIdRecord, StoredUser, RefreshEntry } from "./auth_store";
+import { parseInstallIdHistory } from "../install-id";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../token.constants";
 
 interface UserRow extends Record<string, unknown> {
@@ -65,16 +66,6 @@ const buildInstallIdUpsert = (): string => {
         WHEN ${table}.install_id_history LIKE ${likeFragment} THEN ${table}.install_id_history
         ELSE ${appendFragment}
       END`;
-};
-
-const parseInstallIdHistory = (raw: string): string[] => {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is string => typeof item === "string");
-  } catch {
-    return [];
-  }
 };
 
 @Injectable()

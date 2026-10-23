@@ -29,6 +29,31 @@ export class FilesListQueryDto {
   limit?: number;
 }
 
+export class ModFileDto {
+  @ApiProperty({ description: "Имя файла мода", example: "jei-1.21.1-19.21.0.247.jar" })
+  name!: string;
+
+  @ApiProperty({ description: "Размер файла в байтах", example: 2938475 })
+  size!: number;
+}
+
+export class ModsListResponseDto {
+  @ApiProperty({
+    type: [ModFileDto],
+    description: "Файлы в папке модов лаунчера (по алфавиту)",
+  })
+  mods!: ModFileDto[];
+}
+
+export class ModsUploadResponseDto {
+  @ApiProperty({
+    type: [String],
+    description: "Имена загруженных файлов",
+    example: ["jei-1.21.1-19.21.0.247.jar"],
+  })
+  uploaded!: string[];
+}
+
 export const fileListResponseSchema = {
   type: "object",
   additionalProperties: { type: "string" },
