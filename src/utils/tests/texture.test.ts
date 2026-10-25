@@ -6,7 +6,7 @@ import {
   MAX_TEXTURE_BYTES,
   pngStructureErrorMessage,
   sha256Hex,
-  textureDimensionsErrorMessage,
+  capeDimensionsErrorMessage,
   textureFileIssue,
 } from "../texture";
 import { lastById } from "../collection";
@@ -44,27 +44,21 @@ describe("texture utils", () => {
     expect(isSkinModel("")).toBe(false);
   });
 
-  it("textureDimensionsErrorMessage пропускает допустимые размеры скина и плаща", () => {
-    for (const size of [
-      { width: 64, height: 32 },
-      { width: 64, height: 64 },
-    ]) {
-      expect(textureDimensionsErrorMessage(buildTestPng(size), "skin")).toBeNull();
-    }
+  it("capeDimensionsErrorMessage пропускает допустимые размеры плаща", () => {
     for (const size of [
       { width: 64, height: 32 },
       { width: 22, height: 17 },
     ]) {
-      expect(textureDimensionsErrorMessage(buildTestPng(size), "cape")).toBeNull();
+      expect(capeDimensionsErrorMessage(buildTestPng(size))).toBeNull();
     }
   });
 
-  it("textureDimensionsErrorMessage отклоняет недопустимые размеры", () => {
-    const square = buildTestPng({ width: 128, height: 128 });
-    expect(textureDimensionsErrorMessage(square, "skin")).toMatch(
-      /dimensions 128x128 \(allowed: 64x32, 64x64\)/,
+  it("capeDimensionsErrorMessage отклоняет недопустимые размеры плаща", () => {
+    const nonCape = buildTestPng({ width: 96, height: 96 });
+
+    expect(capeDimensionsErrorMessage(nonCape)).toMatch(
+      /dimensions 96x96 \(allowed: 64x32, 22x17\)/,
     );
-    expect(textureDimensionsErrorMessage(square, "cape")).toMatch(/allowed: 64x32, 22x17/);
   });
 
   it("buildDefaultSkinUrl склеивает base URL и путь дефолтного скина", () => {
@@ -98,12 +92,22 @@ describe("textureFileIssue", () => {
     expect(issue?.kind).toBe("structure");
   });
 
-  it("фиксирует недопустимые размеры", () => {
-    const issue = textureFileIssue(buildTestPng({ width: 128, height: 128 }), "skin");
+  it("пропускает скин с любыми размерами", () => {
+    for (const size of [
+      { width: 96, height: 96 },
+      { width: 300, height: 600 },
+      { width: 1024, height: 1024 },
+    ]) {
+      expect(textureFileIssue(buildTestPng(size), "skin")).toBeNull();
+    }
+  });
+
+  it("фиксирует недопустимые размеры плаща", () => {
+    const issue = textureFileIssue(buildTestPng({ width: 96, height: 96 }), "cape");
 
     expect(issue?.kind).toBe("dimensions");
     if (issue?.kind === "dimensions") {
-      expect(issue.message).toMatch(/dimensions 128x128/);
+      expect(issue.message).toMatch(/dimensions 96x96/);
     }
   });
 });
