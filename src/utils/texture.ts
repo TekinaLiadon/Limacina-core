@@ -5,10 +5,6 @@ export const MAX_TEXTURE_BYTES = 512 * 1024;
 export const SKIN_MODELS = ["classic", "slim"] as const;
 export type SkinModel = (typeof SKIN_MODELS)[number];
 
-export const SKIN_TEXTURE_SIZES = [
-  { width: 64, height: 32 },
-  { width: 64, height: 64 },
-] as const;
 export const CAPE_TEXTURE_SIZES = [
   { width: 64, height: 32 },
   { width: 22, height: 17 },
@@ -42,11 +38,11 @@ export function pngStructureErrorMessage(file: Uint8Array): string | null {
   }
 }
 
-export function textureDimensionsErrorMessage(file: Uint8Array, kind: TextureKind): string | null {
+export function capeDimensionsErrorMessage(file: Uint8Array): string | null {
   const { width, height } = readPngDimensions(file);
-  const allowed = kind === "skin" ? SKIN_TEXTURE_SIZES : CAPE_TEXTURE_SIZES;
-  if (allowed.some((size) => size.width === width && size.height === height)) return null;
-  const sizes = allowed.map((size) => `${size.width}x${size.height}`).join(", ");
+  if (CAPE_TEXTURE_SIZES.some((size) => size.width === width && size.height === height))
+    return null;
+  const sizes = CAPE_TEXTURE_SIZES.map((size) => `${size.width}x${size.height}`).join(", ");
   return `dimensions ${width}x${height} (allowed: ${sizes})`;
 }
 
@@ -61,7 +57,9 @@ export function textureFileIssue(file: Uint8Array, kind: TextureKind): TextureFi
   }
   const structureMessage = pngStructureErrorMessage(file);
   if (structureMessage) return { kind: "structure", message: structureMessage };
-  const dimensionsMessage = textureDimensionsErrorMessage(file, kind);
-  if (dimensionsMessage) return { kind: "dimensions", message: dimensionsMessage };
+  if (kind === "cape") {
+    const dimensionsMessage = capeDimensionsErrorMessage(file);
+    if (dimensionsMessage) return { kind: "dimensions", message: dimensionsMessage };
+  }
   return null;
 }
