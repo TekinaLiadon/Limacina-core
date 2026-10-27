@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { isAuthLoginRoute, isPasswordChangeRoute, isSignoutRoute } from "../auth-rate-limit";
+import {
+  isAuthLoginRoute,
+  isPasswordChangeRoute,
+  isRegistrationRoute,
+  isSignoutRoute,
+} from "../auth-rate-limit";
 
 describe("auth-rate-limit route matchers", () => {
   it("isSignoutRoute матчит только /authserver/signout", () => {
@@ -37,5 +42,15 @@ describe("auth-rate-limit route matchers", () => {
     expect(isPasswordChangeRoute("/v1/common/authX/password")).toBe(false);
     expect(isPasswordChangeRoute("/v1/common/auth/reset-password")).toBe(false);
     expect(isPasswordChangeRoute("/v1/common/auth/password/old")).toBe(false);
+  });
+
+  it("isRegistrationRoute матчит только регистрацию", () => {
+    expect(isRegistrationRoute("/v1/common/auth/registration")).toBe(true);
+    expect(isRegistrationRoute("/v1/common/auth/registration?x=1")).toBe(true);
+    expect(isRegistrationRoute("/v1/common/auth/login")).toBe(false);
+    expect(isRegistrationRoute("/v1/common/auth/password")).toBe(false);
+    expect(isRegistrationRoute("/authserver/signout")).toBe(false);
+    expect(isRegistrationRoute("/v1/common/authX/registration")).toBe(false);
+    expect(isRegistrationRoute("/v1/common/auth/registration-old")).toBe(false);
   });
 });

@@ -33,6 +33,7 @@ import {
 import {
   DEFAULT_PANEL_PUBLIC_DIR,
   DEFAULT_PANEL_REPO_DIR,
+  PANEL_DEPLOY_LOCK_TOKEN_FILENAME,
   PANEL_DIR_NAME,
   PROJECT_ROOT,
   buildPanelBackupName,
@@ -288,6 +289,23 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
     expect(existsSync(join(brokenRepoDir, ".git"))).toBe(true);
   }, 30_000);
 
+  it("частичный .git после SIGKILL clone не считается валидным чекаутом — деплой пересоздаёт его", async (): Promise<void> => {
+    const { publicDir } = createService(panelFixture);
+    const brokenRepoDir = makeWorkDir();
+    git(["init", "-b", "main", brokenRepoDir], fixtureRoot);
+    rmSync(join(brokenRepoDir, ".git", "HEAD"), { force: true });
+    const { service } = createService(panelFixture, {
+      repoDir: brokenRepoDir,
+      publicDir,
+    });
+
+    const result = await service.deploy();
+
+    expect(result.ref).toBe("main");
+    expect(panelContent(publicDir)).toBe("panel-v2");
+    expect(existsSync(join(brokenRepoDir, ".git", "HEAD"))).toBe(true);
+  }, 30_000);
+
   it("deploy() восстанавливает панель из crash-окна подмены", async (): Promise<void> => {
     const { service, publicDir } = createService(panelFixture);
     const backupPath = join(publicDir, buildPanelBackupName("crash-window"));
@@ -522,6 +540,25 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
       await expect(retry.deploy()).rejects.toThrow("bun run build");
       expect(existsSync(buildPanelDeployLockPath(repoDir))).toBe(false);
     }, 30_000);
+
+    it("сбой записи токена подчищает каталог лока и пробрасывает ошибку", async (): Promise<void> => {
+      if (!canTestPermissions()) return;
+      const repoDir = makeWorkDir();
+      const lockPath = buildPanelDeployLockPath(repoDir);
+      const previousUmask = process.umask(0o222);
+      try {
+        await expect(acquirePanelDeployLock(repoDir, 100, logger)).rejects.toThrow();
+      } finally {
+        process.umask(previousUmask);
+      }
+
+      expect(existsSync(lockPath)).toBe(false);
+
+      const token = await acquirePanelDeployLock(repoDir, 100, logger);
+      expect(readFileSync(join(lockPath, PANEL_DEPLOY_LOCK_TOKEN_FILENAME), "utf-8")).toBe(token);
+      releasePanelDeployLock(repoDir, token, logger);
+      expect(existsSync(lockPath)).toBe(false);
+    });
 
     it("протухший лок перехватывается, деплой выполняется", async (): Promise<void> => {
       const repoDir = makeWorkDir();

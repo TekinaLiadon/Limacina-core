@@ -6,13 +6,20 @@ import { describe, expect, it } from "bun:test";
 import { plainToInstance } from "class-transformer";
 import { validateSync } from "class-validator";
 import { FilesListQueryDto } from "../../files/dto/dto";
-import { UsersSearchQueryDto, V1LogsQueryDto } from "../../admin/dto/dto";
+import { UsersQueryDto, UsersSearchQueryDto, V1LogsQueryDto } from "../../admin/dto/dto";
 
 function validate<T extends object>(dtoClass: new () => T, query: object): string[] {
   return validateSync(plainToInstance(dtoClass, query)).flatMap((error) =>
     Object.values(error.constraints ?? {}),
   );
 }
+
+describe("Query-DTO панели объявляются композицией, без наследования DTO", (): void => {
+  it("UsersSearchQueryDto и UsersQueryDto не наследуют другие DTO", (): void => {
+    expect(Object.getPrototypeOf(UsersSearchQueryDto.prototype)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(UsersQueryDto.prototype)).toBe(Object.prototype);
+  });
+});
 
 describe("OffsetLimitQueryDto — общий базовый DTO пагинации", (): void => {
   it("UsersSearchQueryDto держит границу limit 100 и опциональность offset/limit", (): void => {

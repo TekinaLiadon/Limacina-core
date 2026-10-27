@@ -9,7 +9,7 @@ import {
   SetRoleDto,
   SetUserPasswordDto,
   UsersQueryDto,
-  V1DeletedUsersQueryDto,
+  UsersSearchQueryDto,
   V1LogsQueryDto,
 } from "../../admin/dto/dto";
 import { InitOwnerDto, RestartServerDto } from "../../technical/dto/dto";
@@ -149,8 +149,8 @@ describe("Сообщения валидации DTO на русском", () => 
     expect(errors).toEqual(["date: ожидается дата в формате YYYY-MM-DD"]);
   });
 
-  it("V1DeletedUsersQueryDto: пагинация и поиск", () => {
-    const errors = validate(V1DeletedUsersQueryDto, { limit: 0, offset: -1, username: "" });
+  it("UsersSearchQueryDto: пагинация и поиск", () => {
+    const errors = validate(UsersSearchQueryDto, { limit: 0, offset: -1, username: "" });
     expect(errors).toContain("limit: минимум 1");
     expect(errors).toContain("offset: минимум 0");
     expect(errors).toContain("username: не должно быть пустым");
@@ -163,12 +163,41 @@ describe("Сообщения валидации DTO на русском", () => 
 
   it("SetOwnerDto: пустой username", () => {
     const errors = validate(SetOwnerDto, { username: "" });
-    expect(errors).toEqual(["username: не должно быть пустым"]);
+    expect(errors).toContain("username: не должно быть пустым");
+    expect(errors).toContain("username: только латиница, цифры и _");
   });
 
   it("SetUserPasswordDto: короткий пароль", () => {
     const errors = validate(SetUserPasswordDto, { username: "john", password: "123" });
     expect(errors).toEqual(["password: минимум 6 символов"]);
+  });
+
+  it("PATCH-DTO панели: username с недопустимыми символами отклоняется паттерном", () => {
+    const cases: [new () => object, object][] = [
+      [ApproveUserDto, { username: "john/doe", approved: true }],
+      [BanUserDto, { username: "john/doe", banned: true }],
+      [SetRoleDto, { username: "john/doe", role: "user" }],
+      [SetUserPasswordDto, { username: "john/doe", password: "secret123" }],
+      [SetOwnerDto, { username: "john/doe" }],
+    ];
+
+    for (const [cls, payload] of cases) {
+      expect(validate(cls, payload)).toEqual(["username: только латиница, цифры и _"]);
+    }
+  });
+
+  it("PATCH-DTO панели: валидный username проходит без ошибок", () => {
+    const cases: [new () => object, object][] = [
+      [ApproveUserDto, { username: "john_doe1", approved: true }],
+      [BanUserDto, { username: "john_doe1", banned: false }],
+      [SetRoleDto, { username: "john_doe1", role: "user" }],
+      [SetUserPasswordDto, { username: "john_doe1", password: "secret123" }],
+      [SetOwnerDto, { username: "john_doe1" }],
+    ];
+
+    for (const [cls, payload] of cases) {
+      expect(validate(cls, payload)).toEqual([]);
+    }
   });
 
   it("LauncherConfigDto: типы полей", () => {
@@ -270,7 +299,7 @@ describe("Сообщения валидации DTO на русском", () => 
       [SetOwnerDto, { username: "john" }],
       [SetUserPasswordDto, { username: "john", password: "secret123" }],
       [UsersQueryDto, { limit: "abc", offset: "x", username: 5, approved: "maybe" }],
-      [V1DeletedUsersQueryDto, { limit: "abc", offset: "x", username: 5 }],
+      [UsersSearchQueryDto, { limit: "abc", offset: "x", username: 5 }],
       [
         V1LogsQueryDto,
         { date: "not-a-date", statusCode: "x", url: "", ip: "", limit: "y", offset: "z" },

@@ -14,7 +14,7 @@ import {
 import { YggdrasilMapStore, type IYggdrasilTokenStore, type TokenEntry } from "../yggdrasil_store";
 import type { IUserContentStore } from "../../../user-content/user_content_store";
 import type { AppConfigType } from "../../../config/global-config";
-import { buildTestPng } from "../../../utils/tests/test-png";
+import { buildTestPng, pngChunk, TEST_PNG_SIGNATURE } from "../../../utils/tests/test-png";
 import { buildContentLocation } from "../../../utils/content-files";
 import { YggdrasilService } from "../yggdrasil.service";
 
@@ -195,11 +195,11 @@ describe("YggdrasilService.uploadTexture — сериализация мутац
       username: TEXTURE_USERNAME,
       password: SEED_PASSWORD,
     });
-    const authorization = `Bearer ${auth.accessToken}`;
+    const principal = await service.authenticateTextureAccess(`Bearer ${auth.accessToken}`);
 
     await Promise.allSettled([
-      service.uploadTexture(TEXTURE_UUID, "skin", Buffer.from(bytesA), undefined, authorization),
-      service.uploadTexture(TEXTURE_UUID, "skin", Buffer.from(bytesB), undefined, authorization),
+      service.uploadTexture(TEXTURE_UUID, "skin", Buffer.from(bytesA), undefined, principal),
+      service.uploadTexture(TEXTURE_UUID, "skin", Buffer.from(bytesB), undefined, principal),
     ]);
 
     const profile = await store.findProfileByUuid(TEXTURE_UUID);
@@ -231,7 +231,8 @@ describe("YggdrasilService.uploadTexture — сериализация мутац
       password: SEED_PASSWORD,
     });
     const authorization = `Bearer ${auth.accessToken}`;
-    await service.uploadTexture(TEXTURE_UUID, "skin", Buffer.from(bytes), undefined, authorization);
+    const principal = await service.authenticateTextureAccess(authorization);
+    await service.uploadTexture(TEXTURE_UUID, "skin", Buffer.from(bytes), undefined, principal);
 
     await Promise.allSettled([
       service.deleteTexture(TEXTURE_UUID, "skin", authorization),
@@ -241,6 +242,44 @@ describe("YggdrasilService.uploadTexture — сериализация мутац
     const profile = await store.findProfileByUuid(TEXTURE_UUID);
     expect(profile?.skinUrl).toBeNull();
     expect(existsSync(textureLocation(bytes).path)).toBe(false);
+  }, 30_000);
+
+  it("битый zlib-поток при валидных CRC отдаёт ForbiddenOperationException, а не 500", async (): Promise<void> => {
+    const store = await makeTextureStore();
+    const service = makeService(store, new YggdrasilMapTokenStore(new MemoryDb()));
+    const auth = await service.authenticate({
+      username: TEXTURE_USERNAME,
+      password: SEED_PASSWORD,
+    });
+    const source = buildTestPng();
+    const broken = Buffer.concat([
+      TEST_PNG_SIGNATURE,
+      pngChunk("IHDR", source.subarray(16, 29)),
+      pngChunk("tEXt", Buffer.from("Comment\x00junk")),
+      pngChunk("IDAT", Buffer.from([1, 2, 3, 4, 5, 6, 7, 8])),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+
+    const thrown = await service
+      .uploadTexture(
+        TEXTURE_UUID,
+        "skin",
+        broken,
+        undefined,
+        await service.authenticateTextureAccess(`Bearer ${auth.accessToken}`),
+      )
+      .then(
+        (): HttpException | undefined => undefined,
+        (error: HttpException) => error,
+      );
+
+    expect(thrown).toBeInstanceOf(HttpException);
+    expect(thrown!.getStatus()).toBe(HttpStatus.FORBIDDEN);
+    expect((thrown!.getResponse() as { error: string }).error).toBe("ForbiddenOperationException");
+    expect((thrown!.getResponse() as { errorMessage: string }).errorMessage).toContain(
+      "Invalid texture file",
+    );
+    expect(existsSync(textureLocation(new Uint8Array(broken)).path)).toBe(false);
   }, 30_000);
 });
 
@@ -428,24 +467,23 @@ describe("YggdrasilService — валидация uuid профиля", (): void
   const authorizedService = async (): Promise<{
     service: YggdrasilService;
     authorization: string;
+    principal: Awaited<ReturnType<YggdrasilService["authenticateTextureAccess"]>>;
   }> => {
     const store = await makeUuidStore();
     const service = makeService(store, new YggdrasilMapTokenStore(new MemoryDb()));
     const auth = await service.authenticate({ username: UUID_USERNAME, password: SEED_PASSWORD });
-    return { service, authorization: `Bearer ${auth.accessToken}` };
+    const authorization = `Bearer ${auth.accessToken}`;
+    const principal = await service.authenticateTextureAccess(authorization);
+    return { service, authorization, principal };
   };
 
-  it("getProfile с невалидным uuid даёт 404 IllegalArgumentException вместо молчаливого 204", async (): Promise<void> => {
+  it("getProfile с невалидным uuid отдаёт null — роут отвечает 204", async (): Promise<void> => {
     const store = await makeUuidStore();
     const service = makeService(store, new YggdrasilMapTokenStore(new MemoryDb()));
 
-    const error = await rejectionOf(service.getProfile("not-a-uuid", false));
+    const profile = await service.getProfile("not-a-uuid", false);
 
-    expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
-    expect(error.getResponse()).toMatchObject({
-      error: "IllegalArgumentException",
-      errorMessage: "Invalid uuid.",
-    });
+    expect(profile).toBeNull();
   });
 
   it("getProfile с uuid в верхнем регистре и дефисами нормализуется", async (): Promise<void> => {
@@ -459,10 +497,10 @@ describe("YggdrasilService — валидация uuid профиля", (): void
   });
 
   it("uploadTexture с невалидным uuid даёт 400 IllegalArgumentException вместо 403 Invalid token", async (): Promise<void> => {
-    const { service, authorization } = await authorizedService();
+    const { service, principal } = await authorizedService();
 
     const error = await rejectionOf(
-      service.uploadTexture("nothex", "skin", Buffer.from("png"), undefined, authorization),
+      service.uploadTexture("nothex", "skin", Buffer.from("png"), undefined, principal),
     );
 
     expect(error.getStatus()).toBe(HttpStatus.BAD_REQUEST);
@@ -482,11 +520,11 @@ describe("YggdrasilService — валидация uuid профиля", (): void
   });
 
   it("валидный, но чужой uuid в uploadTexture сохраняет протокольный 403 Invalid token", async (): Promise<void> => {
-    const { service, authorization } = await authorizedService();
+    const { service, principal } = await authorizedService();
     const png = new Uint8Array(buildTestPng({ variant: 215 }));
 
     const error = await rejectionOf(
-      service.uploadTexture(FOREIGN_UUID, "skin", Buffer.from(png), undefined, authorization),
+      service.uploadTexture(FOREIGN_UUID, "skin", Buffer.from(png), undefined, principal),
     );
 
     expect(error.getStatus()).toBe(HttpStatus.FORBIDDEN);

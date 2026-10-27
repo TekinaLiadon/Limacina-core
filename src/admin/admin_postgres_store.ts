@@ -270,13 +270,29 @@ export class AdminPostgresStore implements IAdminStore {
   }
 
   async deleteUser(username: string, expectedRole?: string): Promise<AdminUser | undefined> {
-    const user = await this.findByUsername(username);
-    if (!user) return undefined;
-    if (expectedRole !== undefined && user.role !== expectedRole) return undefined;
+    const guardValues: SqlValue[] =
+      expectedRole !== undefined ? [username, expectedRole] : [username];
+    const query = updateQuery()
+      .from(TABLES.users)
+      .set("deleted", true)
+      .set("deleted_at", new Date())
+      .where(
+        expectedRole !== undefined
+          ? "username = $1 AND deleted = false AND role = $2"
+          : "username = $1 AND deleted = false",
+        ...guardValues,
+      )
+      .build();
+    const { count } = await execute(query.sql, query.values);
+    if (count === 0) return undefined;
+    return this.findDeletedUserView(username);
+  }
 
-    const query = setSoftDeletedQuery(TABLES.users, "username = $1", username, true);
-    await execute(query.sql, query.values);
-    return user;
+  private async findDeletedUserView(username: string): Promise<AdminUser | undefined> {
+    const deleted = await this.findDeletedByUsername(username);
+    if (!deleted) return undefined;
+    const { uuid, username: deletedUsername, role, approved, banned } = deleted;
+    return { uuid, username: deletedUsername, role, approved, banned };
   }
 
   async findDeletedByUsername(username: string): Promise<DeletedUser | undefined> {

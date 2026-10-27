@@ -115,6 +115,9 @@ export async function runCommand(
       await escalation;
     }
     return { exitCode, stdout, stderr, timedOut };
+  } catch (error) {
+    await terminateProcessTree(proc, killGraceMs);
+    throw error;
   } finally {
     clearTimeout(timeout);
     activeStepProcesses.delete(proc);

@@ -3,9 +3,11 @@ export interface SqlResult {
   count: number;
 }
 
+export type SqlQuery = Promise<SqlResult> & { cancel?: () => unknown };
+
 type BunSqlClient = {
   (strings: TemplateStringsArray, ...values: unknown[]): Promise<SqlResult>;
-  unsafe(sql: string, values: unknown[]): Promise<SqlResult>;
+  unsafe(sql: string, values: unknown[]): SqlQuery;
 };
 
 type BunSqlFn = BunSqlClient & {

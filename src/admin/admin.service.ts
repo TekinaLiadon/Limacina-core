@@ -162,7 +162,20 @@ export class AdminService implements OnModuleInit {
 
     const user = await this.findMutableUser(username, actor, "setPassword");
     const passwordHash = await Bun.password.hash(password);
-    await this.authStore.replacePassword(user.uuid, passwordHash, new Date());
+    const applied = await this.authStore.replacePassword(
+      user.uuid,
+      passwordHash,
+      new Date(),
+      undefined,
+      user.role,
+    );
+    if (!applied) {
+      this.logger.error(
+        this.audit(actor, username, "setPassword"),
+        "Отказ: роль цели изменилась конкурентно",
+      );
+      throw new NotFoundException(`Пользователь ${username} не найден или изменился конкурентно`);
+    }
     this.logger.log(this.audit(actor, username, "setPassword"), "Пароль пользователя изменён");
   }
 

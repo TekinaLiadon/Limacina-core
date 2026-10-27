@@ -7,6 +7,7 @@ interface PgResult {
 
 export const postgresDialect: SqlDialect = {
   name: "postgres",
+  stringLiteralPattern: String.raw`'(?:[^']|'')*'`,
   toClientQuery(sql: string, values: SqlValue[]): { sql: string; values: unknown[] } {
     return { sql, values };
   },

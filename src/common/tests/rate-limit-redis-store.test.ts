@@ -4,8 +4,10 @@ import { RedisRateLimitStore, type RateLimitRedisClientLike } from "../rate-limi
 class FakeZsetRedis implements RateLimitRedisClientLike {
   readonly zsets = new Map<string, Map<string, number>>();
   readonly commands: string[] = [];
+  readonly evalArgs: string[][] = [];
   readonly pexpires: { key: string; ms: number }[] = [];
   failMode = false;
+  badReply = false;
   closed = false;
   connectCalls = 0;
   onclose: ((error: Error) => void) | null = null;
@@ -15,40 +17,31 @@ class FakeZsetRedis implements RateLimitRedisClientLike {
     this.commands.push(command);
     if (this.failMode) throw new Error("redis unavailable");
 
-    const key = args[0]!;
-    if (command === "ZADD") {
-      const zset = this.zsets.get(key) ?? new Map<string, number>();
-      zset.set(args[2]!, Number(args[1]));
-      this.zsets.set(key, zset);
-      return 1;
-    }
-    if (command === "ZREMRANGEBYSCORE") {
-      const zset = this.zsets.get(key);
-      if (zset === undefined) return 0;
-      const max = Number(args[2]);
-      let removed = 0;
-      for (const [member, score] of zset) {
-        if (score <= max) {
-          zset.delete(member);
-          removed += 1;
-        }
-      }
-      return removed;
-    }
-    if (command === "ZCARD") {
-      return this.zsets.get(key)?.size ?? 0;
-    }
-    if (command === "PEXPIRE") {
-      this.pexpires.push({ key, ms: Number(args[1]) });
-      return 1;
-    }
-    if (command === "ZRANGE") {
-      const zset = this.zsets.get(key);
-      if (zset === undefined || zset.size === 0) return [];
-      const oldest = [...zset.entries()].toSorted((a, b) => a[1] - b[1])[0]!;
-      return [oldest[0], String(oldest[1])];
+    if (command === "EVAL") {
+      this.evalArgs.push(args);
+      if (this.badReply) return "unexpected reply";
+      return this.evalSlidingWindow(args);
     }
     throw new Error(`unexpected command ${command}`);
+  }
+
+  private evalSlidingWindow(args: string[]): unknown {
+    const key = args[2]!;
+    const now = Number(args[3]);
+    const windowMs = Number(args[4]);
+    const max = Number(args[5]);
+    const member = args[6]!;
+    const zset = this.zsets.get(key) ?? new Map<string, number>();
+    zset.set(member, now);
+    this.zsets.set(key, zset);
+    for (const [hitMember, score] of zset) {
+      if (score <= now - windowMs) zset.delete(hitMember);
+    }
+    this.pexpires.push({ key, ms: windowMs });
+    const count = zset.size;
+    if (count <= max) return [count, -1];
+    const oldest = [...zset.entries()].toSorted((a, b) => a[1] - b[1])[0];
+    return [count, oldest?.[1] ?? -1];
   }
 
   async connect(): Promise<void> {
@@ -61,6 +54,30 @@ class FakeZsetRedis implements RateLimitRedisClientLike {
 }
 
 describe("RedisRateLimitStore", (): void => {
+  it("record шлёт ровно один EVAL: окно и oldestAt за один RTT", async (): Promise<void> => {
+    const client = new FakeZsetRedis();
+    const store = new RedisRateLimitStore(client);
+
+    await store.record("ip:1.2.3.4", 1_000, 1, 0);
+    const overLimit = await store.record("ip:1.2.3.4", 1_000, 1, 100);
+
+    expect(client.commands).toEqual(["EVAL", "EVAL"]);
+    const [script, numKeys, key, nowArg, windowArg, maxArg, member] = client.evalArgs[1]!;
+    expect(script).toContain("ZADD");
+    expect(script).toContain("ZREMRANGEBYSCORE");
+    expect(script).toContain("ZCARD");
+    expect(script).toContain("PEXPIRE");
+    expect(script).toContain("ZRANGE");
+    expect(numKeys).toBe("1");
+    expect(key).toBe("ip:1.2.3.4");
+    expect(nowArg).toBe("100");
+    expect(windowArg).toBe("1000");
+    expect(maxArg).toBe("1");
+    expect(member).toMatch(/^100:/);
+    expect(overLimit.count).toBe(2);
+    expect(overLimit.oldestAt).toBe(0);
+  });
+
   it("считает хиты ключа в окне, member уникальны даже при одном now", async (): Promise<void> => {
     const client = new FakeZsetRedis();
     const store = new RedisRateLimitStore(client);
@@ -95,13 +112,16 @@ describe("RedisRateLimitStore", (): void => {
     expect(result.oldestAt).toBe(0);
   });
 
-  it("до превышения max ZRANGE не вызывается", async (): Promise<void> => {
+  it("до превышения max oldestAt не возвращается", async (): Promise<void> => {
     const client = new FakeZsetRedis();
     const store = new RedisRateLimitStore(client);
 
     await store.record("ip:1.2.3.4", 1_000, 5, 0);
+    await store.record("ip:1.2.3.4", 1_000, 5, 100);
 
-    expect(client.commands).not.toContain("ZRANGE");
+    const result = await store.record("ip:1.2.3.4", 1_000, 5, 200);
+    expect(result.count).toBe(3);
+    expect(result.oldestAt).toBeNull();
   });
 
   it("ставит TTL на ключ zset", async (): Promise<void> => {
@@ -121,6 +141,7 @@ describe("RedisRateLimitStore", (): void => {
 
     expect(client.zsets.has("limacina:test:rate-limit:ip:1.2.3.4")).toBe(true);
     expect(client.zsets.has("ip:1.2.3.4")).toBe(false);
+    expect(client.evalArgs[0]?.[2]).toBe("limacina:test:rate-limit:ip:1.2.3.4");
   });
 
   it("разные ключи — разные zset", async (): Promise<void> => {
@@ -138,6 +159,16 @@ describe("RedisRateLimitStore", (): void => {
     const client = new FakeZsetRedis();
     const store = new RedisRateLimitStore(client);
     client.failMode = true;
+
+    const result = await store.record("ip:1.2.3.4", 1_000, 10, 0);
+
+    expect(result).toEqual({ count: 0, oldestAt: null });
+  });
+
+  it("битый ответ Redis — fail-open: хит не бросает и возвращает пустой результат", async (): Promise<void> => {
+    const client = new FakeZsetRedis();
+    const store = new RedisRateLimitStore(client);
+    client.badReply = true;
 
     const result = await store.record("ip:1.2.3.4", 1_000, 10, 0);
 

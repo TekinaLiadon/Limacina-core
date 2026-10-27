@@ -87,7 +87,13 @@ export async function acquirePanelDeployLock(
     }
 
     const token = randomUUID();
-    writeFileSync(join(lockDir, PANEL_DEPLOY_LOCK_TOKEN_FILENAME), token);
+    const tokenPath = join(lockDir, PANEL_DEPLOY_LOCK_TOKEN_FILENAME);
+    try {
+      writeFileSync(tokenPath, token);
+    } catch (error) {
+      rmSync(lockDir, { recursive: true, force: true });
+      throw error;
+    }
     return token;
   }
 }
@@ -357,18 +363,46 @@ export class TechnicalPanelDeployService {
   }
 
   private async ensureRepositoryCloned(): Promise<void> {
-    if (existsSync(join(this.repoDir, ".git"))) return;
+    if (!existsSync(join(this.repoDir, ".git"))) {
+      await this.cloneMissingCheckout();
+      return;
+    }
+    if (await this.isCheckoutGitDirValid()) return;
 
+    await this.recreateCheckout();
+  }
+
+  private async cloneMissingCheckout(): Promise<void> {
     try {
       await this.cloneRepository();
     } catch (error) {
       if (!existsSync(this.repoDir) || existsSync(join(this.repoDir, ".git"))) throw error;
-      this.logger.warn(
-        { repoDir: this.repoDir },
-        "Каталог чекаута панели повреждён предыдущим прерванным clone — пересоздаётся",
+      await this.recreateCheckout();
+    }
+  }
+
+  private async recreateCheckout(): Promise<void> {
+    this.logger.warn(
+      { repoDir: this.repoDir },
+      "Каталог чекаута панели повреждён предыдущим прерванным clone — пересоздаётся",
+    );
+    rmSync(this.repoDir, { recursive: true, force: true });
+    await this.cloneRepository();
+  }
+
+  private async isCheckoutGitDirValid(): Promise<boolean> {
+    try {
+      const run = await runCommand(
+        ["git", "rev-parse", "--git-dir"],
+        this.repoDir,
+        BRANCH_TIMEOUT_MS,
       );
-      rmSync(this.repoDir, { recursive: true, force: true });
-      await this.cloneRepository();
+      return run.exitCode === 0;
+    } catch (error) {
+      throw new Error(
+        `Деплой панели прерван: не удалось проверить целостность чекаута ${this.repoDir}`,
+        { cause: error },
+      );
     }
   }
 

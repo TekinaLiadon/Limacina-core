@@ -283,6 +283,18 @@ contractDescribeEach("контракт IAdminStore", (driver) => {
     expect(await ctx.store.deleteUser(uniqueUsername("missing"))).toBeUndefined();
   });
 
+  it("deleteUser с устаревшей ролью не удаляет пользователя, повышенного конкурентно", async () => {
+    const user = await ctx.makeUser();
+
+    await ctx.store.setRole(user.username, "admin");
+
+    expect(await ctx.store.deleteUser(user.username, "user")).toBeUndefined();
+    expect(await ctx.store.findByUsername(user.username)).toBeDefined();
+    expect((await ctx.store.findByUsername(user.username))?.role).toBe("admin");
+
+    expect((await ctx.store.deleteUser(user.username, "admin"))?.uuid).toBe(user.uuid);
+  });
+
   it("restoreUser возвращает пользователя в живые", async () => {
     const user = await ctx.makeUser();
     await ctx.store.deleteUser(user.username);

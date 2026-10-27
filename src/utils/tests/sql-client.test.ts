@@ -54,6 +54,38 @@ describe("currentDialect — ленивый кеш диалекта", () => {
     }
   });
 
+  it("updateQuery().where() перенумеровывает плейсхолдеры по семантике литералов диалекта", () => {
+    const condition = "note = 'x\\' AND flag = $1 AND title = 't'";
+    process.env["DATABASE_URL"] = "postgres://user:pass@localhost:5432/db";
+    delete process.env["SECRETS"];
+    resetSqlClient();
+
+    try {
+      const postgresQuery = updateQuery()
+        .from("users")
+        .set("name", "n")
+        .where(condition, true)
+        .build();
+      expect(postgresQuery.sql).toBe(
+        "UPDATE users SET name = $1 WHERE note = 'x\\' AND flag = $2 AND title = 't'",
+      );
+      expect(postgresQuery.values).toEqual(["n", true]);
+
+      process.env["DATABASE_URL"] = "mariadb://user:pass@localhost:3306/db";
+      resetSqlClient();
+      const mariadbQuery = updateQuery()
+        .from("users")
+        .set("name", "n")
+        .where(condition, true)
+        .build();
+      expect(mariadbQuery.sql).toBe(
+        "UPDATE users SET name = $1 WHERE note = 'x\\' AND flag = $1 AND title = 't'",
+      );
+    } finally {
+      restoreEnv();
+    }
+  });
+
   it("mergeSecretsIntoEnv не вызывается на каждый SQL-вызов — один раз на кеш", () => {
     delete process.env["DATABASE_URL"];
     process.env["SECRETS"] = JSON.stringify({

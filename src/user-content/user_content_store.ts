@@ -356,7 +356,7 @@ export class UserContentMapStore implements IUserContentStore {
       userUuid,
       filePath,
       skinModel: skinModel ?? null,
-      active: type !== "skin",
+      active: false,
     };
     this.getStore(type).set(id, item);
     return item;

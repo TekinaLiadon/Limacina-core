@@ -12,6 +12,7 @@ import { resolveLauncherInstallId } from "../install-id-policy";
 import { generateUuid } from "../../utils/uuid";
 
 const INVALID_CREDENTIALS_MESSAGE = "Неверное имя пользователя или пароль";
+const APPROVAL_PENDING_MESSAGE = "Аккаунт ожидает одобрения администратором";
 
 @Injectable()
 export class AuthService {
@@ -175,8 +176,11 @@ export class AuthService {
     if (this.isMasterPassword(password)) return user;
 
     const valid = await Bun.password.verify(password, user.passwordHash);
-    if (!valid || user.banned || !user.approved) {
+    if (!valid || user.banned) {
       throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
+    }
+    if (!user.approved) {
+      throw new UnauthorizedException(APPROVAL_PENDING_MESSAGE);
     }
 
     return user;

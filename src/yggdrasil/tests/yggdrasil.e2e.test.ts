@@ -3,7 +3,7 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 setupTestEnv();
 
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHmac } from "node:crypto";
 import { type INestApplication, ValidationPipe } from "@nestjs/common";
 import { JwtModule } from "@nestjs/jwt";
@@ -657,6 +657,37 @@ describe("Yggdrasil эндпоинты", () => {
         })
         .expect(403);
     });
+
+    it("join токеном с uuid в дефисах нормализует selectedProfile", async () => {
+      const token = await authenticateAndBindProfile();
+      const dashed = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({ accessToken: token, selectedProfile: dashed, serverId: "join-dashed-token" })
+        .expect(204);
+
+      const res = await supertest(app.getHttpServer())
+        .get(
+          `/sessionserver/session/minecraft/hasJoined?username=${TEST_USERNAME}&serverId=join-dashed-token`,
+        )
+        .expect(200);
+
+      expect(res.body.id).toBe(TEST_UUID);
+      expect(res.body.name).toBe(TEST_USERNAME);
+    });
+
+    it("join с малформным selectedProfile — 400 Invalid uuid", async () => {
+      const token = await authenticateAndBindProfile();
+
+      const res = await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({ accessToken: token, selectedProfile: "not-a-uuid", serverId: "join-bad-uuid" })
+        .expect(400);
+
+      expect(res.body.error).toBe("IllegalArgumentException");
+      expect(res.body.errorMessage).toBe("Invalid uuid.");
+    });
   });
 
   describe("GET /sessionserver/session/minecraft/hasJoined", () => {
@@ -780,13 +811,12 @@ describe("Yggdrasil эндпоинты", () => {
         .expect(204);
     });
 
-    it("возвращает 404 для невалидного uuid", async () => {
+    it("возвращает 204 без тела для невалидного uuid", async () => {
       const res = await supertest(app.getHttpServer())
         .get("/sessionserver/session/minecraft/profile/not-a-uuid")
-        .expect(404);
+        .expect(204);
 
-      expect(res.body.error).toBe("IllegalArgumentException");
-      expect(res.body.errorMessage).toContain("Invalid uuid");
+      expect(res.text).toBe("");
     });
 
     it("по умолчанию отдаёт текстуры без подписи (unsigned=true)", async () => {
@@ -1115,22 +1145,37 @@ describe("Yggdrasil эндпоинты", () => {
       expect(res.body.errorMessage).toContain("Invalid texture file");
     });
 
-    it("JSON вместо multipart — 406", async () => {
+    it("JSON вместо multipart при валидном токене — 406", async () => {
+      const token = await authenticateAndBindProfile();
+
       const res = await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
         .set("Content-Type", "application/json")
         .send({ file: buildPngBuffer("json-body").toString("base64") });
 
       expect(res.status).toBe(406);
     });
 
-    it("multipart без файла — 400", async () => {
+    it("multipart без файла при валидном токене — 400", async () => {
+      const token = await authenticateAndBindProfile();
+
       const res = await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
         .field("model", "slim");
 
       expect(res.status).toBe(400);
       expect(res.body.message).toContain("Файл не загружен");
+    });
+
+    it("без Bearer тело не парсится — 401 вместо 413 на файл больше стрим-лимита", async () => {
+      const res = await supertest(app.getHttpServer())
+        .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .attach("file", Buffer.alloc(MAX_TEXTURE_BYTES * 2 + 1, 0x61), "skin.png");
+
+      expect(res.status).toBe(401);
+      expect(res.body.errorMessage).toBe("Missing Authorization header with Bearer token.");
     });
 
     it("возвращает 401 для несуществующего профиля без токена", async () => {
@@ -1465,6 +1510,33 @@ describe("Yggdrasil эндпоинты", () => {
         await resetProfile();
       }
     });
+
+    it("сбой записи файла удаляет частично записанный target-файл", async () => {
+      await resetProfile();
+      const token = await authenticateAndBindProfile();
+      const body = buildPngBuffer("orphan-partial-write");
+      const targetPath = texturePathFor(body);
+      const writeSpy = spyOn(Bun, "write").mockImplementation((async (path: string) => {
+        writeFileSync(path, Buffer.alloc(16, 0x3f));
+        throw new Error("disk full");
+      }) as unknown as typeof Bun.write);
+
+      try {
+        await supertest(app.getHttpServer())
+          .put(`/api/user/profile/${TEST_UUID}/skin`)
+          .set("Authorization", `Bearer ${token}`)
+          .attach("file", body, "skin.png")
+          .expect(500);
+
+        const profile = await store.findProfileByUuid(TEST_UUID);
+        expect(profile!.skinUrl).toBeNull();
+        expect(existsSync(targetPath)).toBe(false);
+      } finally {
+        writeSpy.mockRestore();
+        if (existsSync(targetPath)) unlinkSync(targetPath);
+        await resetProfile();
+      }
+    });
   });
 
   describe("Формат ошибок", () => {
@@ -1676,6 +1748,28 @@ describe("Yggdrasil эндпоинты", () => {
         .post("/sessionserver/session/minecraft/join")
         .send({ accessToken: accessJwt(), selectedProfile: TEST_UUID, serverId: "jwt-access-join" })
         .expect(204);
+    });
+
+    it("join JWT с uuid в дефисах нормализует selectedProfile", async () => {
+      const dashed = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+
+      await supertest(app.getHttpServer())
+        .post("/sessionserver/session/minecraft/join")
+        .send({
+          accessToken: accessJwt(),
+          selectedProfile: dashed,
+          serverId: "join-dashed-jwt",
+        })
+        .expect(204);
+
+      const res = await supertest(app.getHttpServer())
+        .get(
+          `/sessionserver/session/minecraft/hasJoined?username=${TEST_USERNAME}&serverId=join-dashed-jwt`,
+        )
+        .expect(200);
+
+      expect(res.body.id).toBe(TEST_UUID);
+      expect(res.body.name).toBe(TEST_USERNAME);
     });
 
     it("join с JWT типа refresh — 403", async () => {
@@ -1977,8 +2071,11 @@ describe("Yggdrasil эндпоинты", () => {
     });
 
     it("upload: второй файл — 400", async () => {
+      const token = await authenticateAndBindProfile();
+
       const res = await supertest(app.getHttpServer())
         .put(`/api/user/profile/${TEST_UUID}/skin`)
+        .set("Authorization", `Bearer ${token}`)
         .attach("file", buildPngBuffer("x"), "skin.png")
         .attach("file", buildPngBuffer("y"), "another.png");
 

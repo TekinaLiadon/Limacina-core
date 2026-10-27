@@ -36,7 +36,7 @@ import { AppConfigToken } from "../../../config/app-config.provider";
 import { CacheStoreToken, type ICacheStore } from "../../../cache/cache_store";
 import { CacheMapStore } from "../../../memory/cache_map_store";
 import { MemoryDb } from "../../../memory/memory-db";
-import { Jwt_authGuard } from "../../../common/jwt_auth.guard";
+import { JwtAuthGuard } from "../../../common/jwt-auth.guard";
 import { RolesGuard } from "../../../common/roles.guard";
 
 const PASSWORD = "test-rcon-password";
@@ -107,7 +107,7 @@ async function createRconApp(): Promise<INestApplication> {
   const rconApp = moduleFixture.createNestApplication(new FastifyAdapter());
   rconApp.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
   const reflector = rconApp.get(Reflector);
-  rconApp.useGlobalGuards(new Jwt_authGuard(reflector), new RolesGuard(reflector));
+  rconApp.useGlobalGuards(new JwtAuthGuard(reflector), new RolesGuard(reflector));
   applyV1ApiPrefix(rconApp);
   await rconApp.init();
   await rconApp.getHttpAdapter().getInstance().ready();

@@ -1,8 +1,38 @@
 import { Logger } from "@nestjs/common";
-import { currentDialect, currentSqlClient } from "./client";
-import type { BuiltQuery, QueryResult, SqlValue } from "./types";
+import { currentDialect, currentSqlClient, sqlQueryTimeoutMs } from "./client";
+import type { BuiltQuery, QueryResult, SqlQuery, SqlResult, SqlValue } from "./types";
 
 const sqlLogger = new Logger("Sql");
+
+type UnsafeExecutor = { unsafe: (sql: string, values: unknown[]) => SqlQuery };
+
+function cancelQuery(query: SqlQuery): void {
+  void Promise.resolve(query.cancel?.()).catch(() => undefined);
+}
+
+async function runTimedQuery(
+  executor: UnsafeExecutor,
+  querySql: string,
+  values: unknown[],
+): Promise<SqlResult> {
+  const query = executor.unsafe(querySql, values);
+  const timeoutMs = sqlQueryTimeoutMs();
+  let timer: Timer | undefined;
+  try {
+    return await Promise.race([
+      query,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          cancelQuery(query);
+          reject(new Error(`SQL-запрос прерван по таймауту ${String(timeoutMs)} мс`));
+        }, timeoutMs);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export async function execute<T extends Record<string, unknown>>(
   querySql: string,
@@ -10,7 +40,7 @@ export async function execute<T extends Record<string, unknown>>(
 ): Promise<QueryResult<T>> {
   try {
     const adapted = currentDialect().toClientQuery(querySql, values);
-    const result = await currentSqlClient().unsafe(adapted.sql, adapted.values);
+    const result = await runTimedQuery(currentSqlClient(), adapted.sql, adapted.values);
     return currentDialect().toQueryResult(result) as QueryResult<T>;
   } catch (error) {
     sqlLogger.error({ err: error, sql: querySql }, "SQL-запрос не выполнен");
@@ -23,7 +53,7 @@ export async function executeInTransaction(statements: BuiltQuery[]): Promise<vo
     await currentSqlClient().begin(async (tx) => {
       for (const statement of statements) {
         const adapted = currentDialect().toClientQuery(statement.sql, statement.values);
-        await tx.unsafe(adapted.sql, adapted.values);
+        await runTimedQuery(tx, adapted.sql, adapted.values);
       }
     });
   } catch (error) {
@@ -40,7 +70,7 @@ export async function executeInTransactionReturning<T extends Record<string, unk
     await currentSqlClient().begin(async (tx) => {
       for (const statement of statements) {
         const adapted = currentDialect().toClientQuery(statement.sql, statement.values);
-        const result = await tx.unsafe(adapted.sql, adapted.values);
+        const result = await runTimedQuery(tx, adapted.sql, adapted.values);
         results.push(currentDialect().toQueryResult(result) as QueryResult<T>);
       }
     });
@@ -49,12 +79,4 @@ export async function executeInTransactionReturning<T extends Record<string, unk
     throw error;
   }
   return results;
-}
-
-export async function closeSqlPool(): Promise<void> {
-  try {
-    await currentSqlClient().close();
-  } catch (error) {
-    sqlLogger.error({ err: error }, "Не удалось закрыть пул SQL-соединений");
-  }
 }

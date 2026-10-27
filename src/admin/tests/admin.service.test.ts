@@ -229,6 +229,33 @@ describe("AdminService: атомарность мутаций", (): void => {
     deleteUser.mockRestore();
   });
 
+  it("гонка с повышением роли цели отменяет смену пароля", async (): Promise<void> => {
+    const { adminStore, authStore, service } = await seed();
+    const originalReplacePassword = authStore.replacePassword.bind(authStore);
+    const replacePassword = spyOn(authStore, "replacePassword").mockImplementationOnce(
+      async (
+        uuid: string,
+        passwordHash: string,
+        changedAt: Date,
+        keepRefreshJti?: string,
+        expectedRole?: string,
+      ) => {
+        await adminStore.setRole("rollbacktarget", "admin");
+        await authStore.updateRole("rollback-target-uuid", "admin");
+        return originalReplacePassword(uuid, passwordHash, changedAt, keepRefreshJti, expectedRole);
+      },
+    );
+
+    await expect(service.setUserPassword("rollbacktarget", "newownerpass", ACTOR)).rejects.toThrow(
+      NotFoundException,
+    );
+
+    const stored = await authStore.findByUsername("rollbacktarget");
+    expect(await Bun.password.verify("rollbackpass", stored!.passwordHash)).toBe(true);
+    expect(stored?.role).toBe("admin");
+    replacePassword.mockRestore();
+  });
+
   it("мутация проходит, когда роль цели совпадает со снимком", async (): Promise<void> => {
     const { adminStore, authStore, service } = await seed();
 

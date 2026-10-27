@@ -205,13 +205,14 @@ export class YggdrasilController {
     @Req() request: FastifyRequest,
     @Headers("authorization") authorization?: string,
   ): Promise<void> {
+    const principal = await this.yggdrasilService.authenticateTextureAccess(authorization);
     const { model, file } = await parseTextureUpload(request);
     await this.yggdrasilService.uploadTexture(
       uuid,
       textureType,
       Buffer.from(file),
       model,
-      authorization,
+      principal,
     );
   }
 

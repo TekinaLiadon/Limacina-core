@@ -10,7 +10,7 @@ import { UserContentModule } from "./user-content/user-content.module";
 import { V1Module } from "./v1/v1.module";
 import { CommonModule } from "./common/common.module";
 import { AllExceptionsFilter } from "./common/all-exceptions.filter";
-import { Jwt_authGuard } from "./common/jwt_auth.guard";
+import { JwtAuthGuard } from "./common/jwt-auth.guard";
 import { RolesGuard } from "./common/roles.guard";
 import { LoggerModule } from "nestjs-pino";
 import GlobalConfig from "./config/global-config";
@@ -37,7 +37,7 @@ import { SqlPoolLifecycle } from "./config/sql-pool-lifecycle";
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
-    { provide: APP_GUARD, useClass: Jwt_authGuard },
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     SqlPoolLifecycle,
   ],

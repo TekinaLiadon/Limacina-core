@@ -23,7 +23,7 @@ import {
 } from "../../../../user-content/user_content_store";
 import GlobalConfig from "../../../../config/global-config";
 import { AppConfigToken } from "../../../../config/app-config.provider";
-import { Jwt_authGuard } from "../../../../common/jwt_auth.guard";
+import { JwtAuthGuard } from "../../../../common/jwt-auth.guard";
 import { RolesGuard } from "../../../../common/roles.guard";
 import { AllExceptionsFilter } from "../../../../common/all-exceptions.filter";
 
@@ -79,7 +79,7 @@ describe("V1 common/content — ошибки загрузки файлов", ():
     app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
     app.useGlobalFilters(new AllExceptionsFilter());
     const reflector = app.get(Reflector);
-    app.useGlobalGuards(new Jwt_authGuard(reflector), new RolesGuard(reflector));
+    app.useGlobalGuards(new JwtAuthGuard(reflector), new RolesGuard(reflector));
     jwtService = moduleFixture.get(JwtService);
     applyV1ApiPrefix(app);
     await app.init();

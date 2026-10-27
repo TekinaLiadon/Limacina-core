@@ -65,6 +65,23 @@ contractDescribeEach("контракт IUserContentStore", (driver) => {
     expect(plain.skinModel).toBeNull();
   });
 
+  it("флаг active у плащей и моделей всегда false (одинаков в обоих драйверах)", async () => {
+    const user = await ctx.makeUser();
+    const cape = await ctx.store.save(user.uuid, "capes/ct-flag.png", "cape");
+    const model = await ctx.store.save(user.uuid, "models/ct-flag.txt", "model");
+
+    expect(cape.active).toBe(false);
+    expect(model.active).toBe(false);
+
+    expect((await ctx.store.findById(cape.id, "cape"))?.active).toBe(false);
+    expect((await ctx.store.findById(model.id, "model"))?.active).toBe(false);
+
+    const capes = await ctx.store.findByUserUuid(user.uuid, "cape");
+    const models = await ctx.store.findByUserUuid(user.uuid, "model");
+    expect(capes.map((item) => item.active)).toEqual([false]);
+    expect(models.map((item) => item.active)).toEqual([false]);
+  });
+
   it("типы контента разделяются по таблицам", async () => {
     const user = await ctx.makeUser();
     const skin = await ctx.store.save(user.uuid, "skins/one.png", "skin");

@@ -78,10 +78,4 @@ describe("AuthProxyStore — идентификатор установки", ():
 
     expect(error).toBe("NotImplementedException");
   });
-
-  it("findInstallId отвечает undefined", async (): Promise<void> => {
-    const store = new AuthProxyStore("http://upstream.test");
-
-    expect(await store.findInstallId("uuid-1")).toBeUndefined();
-  });
 });

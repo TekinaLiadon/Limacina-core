@@ -18,7 +18,7 @@ import { AppConfigToken } from "../config/app-config.provider";
 import type { AppConfigType } from "../config/global-config";
 import { YggdrasilStoreToken, type IYggdrasilStore } from "../yggdrasil/service/yggdrasil_store";
 import { sanitizeFilePrefix } from "../utils/file-prefix";
-import { sanitizePng } from "../utils/png";
+import { PngStructureError, sanitizePng } from "../utils/png";
 import {
   TEXTURE_DIRECTORIES,
   buildContentLocation,
@@ -120,7 +120,7 @@ export class UserContentService {
       this.validatePngFile(file, type);
     }
 
-    const stored = type === "model" ? file : sanitizePng(file);
+    const stored = type === "model" ? file : this.sanitizePngFile(file, type);
     const prefix = sanitizeFilePrefix(username, userUuid);
     const location = buildContentLocation(
       this.config.BASE_URL,
@@ -340,6 +340,18 @@ export class UserContentService {
     throw new BadRequestException(`Невалидный файл ${contentName}: ${issue.message}`);
   }
 
+  private sanitizePngFile(file: Uint8Array, type: TextureKind): Uint8Array {
+    try {
+      return sanitizePng(file);
+    } catch (error) {
+      if (!(error instanceof PngStructureError)) throw error;
+      this.logger.warn({ type, reason: error.message }, "PNG resave failed");
+      throw new BadRequestException(
+        `Невалидный файл ${this.contentTypeName(type)}: ${error.message}`,
+      );
+    }
+  }
+
   private validateModelFile(file: Uint8Array): void {
     if (file.length === 0) {
       throw new BadRequestException("Файл модели пустой");
@@ -403,24 +415,38 @@ export class UserContentService {
     }
 
     return withPathLock(item.filePath, async () => {
-      const removed = await this.store.deleteByIdAndCountRemaining(id, type);
-      if (!removed) return;
-
-      await this.syncProfileAfterDelete(ownerUuid, type, item.active);
-
-      const profileRefs = this.profileStore
-        ? await this.profileStore.countProfilesByTextureUrl(item.filePath)
-        : 0;
-
-      await releaseContentFile({
-        logger: this.logger,
-        baseUrl: this.config.BASE_URL,
-        url: item.filePath,
-        directories: CONTENT_DIRECTORIES,
-        referenceCount: removed.remainingCount + profileRefs,
-      });
-
-      this.logger.debug({ ownerUuid, type, id }, "Deleted");
+      if (type !== "skin") {
+        await this.deleteContentAndReleaseFile(ownerUuid, id, type);
+        return;
+      }
+      await withPathLock(`active-skin:${ownerUuid}`, () =>
+        this.deleteContentAndReleaseFile(ownerUuid, id, type),
+      );
     });
+  }
+
+  private async deleteContentAndReleaseFile(
+    ownerUuid: string,
+    id: number,
+    type: ContentType,
+  ): Promise<void> {
+    const removed = await this.store.deleteByIdAndCountRemaining(id, type);
+    if (!removed) return;
+
+    await this.syncProfileAfterDelete(ownerUuid, type, removed.item.active);
+
+    const profileRefs = this.profileStore
+      ? await this.profileStore.countProfilesByTextureUrl(removed.item.filePath)
+      : 0;
+
+    await releaseContentFile({
+      logger: this.logger,
+      baseUrl: this.config.BASE_URL,
+      url: removed.item.filePath,
+      directories: CONTENT_DIRECTORIES,
+      referenceCount: removed.remainingCount + profileRefs,
+    });
+
+    this.logger.debug({ ownerUuid, type, id }, "Deleted");
   }
 }

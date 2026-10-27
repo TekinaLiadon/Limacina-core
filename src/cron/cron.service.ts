@@ -17,6 +17,8 @@ export const CRON_SCHEDULE = `0 ${CRON_FIRE_HOUR} * * *`;
 
 export const CRON_TASK_TIMEOUT_MS = 10 * 60_000;
 
+export const CRON_ZOMBIE_TTL_MS = 6 * 60 * 60_000;
+
 export function nextDailyFireAt(hour: number, fromMs: number): number {
   const fire = new Date(fromMs);
   fire.setHours(hour, 0, 0, 0);
@@ -24,16 +26,25 @@ export function nextDailyFireAt(hour: number, fromMs: number): number {
   return fire.getTime();
 }
 
+interface ZombieRun {
+  taskName: string;
+  startedAt: number;
+  promise: Promise<void>;
+}
+
 @Injectable()
 export class CronService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(CronService.name);
   private readonly tasks: CronTask[] = [];
-  private readonly zombieRuns = new Set<Promise<void>>();
+  private readonly zombieRuns = new Set<ZombieRun>();
   private running = false;
   private job: import("bun").CronJob | undefined;
   private timer: Timer | undefined;
 
-  constructor(@Optional() private readonly taskTimeoutMs: number = CRON_TASK_TIMEOUT_MS) {}
+  constructor(
+    @Optional() private readonly taskTimeoutMs: number = CRON_TASK_TIMEOUT_MS,
+    @Optional() private readonly zombieTtlMs: number = CRON_ZOMBIE_TTL_MS,
+  ) {}
 
   onApplicationBootstrap(): void {
     this.startSchedule();
@@ -60,6 +71,7 @@ export class CronService implements OnApplicationBootstrap, OnModuleDestroy {
       this.logger.warn("Пропуск прогона cron-задач: предыдущий прогон ещё выполняется");
       return;
     }
+    this.expireStaleZombies();
     if (this.zombieRuns.size > 0) {
       this.logger.warn(
         "Пропуск прогона cron-задач: задача прошлого прогона всё ещё выполняется после таймаута",
@@ -104,8 +116,21 @@ export class CronService implements OnApplicationBootstrap, OnModuleDestroy {
     });
   }
 
+  private expireStaleZombies(): void {
+    const now = Date.now();
+    for (const zombie of this.zombieRuns) {
+      if (now - zombie.startedAt < this.zombieTtlMs) continue;
+      this.zombieRuns.delete(zombie);
+      this.logger.error(
+        { task: zombie.taskName },
+        `Задача "${zombie.taskName}" не завершилась дольше ` +
+          `${String(this.zombieTtlMs)} мс после таймаута — зомби игнорируется, прогоны возобновляются`,
+      );
+    }
+  }
+
   private trackZombieRun(taskName: string, taskRun: Promise<void>): void {
-    const zombie = taskRun.then(
+    const promise = taskRun.then(
       () => undefined,
       (err: unknown) => {
         this.logger.error(
@@ -114,8 +139,9 @@ export class CronService implements OnApplicationBootstrap, OnModuleDestroy {
         );
       },
     );
+    const zombie: ZombieRun = { taskName, startedAt: Date.now(), promise };
     this.zombieRuns.add(zombie);
-    void zombie.then(() => {
+    void promise.then(() => {
       this.zombieRuns.delete(zombie);
     });
   }

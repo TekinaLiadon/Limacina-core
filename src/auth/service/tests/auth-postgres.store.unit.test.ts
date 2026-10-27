@@ -250,6 +250,39 @@ describe("AuthPostgresStore (мок SQL-клиента)", () => {
     expect(await store.setBanned("uuid-1", true, "user")).toBe(false);
   });
 
+  it("replacePassword с expectedRole включает роль в условия UPDATE и DELETE", async () => {
+    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [{ role: "user" }] : [{ id: 1 }]));
+    const changedAt = new Date("2026-01-01T00:00:00Z");
+
+    expect(await store.replacePassword("uuid-1", "new-hash", changedAt, "jti-1", "user")).toBe(
+      true,
+    );
+
+    const [update, revoke] = lastCalls(2);
+    expect(update?.sql).toContain("UPDATE users SET password_hash = $1");
+    expect(update?.sql).toContain("password_changed_at = $2");
+    expect(update?.sql).toContain("uuid = $3 AND deleted = false AND role = $4");
+    expect(update?.values).toEqual(["new-hash", changedAt, "uuid-1", "user"]);
+    expect(revoke?.sql).toContain("DELETE FROM refresh_tokens WHERE user_id = $1 AND jti <> $2");
+    expect(revoke?.sql).toContain(
+      "EXISTS (SELECT 1 FROM users WHERE uuid = $1 AND deleted = false AND role = $3)",
+    );
+    expect(revoke?.values).toEqual(["uuid-1", "jti-1", "user"]);
+  });
+
+  it("условная смена пароля отклоняет пользователя с разошедшейся ролью", async () => {
+    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [{ role: "admin" }] : []));
+
+    expect(await store.replacePassword("uuid-1", "new-hash", new Date(), undefined, "user")).toBe(
+      false,
+    );
+
+    const [update] = lastCalls(2);
+    expect(update?.sql).toContain("UPDATE users SET password_hash = $1");
+    expect(update?.sql).toContain("uuid = $3 AND deleted = false AND role = $4");
+    expect(update?.values).toEqual(["new-hash", expect.any(Date), "uuid-1", "user"]);
+  });
+
   it("deleteUser/restoreUser переключают флаг deleted", async () => {
     fake.onSql(() => []);
 
@@ -283,28 +316,5 @@ describe("AuthPostgresStore — идентификаторы установки"
     expect(call?.sql).toContain("LIKE '%\"' || user_install_ids.install_id || '\"%'");
     expect(call?.sql).toContain("LEFT(user_install_ids.install_id_history");
     expect(call?.values).toEqual(["uuid-1", INSTALL_ID]);
-  });
-
-  it("findInstallId читает current и разбирает историю", async () => {
-    fake.onSql(() => [{ install_id: "v1-aaaa", install_id_history: '["v1-bbbb","v1-cccc"]' }]);
-
-    const record = await store.findInstallId("uuid-1");
-
-    expect(record).toEqual({ current: "v1-aaaa", history: ["v1-bbbb", "v1-cccc"] });
-    const [call] = lastCalls(1);
-    expect(call?.sql).toContain("SELECT install_id, install_id_history FROM user_install_ids");
-    expect(call?.values).toEqual(["uuid-1"]);
-  });
-
-  it("findInstallId без строки отвечает undefined", async () => {
-    fake.onSql(() => []);
-
-    expect(await store.findInstallId("uuid-miss")).toBeUndefined();
-  });
-
-  it("findInstallId с битой историей отвечает пустым массивом", async () => {
-    fake.onSql(() => [{ install_id: "v1-aaaa", install_id_history: "not-json" }]);
-
-    expect(await store.findInstallId("uuid-1")).toEqual({ current: "v1-aaaa", history: [] });
   });
 });

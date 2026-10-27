@@ -74,7 +74,12 @@ export async function acquirePublishLock(
     }
 
     const token = randomUUID();
-    writeFileSync(tokenPath, token);
+    try {
+      writeFileSync(tokenPath, token);
+    } catch (error) {
+      rmSync(lockDir, { recursive: true, force: true });
+      throw error;
+    }
     return token;
   }
 }
