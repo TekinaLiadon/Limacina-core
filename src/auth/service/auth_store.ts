@@ -3,8 +3,6 @@ import { MAX_REFRESH_TOKENS_PER_USER } from "../token.constants";
 import { MemoryDb, type MemoryUserRecord } from "../../memory/memory-db";
 import type { InstallIdRecord } from "../install-id";
 
-export type { InstallIdRecord };
-
 export type StoredUser = Omit<MemoryUserRecord, "deleted" | "deletedAt">;
 
 export interface RefreshEntry {
@@ -12,7 +10,7 @@ export interface RefreshEntry {
   username: string;
 }
 
-export const AuthStoreToken = Symbol("AuthMapStore");
+export const AuthStoreToken = Symbol("AuthStore");
 
 export interface IAuthStore {
   findByUsername(username: string): Promise<StoredUser | undefined>;
@@ -25,7 +23,8 @@ export interface IAuthStore {
     passwordHash: string,
     changedAt: Date,
     keepRefreshJti?: string,
-  ): Promise<void>;
+    expectedRole?: string,
+  ): Promise<boolean>;
   updateRole(uuid: string, role: string, expectedRole?: string): Promise<boolean>;
   deleteUser(uuid: string): Promise<void>;
   restoreUser(uuid: string): Promise<void>;
@@ -35,7 +34,6 @@ export interface IAuthStore {
   deleteRefresh(jti: string): Promise<void>;
   deleteRefreshByUserId(userId: string): Promise<void>;
   recordInstallId(uuid: string, installId: string): Promise<void>;
-  findInstallId(uuid: string): Promise<InstallIdRecord | undefined>;
 }
 
 interface StoredRefreshEntry extends RefreshEntry {
@@ -93,12 +91,17 @@ export class AuthMapStore implements IAuthStore {
     passwordHash: string,
     changedAt: Date,
     keepRefreshJti?: string,
-  ): Promise<void> {
+    expectedRole?: string,
+  ): Promise<boolean> {
     const user = this.users.get(uuid);
-    if (!user) return;
+    if (!user) return false;
+    if (expectedRole !== undefined && (user.deleted || !this.roleMatches(user, expectedRole))) {
+      return false;
+    }
     user.passwordHash = passwordHash;
     user.passwordChangedAt = changedAt;
     this.deleteTokensOfUser(uuid, keepRefreshJti);
+    return true;
   }
 
   async updateRole(uuid: string, role: string, expectedRole?: string): Promise<boolean> {
@@ -170,12 +173,6 @@ export class AuthMapStore implements IAuthStore {
       ? stored.history
       : [...stored.history, stored.current];
     this.installIds.set(uuid, { current: installId, history });
-  }
-
-  async findInstallId(uuid: string): Promise<InstallIdRecord | undefined> {
-    const stored = this.installIds.get(uuid);
-    if (!stored) return undefined;
-    return { current: stored.current, history: [...stored.history] };
   }
 
   private liveRefreshEntry(jti: string): StoredRefreshEntry | undefined {

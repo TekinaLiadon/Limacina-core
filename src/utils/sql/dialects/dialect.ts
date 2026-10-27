@@ -6,6 +6,7 @@ export type ReturningStatement = "insert" | "update" | "delete";
 
 export interface SqlDialect {
   readonly name: SqlDialectName;
+  readonly stringLiteralPattern: string;
   toClientQuery(sql: string, values: SqlValue[]): { sql: string; values: unknown[] };
   toQueryResult(raw: unknown): QueryResult<Record<string, unknown>>;
   renderReturning(columns: string[], statement: ReturningStatement): string | null;

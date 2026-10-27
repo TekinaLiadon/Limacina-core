@@ -25,6 +25,7 @@ const BASE_URL = "http://localhost:3005";
 const CURRENT_VERSION = "9.9.9";
 const ARCHIVED_VERSION = "9.9.8";
 const INCOMPLETE_VERSION = "9.9.7";
+const FOREIGN_VERSION = "9.9.6";
 
 function artifactPath(version: string, fileName: string): string {
   return join(RELEASES_ROOT, version, fileName);
@@ -51,6 +52,8 @@ function writeReleaseFixtures(): void {
   writeFixture(ARCHIVED_VERSION, "Limacina-9.9.8-linux-x86_64.AppImage", "appimage-content");
   writeSigFixture(ARCHIVED_VERSION, "Limacina-9.9.8-linux-x86_64.AppImage", "sig-linux-content");
   writeFixture(INCOMPLETE_VERSION, "Limacina-9.9.7-windows-x86_64.exe", "orphan-artifact");
+  writeFixture(FOREIGN_VERSION, "Limacina-2.1.0-windows-x86_64.exe", "foreign-artifact");
+  writeSigFixture(FOREIGN_VERSION, "Limacina-2.1.0-windows-x86_64.exe", "foreign-sig");
 }
 
 describe("V1 launcher/update эндпоинты апдейтера (latest.json)", (): void => {
@@ -162,6 +165,23 @@ describe("V1 launcher/update эндпоинты апдейтера (latest.json)
         .get("/v1/launcher/update/latest")
         .query({ version: "../../etc/passwd" })
         .expect(400);
+    });
+
+    it("файлы чужой версии в каталоге релиза не попадают в platforms этой версии", async () => {
+      await supertest(app.getHttpServer())
+        .get("/v1/launcher/update/latest")
+        .query({ version: FOREIGN_VERSION })
+        .expect(404);
+
+      const res = await supertest(app.getHttpServer())
+        .get("/v1/launcher/update/releases")
+        .expect(200);
+
+      const versions: string[] = res.body.releases.map(
+        (release: { version: string }) => release.version,
+      );
+      expect(versions).not.toContain(FOREIGN_VERSION);
+      expect(versions).not.toContain("2.1.0");
     });
   });
 

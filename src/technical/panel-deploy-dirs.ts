@@ -32,7 +32,7 @@ export const DEFAULT_PANEL_PUBLIC_DIR = join(PROJECT_ROOT, PUBLIC_DIR);
 export function resolvePanelRepoDir(envValue: string | undefined): string {
   const trimmed = envValue?.trim();
   if (!trimmed) return DEFAULT_PANEL_REPO_DIR;
-  return trimmed;
+  return resolve(trimmed);
 }
 
 const PANEL_DEPLOY_LOCK_PREFIX = ".panel-deploy-lock-";

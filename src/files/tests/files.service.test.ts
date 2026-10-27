@@ -225,6 +225,46 @@ describe("FilesService — watcher и стриминг", () => {
     triggerIndexRescan(files);
     expect(files.launcherHash.has(lostName)).toBeFalse();
   });
+
+  it("сверка с диском пропускает файл, изменяющийся во время хеширования", async () => {
+    const service = new FilesService();
+    const growingName = "files-growing-fixture.bin";
+    const growingPath = join(LAUNCHER_DIR, growingName);
+    writeFileSync(growingPath, "first-half");
+
+    let resolveHashStarted!: () => void;
+    const hashStarted = new Promise<void>((resolve) => {
+      resolveHashStarted = resolve;
+    });
+    const getHashOriginal = service.getHash;
+    service.getHash = async (): Promise<string | null> => {
+      resolveHashStarted();
+      writeFileSync(growingPath, "first-half-second-half");
+      return "partial-hash";
+    };
+
+    try {
+      triggerIndexRescan(service);
+      await hashStarted;
+      await Bun.sleep(50);
+
+      expect(service.launcherHash.has(growingName)).toBeFalse();
+    } finally {
+      service.getHash = getHashOriginal;
+    }
+
+    try {
+      triggerIndexRescan(service);
+      await waitFor(() => service.launcherHash.has(growingName));
+
+      expect(service.launcherHash.get(growingName)).not.toBe("partial-hash");
+    } finally {
+      rmSync(growingPath, { force: true });
+    }
+
+    triggerIndexRescan(service);
+    expect(service.launcherHash.has(growingName)).toBeFalse();
+  });
 });
 
 function triggerIndexRescan(service: FilesService): void {

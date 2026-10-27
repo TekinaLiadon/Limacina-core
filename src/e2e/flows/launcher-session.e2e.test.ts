@@ -50,7 +50,7 @@ describeFlow("Флоу B: сессия лаунчера", () => {
     });
     expect(login.status).toBe(401);
     expect(((await login.json()) as { message: string }).message).toBe(
-      "Неверное имя пользователя или пароль",
+      "Аккаунт ожидает одобрения администратором",
     );
 
     const again = await api(flow.baseUrl).post("/v1/common/auth/registration", {

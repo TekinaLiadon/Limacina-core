@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, type Stats } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   BadRequestException,
@@ -27,6 +27,10 @@ export interface FilesPage {
 
 const isExcludedFolder = (key: string): boolean =>
   FILES_LIST_EXCLUDED_FOLDERS.some((folder) => key.startsWith(`${folder}/`));
+
+function isFileStatsUnchanged(before: Stats, after: Stats): boolean {
+  return before.size === after.size && before.mtimeMs === after.mtimeMs;
+}
 
 function encodeAttachmentFilename(filename: string): string {
   return encodeURIComponent(filename)
@@ -120,11 +124,13 @@ export class FilesService implements OnModuleDestroy {
     if (namePath.endsWith(".filepart")) return;
 
     try {
-      if (!statSync(fullPath).isFile()) return;
+      const statsBeforeHash = statSync(fullPath);
+      if (!statsBeforeHash.isFile()) return;
 
       const hash = await this.getHash(fullPath);
       if (!hash) return;
       if (!existsSync(fullPath)) return;
+      if (!isFileStatsUnchanged(statsBeforeHash, statSync(fullPath))) return;
       map.set(namePath, hash);
     } catch (error) {
       this.logger.error({ err: error, file: namePath }, "Не удалось проиндексировать файл");

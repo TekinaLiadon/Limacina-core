@@ -51,7 +51,7 @@ import { MemoryDb } from "../../../memory/memory-db";
 import { UPLOAD_TMP_DIR } from "../../../launcher/launcher-files";
 import GlobalConfig from "../../../config/global-config";
 import { AppConfigToken } from "../../../config/app-config.provider";
-import { Jwt_authGuard } from "../../../common/jwt_auth.guard";
+import { JwtAuthGuard } from "../../../common/jwt-auth.guard";
 import { RolesGuard } from "../../../common/roles.guard";
 
 const CONFIG_FILE = "config.toml";
@@ -145,7 +145,7 @@ describe("V1 panel эндпоинты", (): void => {
     await app.getHttpAdapter().getInstance().register(fastifyMultipart);
     app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
     const reflector = app.get(Reflector);
-    app.useGlobalGuards(new Jwt_authGuard(reflector), new RolesGuard(reflector));
+    app.useGlobalGuards(new JwtAuthGuard(reflector), new RolesGuard(reflector));
     jwtService = moduleFixture.get(JwtService);
     applyV1ApiPrefix(app);
     await app.init();
@@ -533,6 +533,16 @@ describe("V1 panel эндпоинты", (): void => {
 
       expect(JSON.stringify(res.body)).toContain("username: максимум 64 символов");
     });
+
+    it("отклоняет ник с недопустимыми символами (400, не 404)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/approve")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "john/doe", approved: true })
+        .expect(400);
+
+      expect(JSON.stringify(res.body)).toContain("username: только латиница, цифры и _");
+    });
   });
 
   describe("PATCH /v1/panel/users/ban", () => {
@@ -556,6 +566,16 @@ describe("V1 panel эндпоинты", (): void => {
         .set("Authorization", `Bearer ${adminToken}`)
         .send({ username: "user", banned: false })
         .expect(200);
+    });
+
+    it("отклоняет ник с недопустимыми символами (400, не 404)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/ban")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ username: "john/doe", banned: true })
+        .expect(400);
+
+      expect(JSON.stringify(res.body)).toContain("username: только латиница, цифры и _");
     });
   });
 
@@ -582,6 +602,16 @@ describe("V1 panel эндпоинты", (): void => {
         .set("Authorization", `Bearer ${ownerToken}`)
         .send({ username: "roleuser", role: "superadmin" })
         .expect(400);
+    });
+
+    it("отклоняет ник с недопустимыми символами (400, не 404)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/role")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ username: "john/doe", role: "user" })
+        .expect(400);
+
+      expect(JSON.stringify(res.body)).toContain("username: только латиница, цифры и _");
     });
 
     it("возвращает 403 при попытке админа выдать роль admin", async () => {
@@ -704,6 +734,16 @@ describe("V1 panel эндпоинты", (): void => {
         .send({ username: "user", password: "123" })
         .expect(400);
     });
+
+    it("отклоняет ник с недопустимыми символами (400, не 404)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/password")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ username: "john/doe", password: "anypass123" })
+        .expect(400);
+
+      expect(JSON.stringify(res.body)).toContain("username: только латиница, цифры и _");
+    });
   });
 
   describe("PATCH /v1/panel/users/owner", () => {
@@ -752,6 +792,16 @@ describe("V1 panel эндпоинты", (): void => {
         .set("Authorization", `Bearer ${ownerToken}`)
         .send({ username: "nonexistent" })
         .expect(404);
+    });
+
+    it("отклоняет ник с недопустимыми символами (400, не 404)", async () => {
+      const res = await supertest(app.getHttpServer())
+        .patch("/v1/panel/users/owner")
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ username: "john/doe" })
+        .expect(400);
+
+      expect(JSON.stringify(res.body)).toContain("username: только латиница, цифры и _");
     });
   });
 

@@ -77,7 +77,7 @@ export class TechnicalBootstrapService {
     }
     this.bootstrapToken = token;
     process.stdout.write(
-      `Bootstrap-токен для создания владельца (${this.bootstrapTokenPath}):\n${token}\n`,
+      `Bootstrap-токен для создания владельца записан в ${this.bootstrapTokenPath}\nПолучите его командой: cat ${this.bootstrapTokenPath}\n`,
     );
     this.logger.log({ path: this.bootstrapTokenPath }, "Bootstrap-токен создан");
   }

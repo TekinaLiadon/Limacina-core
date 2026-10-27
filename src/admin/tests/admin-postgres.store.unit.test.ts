@@ -199,29 +199,52 @@ describe("AdminPostgresStore (мок SQL-клиента)", () => {
     expect(await store.setBanned("pgadm_user", true, "user")).toBe(false);
   });
 
-  it("deleteUser с expectedRole отказывает при разошедшейся роли", async () => {
-    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [userRow({ role: "admin" })] : []));
+  it("deleteUser с expectedRole включает роль в условие UPDATE без отдельного SELECT", async () => {
+    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [deletedRow()] : [{ id: 1 }]));
+
+    const deleted = await store.deleteUser("pgadm_user", "user");
+
+    expect(deleted).toEqual(adminUser());
+    const [update] = lastCalls(2);
+    expect(update?.sql).toContain("UPDATE users SET deleted = $1");
+    expect(update?.sql).toContain("deleted = false");
+    expect(update?.sql).toContain("username = $3 AND deleted = false AND role = $4");
+    expect(update?.values[0]).toBe(true);
+    expect(update?.values[1]).toBeInstanceOf(Date);
+    expect(update?.values[2]).toBe("pgadm_user");
+    expect(update?.values[3]).toBe("user");
+    expect(update?.sql).not.toContain("RETURNING");
+  });
+
+  it("deleteUser с expectedRole отказывает при разошедшейся роли одним UPDATE", async () => {
+    fake.onSql(() => []);
 
     expect(await store.deleteUser("pgadm_user", "user")).toBeUndefined();
-    expect(lastCalls(1)[0]?.sql).toContain("SELECT");
+
+    const [update] = lastCalls(1);
+    expect(update?.sql).toContain("UPDATE users SET deleted = $1");
+    expect(update?.sql).toContain("username = $3 AND deleted = false AND role = $4");
   });
 
   it("deleteUser возвращает пользователя при успешном удалении", async () => {
-    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [userRow()] : []));
+    fake.onSql(({ sql }) => (sql.includes("SELECT") ? [deletedRow()] : [{ id: 1 }]));
 
     const deleted = await store.deleteUser("pgadm_user");
 
     expect(deleted).toEqual(adminUser());
-    const [, update] = lastCalls(2);
+    const [update] = lastCalls(2);
     expect(update?.sql).toContain("UPDATE users SET deleted = $1");
+    expect(update?.sql).toContain("deleted = false");
     expect(update?.sql).not.toContain("RETURNING");
   });
 
-  it("deleteUser несуществующего не выполняет удаление", async () => {
+  it("deleteUser отсутствующего возвращает undefined без чтения", async () => {
     fake.onSql(() => []);
 
     expect(await store.deleteUser("unknown")).toBeUndefined();
-    expect(lastCalls(1)[0]?.sql).toContain("SELECT");
+
+    const [update] = lastCalls(1);
+    expect(update?.sql).toContain("UPDATE users SET deleted = $1");
   });
 
   it("findDeletedByUsername маппит удалённого", async () => {

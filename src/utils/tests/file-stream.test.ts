@@ -1,7 +1,19 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, readdirSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  appendFileSync,
+  closeSync,
+  mkdtempSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
+import { IncomingMessage, ServerResponse } from "node:http";
+import { Socket } from "node:net";
 import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import type { FastifyReply } from "fastify";
@@ -47,11 +59,10 @@ interface CapturedFileStream {
   raw: EventEmitter;
 }
 
-function captureFileStreamReply(): CapturedFileStream {
+function captureFileStreamReply(raw: EventEmitter = new EventEmitter()): CapturedFileStream {
   const headers: Record<string, string> = {};
   const statusCodes: number[] = [];
   const streams: Readable[] = [];
-  const raw = new EventEmitter();
   const reply = {
     header: (name: string, value: string) => {
       headers[name] = value;
@@ -69,6 +80,10 @@ function captureFileStreamReply(): CapturedFileStream {
   return { reply, headers, statusCodes, streams, raw };
 }
 
+function createBareServerResponse(): ServerResponse {
+  return new ServerResponse(new IncomingMessage(new Socket()));
+}
+
 describe("streamFileToReply", () => {
   const dir = mkdtempSync(join(tmpdir(), "file-stream-test-"));
   const filePath = join(dir, "file.bin");
@@ -80,8 +95,8 @@ describe("streamFileToReply", () => {
     fileLabel: "file.bin",
   };
 
-  const openFdTargets = (): string[] => {
-    const realPath = resolve(filePath);
+  const openFdTargetsFor = (path: string): string[] => {
+    const realPath = resolve(path);
     return readdirSync("/proc/self/fd")
       .map((fd) => {
         try {
@@ -91,6 +106,19 @@ describe("streamFileToReply", () => {
         }
       })
       .filter((target) => target === realPath);
+  };
+
+  const closeFdSyncFor = (path: string): void => {
+    const realPath = resolve(path);
+    for (const fd of readdirSync("/proc/self/fd")) {
+      try {
+        if (readlinkSync(join("/proc/self/fd", fd)) !== realPath) continue;
+      } catch {
+        continue;
+      }
+      closeSync(Number(fd));
+      return;
+    }
   };
 
   beforeAll(() => {
@@ -123,7 +151,7 @@ describe("streamFileToReply", () => {
     expect(statusCodes).toEqual([416]);
     expect(headers["Content-Range"]).toBe(`bytes */${fileContent.length}`);
     expect(streams).toHaveLength(0);
-    expect(openFdTargets()).toEqual([]);
+    expect(openFdTargetsFor(filePath)).toEqual([]);
   });
 
   it("close на raw закрывает fd файла", async () => {
@@ -135,7 +163,7 @@ describe("streamFileToReply", () => {
     await done;
     await Bun.sleep(50);
 
-    expect(openFdTargets()).toEqual([]);
+    expect(openFdTargetsFor(filePath)).toEqual([]);
   });
 
   it("повторный close на raw не падает (гард идемпотентности)", async () => {
@@ -148,6 +176,96 @@ describe("streamFileToReply", () => {
     await done;
     await Bun.sleep(50);
 
-    expect(openFdTargets()).toEqual([]);
+    expect(openFdTargetsFor(filePath)).toEqual([]);
+  });
+
+  it("закрывает fd и тихо завершается, если ответ уничтожен во время open (реальный ServerResponse)", async () => {
+    const fifoPath = join(dir, "aborted-open.fifo");
+    execFileSync("mkfifo", [fifoPath]);
+    const raw = createBareServerResponse();
+    const { reply, headers, streams } = captureFileStreamReply(raw);
+
+    try {
+      const done = streamFileToReply(reply, fifoPath, options);
+      await Bun.sleep(20);
+      raw.destroy();
+      const writer = await open(fifoPath, "w");
+      await writer.close();
+      await done;
+      await Bun.sleep(50);
+
+      expect(headers).toEqual({});
+      expect(streams).toEqual([]);
+      expect(openFdTargetsFor(fifoPath)).toEqual([]);
+    } finally {
+      rmSync(fifoPath, { force: true });
+    }
+  });
+
+  it("закрывает fd и тихо завершается, если ответ уже завершён (writableEnded, реальный ServerResponse)", async () => {
+    const endedPath = join(dir, "writable-ended.bin");
+    writeFileSync(endedPath, fileContent);
+    const raw = createBareServerResponse();
+    raw.end();
+    const { reply, headers, streams } = captureFileStreamReply(raw);
+
+    await streamFileToReply(reply, endedPath, options);
+    await Bun.sleep(50);
+
+    expect(headers).toEqual({});
+    expect(streams).toEqual([]);
+    expect(openFdTargetsFor(endedPath)).toEqual([]);
+  });
+
+  it("тихо завершается при аборте между подпиской на close и stat (EBADF вместо 500)", async () => {
+    const raw = {
+      destroyed: false,
+      once: (event: string): void => {
+        if (event !== "close") return;
+        closeFdSyncFor(filePath);
+        raw.destroyed = true;
+      },
+    };
+    const reply = {
+      header: (): void => {},
+      code: (): void => {},
+      send: (): void => {},
+      raw,
+    } as unknown as FastifyReply;
+
+    await expect(streamFileToReply(reply, filePath, options)).resolves.toBeUndefined();
+    await Bun.sleep(50);
+    expect(openFdTargetsFor(filePath)).toEqual([]);
+  });
+
+  it("полный путь отдаёт ровно Content-Length байт, даже если файл вырос после stat", async () => {
+    const growthPath = join(dir, "growth-after-stat.bin");
+    writeFileSync(growthPath, fileContent);
+    const { reply, headers, streams, raw } = captureFileStreamReply();
+
+    try {
+      const done = streamFileToReply(reply, growthPath, {
+        ...options,
+        fileLabel: "growth-after-stat.bin",
+      });
+      await done;
+      appendFileSync(growthPath, "grown-after-stat");
+
+      const [bodyStream] = streams;
+      if (bodyStream === undefined) throw new Error("поток не захвачен");
+      const chunkLengths: number[] = [];
+      for await (const chunk of bodyStream) {
+        chunkLengths.push((chunk as Uint8Array).length);
+      }
+      raw.emit("close");
+      await Bun.sleep(50);
+
+      const totalBytes = chunkLengths.reduce((sum, length) => sum + length, 0);
+      expect(headers["Content-Length"]).toBe(String(fileContent.length));
+      expect(totalBytes).toBe(fileContent.length);
+      expect(openFdTargetsFor(growthPath)).toEqual([]);
+    } finally {
+      rmSync(growthPath, { force: true });
+    }
   });
 });

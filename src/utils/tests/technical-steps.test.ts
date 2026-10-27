@@ -7,6 +7,7 @@ import {
   buildInstallCommand,
   buildStepEnv,
   currentRevision,
+  runCommand,
   runStep,
   terminateActiveSteps,
 } from "../technical-steps";
@@ -169,6 +170,40 @@ describe("technical-steps", (): void => {
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
+    });
+  });
+
+  describe("runCommand", () => {
+    it("убивает процесс при ошибке чтения стрима вывода, не оставляя сироту", async () => {
+      const killSignals: string[] = [];
+      const failingStream = (): ReadableStream<Uint8Array> =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(new Error("сбой стрима вывода"));
+          },
+        });
+      const fakeProc = {
+        pid: 987_654_322,
+        exited: new Promise<number>(() => {}),
+        stdout: failingStream(),
+        stderr: failingStream(),
+        kill: (signal: NodeJS.Signals): void => {
+          killSignals.push(signal);
+        },
+      } as unknown as Bun.Subprocess<Bun.SpawnOptions.Writable, "pipe", "pipe">;
+
+      const spawnSpy = spyOn(Bun, "spawn").mockImplementation(
+        (() => fakeProc) as unknown as typeof Bun.spawn,
+      );
+      try {
+        await expect(
+          runCommand(["git", "rev-parse", "HEAD"], process.cwd(), 30_000),
+        ).rejects.toThrow("сбой стрима вывода");
+      } finally {
+        spawnSpy.mockRestore();
+      }
+
+      expect(killSignals).toContain("SIGTERM");
     });
   });
 

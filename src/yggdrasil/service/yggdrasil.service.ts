@@ -43,11 +43,11 @@ import {
   releaseContentFile,
 } from "../../utils/content-files";
 import { buildDefaultSkinUrl, isSkinModel, textureFileIssue } from "../../utils/texture";
-import { sanitizePng } from "../../utils/png";
+import { PngStructureError, sanitizePng } from "../../utils/png";
 import { lastById } from "../../utils/collection";
 import { withPathLock } from "../../utils/path-lock";
 
-type TextureAccessPrincipal =
+export type TextureAccessPrincipal =
   | { kind: "token"; entry: TokenEntry }
   | { kind: "jwt"; payload: JwtAccessPayload };
 
@@ -293,23 +293,24 @@ export class YggdrasilService {
   }
 
   async join(dto: JoinDto): Promise<void> {
+    const selectedProfile = this.normalizeProfileUuid(dto.selectedProfile, HttpStatus.BAD_REQUEST);
     const entry = await this.tokenStore.findToken(dto.accessToken);
 
     if (!entry) {
       const jwtPayload = await this.verifyAccessJwt(dto.accessToken, HttpStatus.FORBIDDEN);
       await this.sessionStore.saveSession(dto.serverId, {
-        profileId: dto.selectedProfile,
+        profileId: selectedProfile,
         username: jwtPayload.username,
       });
       return;
     }
 
-    if (entry.profileId !== dto.selectedProfile)
+    if (entry.profileId !== selectedProfile)
       throw this.createError({ info: "***" }, "invalid token", "Invalid token.");
 
     await this.findActiveUserByUsername(entry.username);
     await this.sessionStore.saveSession(dto.serverId, {
-      profileId: dto.selectedProfile,
+      profileId: selectedProfile,
       username: entry.username,
     });
   }
@@ -368,7 +369,8 @@ export class YggdrasilService {
   }
 
   async getProfile(uuid: string, signed: boolean): Promise<GameProfileDto | null> {
-    const normalized = this.normalizeProfileUuid(uuid, HttpStatus.NOT_FOUND);
+    const normalized = this.normalizeProfileUuidOrNull(uuid);
+    if (!normalized) return null;
     const profile = await this.store.findProfileByUuid(normalized);
     if (!profile) return null;
 
@@ -393,14 +395,13 @@ export class YggdrasilService {
     uuid: string,
     textureType: "skin" | "cape",
     file: Buffer,
-    model?: string,
-    authorization?: string,
+    model: string | undefined,
+    principal: TextureAccessPrincipal,
   ): Promise<void> {
-    const principal = await this.authenticateTextureAccess(authorization);
     const normalizedUuid = this.normalizeProfileUuid(uuid, HttpStatus.BAD_REQUEST);
     this.validateTextureFile(file, textureType);
     const skinModel = this.normalizeSkinModel(model);
-    const stored = sanitizePng(file);
+    const stored = this.sanitizeTexturePng(file);
 
     await withPathLock(this.textureMutationLockKey(normalizedUuid, textureType), async () => {
       const profile = await this.store.findProfileByUuid(normalizedUuid);
@@ -422,6 +423,7 @@ export class YggdrasilService {
             "Не удалось записать файл текстуры — откат текстуры в сторе",
           );
           await this.rollbackProfileTexture(profile, textureType);
+          if (existsSync(target.path)) await this.releaseTextureFile(target.url, textureType);
           throw error;
         }
         await this.releaseTextureFile(previousUrl, textureType);
@@ -444,9 +446,15 @@ export class YggdrasilService {
     );
   }
 
-  private normalizeProfileUuid(uuid: string, status: HttpStatus): string {
+  private normalizeProfileUuidOrNull(uuid: string): string | null {
     const normalized = uuid.replace(/-/g, "").toLowerCase();
-    if (!PROFILE_UUID_PATTERN.test(normalized)) {
+    if (!PROFILE_UUID_PATTERN.test(normalized)) return null;
+    return normalized;
+  }
+
+  private normalizeProfileUuid(uuid: string, status: HttpStatus): string {
+    const normalized = this.normalizeProfileUuidOrNull(uuid);
+    if (!normalized) {
       throw this.createError(
         { info: uuid },
         "invalid uuid",
@@ -493,6 +501,19 @@ export class YggdrasilService {
       "texture upload",
       `Invalid texture file: ${issue.message}.`,
     );
+  }
+
+  private sanitizeTexturePng(file: Buffer): Buffer {
+    try {
+      return sanitizePng(file);
+    } catch (error) {
+      if (!(error instanceof PngStructureError)) throw error;
+      throw this.createError(
+        { info: error.message },
+        "texture upload",
+        `Invalid texture file: ${error.message}.`,
+      );
+    }
   }
 
   private computeTextureTarget(
@@ -561,7 +582,7 @@ export class YggdrasilService {
     });
   }
 
-  private async authenticateTextureAccess(authorization?: string): Promise<TextureAccessPrincipal> {
+  async authenticateTextureAccess(authorization?: string): Promise<TextureAccessPrincipal> {
     const accessToken = this.parseBearerToken(authorization);
     if (!accessToken)
       throw this.createError(

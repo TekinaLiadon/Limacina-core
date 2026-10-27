@@ -12,10 +12,10 @@ import {
   isUniqueViolation,
   sqlDialect,
   TABLES,
+  type BuiltQuery,
   type SqlValue,
 } from "../../utils/sql";
-import type { IAuthStore, InstallIdRecord, StoredUser, RefreshEntry } from "./auth_store";
-import { parseInstallIdHistory } from "../install-id";
+import type { IAuthStore, StoredUser, RefreshEntry } from "./auth_store";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../token.constants";
 
 interface UserRow extends Record<string, unknown> {
@@ -32,11 +32,6 @@ interface RefreshRow extends Record<string, unknown> {
   jti: string;
   user_id: string;
   username: string;
-}
-
-interface InstallIdRow extends Record<string, unknown> {
-  install_id: string;
-  install_id_history: string;
 }
 
 const buildInstallIdUpsert = (): string => {
@@ -157,21 +152,45 @@ export class AuthPostgresStore implements IAuthStore {
     passwordHash: string,
     changedAt: Date,
     keepRefreshJti?: string,
-  ): Promise<void> {
-    await executeInTransaction([
+    expectedRole?: string,
+  ): Promise<boolean> {
+    const guardValues: SqlValue[] = expectedRole !== undefined ? [uuid, expectedRole] : [uuid];
+    const [update] = await executeInTransactionReturning([
       updateQuery()
         .from(TABLES.users)
         .set("password_hash", passwordHash)
         .set("password_changed_at", changedAt)
-        .where("uuid = $1", uuid)
+        .where(
+          expectedRole !== undefined
+            ? "uuid = $1 AND deleted = false AND role = $2"
+            : "uuid = $1 AND deleted = false",
+          ...guardValues,
+        )
         .build(),
-      keepRefreshJti
-        ? deleteQuery()
-            .from(TABLES.refresh_tokens)
-            .where("user_id = $1 AND jti <> $2", uuid, keepRefreshJti)
-            .build()
-        : deleteQuery().from(TABLES.refresh_tokens).where("user_id = $1", uuid).build(),
+      this.buildRefreshRevocationQuery(uuid, keepRefreshJti, expectedRole),
     ]);
+    return (update?.count ?? 0) > 0;
+  }
+
+  private buildRefreshRevocationQuery(
+    uuid: string,
+    keepRefreshJti: string | undefined,
+    expectedRole: string | undefined,
+  ): BuiltQuery {
+    const values: SqlValue[] = [uuid];
+    let condition = "user_id = $1";
+    if (keepRefreshJti !== undefined) {
+      values.push(keepRefreshJti);
+      condition += ` AND jti <> $${values.length}`;
+    }
+    if (expectedRole !== undefined) {
+      values.push(expectedRole);
+      condition += ` AND EXISTS (SELECT 1 FROM ${TABLES.users} WHERE uuid = $1 AND deleted = false AND role = $${values.length})`;
+    }
+    return deleteQuery()
+      .from(TABLES.refresh_tokens)
+      .where(condition, ...values)
+      .build();
   }
 
   async updateRole(uuid: string, role: string, expectedRole?: string): Promise<boolean> {
@@ -288,19 +307,5 @@ export class AuthPostgresStore implements IAuthStore {
 
   async recordInstallId(uuid: string, installId: string): Promise<void> {
     await execute(buildInstallIdUpsert(), [uuid, installId]);
-  }
-
-  async findInstallId(uuid: string): Promise<InstallIdRecord | undefined> {
-    const query = selectQuery("install_id", "install_id_history")
-      .from(TABLES.user_install_ids)
-      .where("user_uuid = $1", uuid)
-      .limit(1)
-      .build();
-
-    const { rows } = await execute<InstallIdRow>(query.sql, query.values);
-    const [row] = rows;
-    if (!row) return undefined;
-
-    return { current: row.install_id, history: parseInstallIdHistory(row.install_id_history) };
   }
 }

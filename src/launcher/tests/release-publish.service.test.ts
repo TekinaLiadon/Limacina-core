@@ -81,6 +81,10 @@ function ageDirectory(dir: string): void {
   utimesSync(dir, past, past);
 }
 
+function canTestPermissions(): boolean {
+  return process.platform !== "win32" && process.getuid !== undefined && process.getuid() !== 0;
+}
+
 describe("ReleasePublishService — публикация релиза", (): void => {
   let service: ReleasePublishService;
   let releasesRootExisted = false;
@@ -431,6 +435,25 @@ describe("ReleasePublishService — публикация релиза", (): void
       expect(existsSync(tomb)).toBe(true);
       cleanupReleaseServiceDirs(RELEASES_ROOT, lockLogger);
       expect(existsSync(tomb)).toBe(false);
+    });
+
+    it("сбой записи токена подчищает каталог лока и пробрасывает ошибку", async () => {
+      if (!canTestPermissions()) return;
+      mkdirSync(RELEASES_ROOT, { recursive: true });
+      const lockPath = lockPathOf("4.5.7");
+      const previousUmask = process.umask(0o222);
+      try {
+        await expect(acquirePublishLock(RELEASES_ROOT, "4.5.7", 150, lockLogger)).rejects.toThrow();
+      } finally {
+        process.umask(previousUmask);
+      }
+
+      expect(existsSync(lockPath)).toBe(false);
+
+      const token = await acquirePublishLock(RELEASES_ROOT, "4.5.7", 150, lockLogger);
+      expect(readFileSync(tokenPathOf("4.5.7"), "utf-8")).toBe(token);
+      releasePublishLock(RELEASES_ROOT, "4.5.7", token, lockLogger);
+      expect(existsSync(lockPath)).toBe(false);
     });
 
     it("публикация живёт в собственном локе и снимает его по токену (сквозной прогон)", async () => {

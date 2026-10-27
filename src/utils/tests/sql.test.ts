@@ -126,6 +126,30 @@ describe("гарды пустых стейтментов и защита фра�
         .join("LEFT JOIN; DROP TABLE users", TABLES.user_textures, "t", "t.uuid = u.uuid"),
     ).toThrow("запрещённую последовательность");
   });
+
+  it("alias таблицы проходит защиту статических фрагментов", () => {
+    expect(() => selectQuery("uuid").from(TABLES.users, "u; DROP TABLE users")).toThrow(
+      "запрещённую последовательность",
+    );
+  });
+
+  it("alias join проходит защиту статических фрагментов", () => {
+    expect(() =>
+      selectQuery("uuid")
+        .from(TABLES.users)
+        .join("LEFT JOIN", TABLES.user_textures, "t/*x*/", "t.uuid = u.uuid"),
+    ).toThrow("запрещённую последовательность");
+  });
+
+  it("направление orderBy ограничено asc и desc", () => {
+    const looseOrderBy = selectQuery("uuid").from(TABLES.users).orderBy as unknown as (
+      column: string,
+      direction: string,
+    ) => unknown;
+
+    expect(() => looseOrderBy("username", "sideways")).toThrow("направление");
+    expect(() => looseOrderBy("username", "DESC; DROP TABLE users")).toThrow("направление");
+  });
 });
 
 describe("updateColumnQuery", () => {

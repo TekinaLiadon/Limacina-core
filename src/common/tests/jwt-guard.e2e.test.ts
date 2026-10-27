@@ -11,7 +11,7 @@ import { JwtModule, JwtService } from "@nestjs/jwt";
 import { PassportModule } from "@nestjs/passport";
 import supertest from "supertest";
 import { JwtStrategy } from "../jwt.strategy";
-import { Jwt_authGuard } from "../jwt_auth.guard";
+import { JwtAuthGuard } from "../jwt-auth.guard";
 import { RolesGuard } from "../roles.guard";
 import { Roles } from "../roles.decorator";
 import { CurrentUser, type RequestUser } from "../current-user.decorator";
@@ -43,7 +43,7 @@ const buildUser = (uuid: string, username: string, overrides: Partial<StoredUser
   ...overrides,
 });
 
-describe("Jwt_authGuard — проверки статуса пользователя на HTTP-уровне", (): void => {
+describe("JwtAuthGuard — проверки статуса пользователя на HTTP-уровне", (): void => {
   let app: INestApplication;
   let jwtService: JwtService;
   let authStore: AuthMapStore;
@@ -83,7 +83,7 @@ describe("Jwt_authGuard — проверки статуса пользовате
 
     app = moduleFixture.createNestApplication(new FastifyAdapter());
     const reflector = app.get(Reflector);
-    app.useGlobalGuards(new Jwt_authGuard(reflector), new RolesGuard(reflector));
+    app.useGlobalGuards(new JwtAuthGuard(reflector), new RolesGuard(reflector));
     jwtService = moduleFixture.get(JwtService);
     authStore = moduleFixture.get(AuthStoreToken);
     await app.init();

@@ -16,10 +16,11 @@ import supertest from "supertest";
 import { V1AuthController } from "../auth.controller";
 import { AuthService } from "../../../../auth/service/auth.service";
 import { AuthMapStore, AuthStoreToken, type StoredUser } from "../../../../auth/service/auth_store";
+import { MemoryDb } from "../../../../memory/memory-db";
 import GlobalConfig from "../../../../config/global-config";
 import { AppConfigToken } from "../../../../config/app-config.provider";
 import { registerAuthRateLimit } from "../../../../common/auth-rate-limit";
-import { Jwt_authGuard } from "../../../../common/jwt_auth.guard";
+import { JwtAuthGuard } from "../../../../common/jwt-auth.guard";
 import { RolesGuard } from "../../../../common/roles.guard";
 
 const seedUser = async (
@@ -61,9 +62,11 @@ describe("V1 common/auth эндпоинты", (): void => {
   let app: INestApplication;
   let registeredUuid: string;
   let authStore: AuthMapStore;
+  let installDb: MemoryDb;
   let jwtService: JwtService;
 
   beforeAll(async () => {
+    installDb = new MemoryDb();
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [
         PassportModule,
@@ -76,6 +79,7 @@ describe("V1 common/auth эндпоинты", (): void => {
       providers: [
         AuthService,
         { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
+        { provide: MemoryDb, useValue: installDb },
         {
           provide: AuthStoreToken,
           useClass: AuthMapStore,
@@ -87,7 +91,7 @@ describe("V1 common/auth эндпоинты", (): void => {
     app = moduleFixture.createNestApplication(new FastifyAdapter());
     app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
     const reflector = app.get(Reflector);
-    app.useGlobalGuards(new Jwt_authGuard(reflector), new RolesGuard(reflector));
+    app.useGlobalGuards(new JwtAuthGuard(reflector), new RolesGuard(reflector));
     const fastifyInstance = app.getHttpAdapter().getInstance() as FastifyInstance;
     await registerAuthRateLimit(fastifyInstance, {
       max: 10,
@@ -286,7 +290,7 @@ describe("V1 common/auth эндпоинты", (): void => {
       }
     });
 
-    it("не раскрывает неодобрение: сообщение как при неверном пароле", async () => {
+    it("логин неодобренного аккаунта с верным паролем объясняет ожидание одобрения", async () => {
       const user = await seedUser(authStore, "unapprovedlogin", "unapproved-login-uuid", "pass123");
       try {
         await authStore.saveUser({ ...user, approved: false });
@@ -294,6 +298,22 @@ describe("V1 common/auth эндпоинты", (): void => {
         const res = await supertest(app.getHttpServer())
           .post("/v1/common/auth/login")
           .send({ username: "unapprovedlogin", password: "pass123" })
+          .expect(401);
+
+        expect(res.body.message).toBe("Аккаунт ожидает одобрения администратором");
+      } finally {
+        await authStore.saveUser({ ...user, approved: true });
+      }
+    });
+
+    it("неодобрение не раскрывается при неверном пароле: сообщение как при неверном пароле", async () => {
+      const user = await seedUser(authStore, "unapprovedlogin", "unapproved-login-uuid", "pass123");
+      try {
+        await authStore.saveUser({ ...user, approved: false });
+
+        const res = await supertest(app.getHttpServer())
+          .post("/v1/common/auth/login")
+          .send({ username: "unapprovedlogin", password: "wrongpass" })
           .expect(401);
 
         expect(res.body.message).toBe("Неверное имя пользователя или пароль");
@@ -717,7 +737,7 @@ describe("V1 common/auth эндпоинты", (): void => {
         .send({ username: headerUsername, password: "pass123" })
         .expect(201);
 
-      expect(await authStore.findInstallId(headerUserUuid)).toEqual({
+      expect(installDb.installIds.get(headerUserUuid)).toEqual({
         current: "v1-0123456789abcdef0123456789abcdef",
         history: [],
       });
@@ -730,7 +750,7 @@ describe("V1 common/auth эндпоинты", (): void => {
         .send({ username: headerUsername, password: "pass123" })
         .expect(201);
 
-      expect(await authStore.findInstallId(headerUserUuid)).toEqual({
+      expect(installDb.installIds.get(headerUserUuid)).toEqual({
         current: "v1-fedcba0987654321fedcba0987654321",
         history: ["v1-0123456789abcdef0123456789abcdef"],
       });
@@ -748,7 +768,7 @@ describe("V1 common/auth эндпоинты", (): void => {
         .send({ username: headerUsername, password: "pass123" })
         .expect(201);
 
-      expect(await authStore.findInstallId(headerUserUuid)).toEqual({
+      expect(installDb.installIds.get(headerUserUuid)).toEqual({
         current: "v1-fedcba0987654321fedcba0987654321",
         history: ["v1-0123456789abcdef0123456789abcdef"],
       });

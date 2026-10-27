@@ -1,4 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
+import { applyDecorators } from "@nestjs/common";
 import {
   IsBoolean,
   IsIn,
@@ -18,9 +19,21 @@ import { LimitQuery, OffsetQuery } from "../../common/dto/dto";
 import { MIN_PASSWORD_LENGTH } from "../../auth/password-policy";
 import { INSTALL_ID_SEARCH_PATTERN } from "../../auth/install-id-policy";
 import { ASSIGNABLE_ROLES, type AssignableRole } from "../../common/roles";
-import { MAX_USERNAME_LENGTH } from "../../common/username-policy";
+import { MAX_USERNAME_LENGTH, USERNAME_PATTERN } from "../../common/username-policy";
 
 export const LOG_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function TargetUsername(): PropertyDecorator {
+  return applyDecorators(
+    ApiProperty({ example: "john" }),
+    IsString({ message: validationMessages.string("username") }),
+    IsNotEmpty({ message: validationMessages.notEmpty("username") }),
+    MaxLength(MAX_USERNAME_LENGTH, {
+      message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
+    }),
+    Matches(USERNAME_PATTERN, { message: validationMessages.usernamePattern }),
+  );
+}
 
 export class UsersSearchQueryDto {
   @ApiProperty({
@@ -51,7 +64,34 @@ export class UsersSearchQueryDto {
   username?: string;
 }
 
-export class UsersQueryDto extends UsersSearchQueryDto {
+export class UsersQueryDto {
+  @ApiProperty({
+    default: 10,
+    minimum: 1,
+    maximum: 100,
+    description: "Пользователей на страницу",
+  })
+  @LimitQuery(100)
+  limit?: number;
+
+  @ApiProperty({ default: 0, minimum: 0, description: "Смещение от начала списка" })
+  @OffsetQuery()
+  offset?: number;
+
+  @ApiProperty({
+    example: "john",
+    required: false,
+    maxLength: MAX_USERNAME_LENGTH,
+    description: "Поиск по началу юзернейма (без учёта регистра)",
+  })
+  @IsOptional()
+  @IsString({ message: validationMessages.string("username") })
+  @IsNotEmpty({ message: validationMessages.notEmpty("username") })
+  @MaxLength(MAX_USERNAME_LENGTH, {
+    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
+  })
+  username?: string;
+
   @ApiProperty({
     example: false,
     required: false,
@@ -82,12 +122,7 @@ export class UsersQueryDto extends UsersSearchQueryDto {
 }
 
 export class ApproveUserDto {
-  @ApiProperty({ example: "john" })
-  @IsString({ message: validationMessages.string("username") })
-  @IsNotEmpty({ message: validationMessages.notEmpty("username") })
-  @MaxLength(MAX_USERNAME_LENGTH, {
-    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
-  })
+  @TargetUsername()
   username!: string;
 
   @ApiProperty({ example: true })
@@ -96,12 +131,7 @@ export class ApproveUserDto {
 }
 
 export class BanUserDto {
-  @ApiProperty({ example: "john" })
-  @IsString({ message: validationMessages.string("username") })
-  @IsNotEmpty({ message: validationMessages.notEmpty("username") })
-  @MaxLength(MAX_USERNAME_LENGTH, {
-    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
-  })
+  @TargetUsername()
   username!: string;
 
   @ApiProperty({ example: true })
@@ -110,12 +140,7 @@ export class BanUserDto {
 }
 
 export class SetRoleDto {
-  @ApiProperty({ example: "john" })
-  @IsString({ message: validationMessages.string("username") })
-  @IsNotEmpty({ message: validationMessages.notEmpty("username") })
-  @MaxLength(MAX_USERNAME_LENGTH, {
-    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
-  })
+  @TargetUsername()
   username!: string;
 
   @ApiProperty({ example: "user", enum: ASSIGNABLE_ROLES })
@@ -127,12 +152,7 @@ export class SetRoleDto {
 }
 
 export class SetUserPasswordDto {
-  @ApiProperty({ example: "john" })
-  @IsString({ message: validationMessages.string("username") })
-  @IsNotEmpty({ message: validationMessages.notEmpty("username") })
-  @MaxLength(MAX_USERNAME_LENGTH, {
-    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
-  })
+  @TargetUsername()
   username!: string;
 
   @ApiProperty({ example: "newsecret123", minLength: MIN_PASSWORD_LENGTH, maxLength: 128 })
@@ -146,12 +166,7 @@ export class SetUserPasswordDto {
 }
 
 export class SetOwnerDto {
-  @ApiProperty({ example: "john" })
-  @IsString({ message: validationMessages.string("username") })
-  @IsNotEmpty({ message: validationMessages.notEmpty("username") })
-  @MaxLength(MAX_USERNAME_LENGTH, {
-    message: validationMessages.maxLength("username", MAX_USERNAME_LENGTH),
-  })
+  @TargetUsername()
   username!: string;
 }
 
@@ -227,8 +242,6 @@ export class DeletedUsersListResponseDto {
   @ApiProperty({ type: [DeletedUserListItemDto] })
   items!: DeletedUserListItemDto[];
 }
-
-export class V1DeletedUsersQueryDto extends UsersSearchQueryDto {}
 
 export class V1LogsQueryDto {
   @ApiProperty({

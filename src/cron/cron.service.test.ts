@@ -3,8 +3,20 @@ import { CronService, nextDailyFireAt } from "./cron.service";
 
 const localDate = (iso: string): number => new Date(iso).getTime();
 
-function serviceLogger(service: CronService): { log: (...args: unknown[]) => void } {
-  return (service as unknown as { logger: { log: (...args: unknown[]) => void } }).logger;
+function serviceLogger(service: CronService): {
+  log: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+} {
+  return (
+    service as unknown as {
+      logger: {
+        log: (...args: unknown[]) => void;
+        warn: (...args: unknown[]) => void;
+        error: (...args: unknown[]) => void;
+      };
+    }
+  ).logger;
 }
 
 describe("CronService", () => {
@@ -152,6 +164,73 @@ describe("CronService", () => {
     await service.runAll();
 
     expect(runs).toEqual(["run", "run"]);
+  });
+
+  it("зомби старше TTL игнорируется с error-логом, прогоны возобновляются", async () => {
+    const service = new CronService(50, 100);
+    let releaseZombie!: () => void;
+    const zombieGate = new Promise<void>((resolve) => {
+      releaseZombie = resolve;
+    });
+    const runs: string[] = [];
+    service.registerTasks(
+      { name: "hang", run: () => zombieGate },
+      { name: "counter", run: () => void runs.push("run") },
+    );
+    const warnSpy = spyOn(serviceLogger(service), "warn");
+    const errorSpy = spyOn(serviceLogger(service), "error");
+
+    try {
+      await service.runAll();
+      await service.runAll();
+
+      expect(runs).toEqual(["run"]);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      await Bun.sleep(150);
+      await service.runAll();
+
+      expect(runs).toEqual(["run", "run"]);
+      const ignoredLogs = errorSpy.mock.calls.filter((call) =>
+        String(call[1]).includes("игнорируется"),
+      );
+      expect(ignoredLogs.length).toBe(1);
+      expect(String(ignoredLogs[0]?.[1])).toContain("hang");
+    } finally {
+      warnSpy.mockRestore();
+      errorSpy.mockRestore();
+      releaseZombie();
+      await Bun.sleep(10);
+    }
+  });
+
+  it("зомби в пределах TTL продолжает блокировать прогоны без error-лога", async () => {
+    const service = new CronService(50, 60_000);
+    let releaseZombie!: () => void;
+    const zombieGate = new Promise<void>((resolve) => {
+      releaseZombie = resolve;
+    });
+    const runs: string[] = [];
+    service.registerTasks(
+      { name: "hang", run: () => zombieGate },
+      { name: "counter", run: () => void runs.push("run") },
+    );
+    const errorSpy = spyOn(serviceLogger(service), "error");
+
+    try {
+      await service.runAll();
+      await service.runAll();
+
+      expect(runs).toEqual(["run"]);
+      const ignoredLogs = errorSpy.mock.calls.filter((call) =>
+        String(call[1]).includes("игнорируется"),
+      );
+      expect(ignoredLogs.length).toBe(0);
+    } finally {
+      errorSpy.mockRestore();
+      releaseZombie();
+      await Bun.sleep(10);
+    }
   });
 
   it("задачи, зарегистрированные после старта, выполняются", async () => {

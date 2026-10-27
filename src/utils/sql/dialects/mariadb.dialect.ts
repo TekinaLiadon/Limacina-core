@@ -12,22 +12,29 @@ interface MariaResult {
   affectedRows?: number;
 }
 
+const STRING_LITERAL_PATTERN = String.raw`'(?:[^'\\]|''|\\[\s\S])*'`;
+
 export const mariadbDialect: SqlDialect = {
   name: "mariadb",
+  stringLiteralPattern: STRING_LITERAL_PATTERN,
   toClientQuery(sql: string, values: SqlValue[]): { sql: string; values: unknown[] } {
     const adaptedValues: unknown[] = [];
     let maxPlaceholderIndex = 0;
-    const adaptedSql = replaceSqlPlaceholders(sql, (index) => {
-      const value = values[index - 1];
-      if (value === undefined) {
-        throw new Error(
-          `Плейсхолдеру $${index} не соответствует значение (передано значений: ${values.length})`,
-        );
-      }
-      maxPlaceholderIndex = Math.max(maxPlaceholderIndex, index);
-      adaptedValues.push(value);
-      return "?";
-    });
+    const adaptedSql = replaceSqlPlaceholders(
+      sql,
+      (index) => {
+        const value = values[index - 1];
+        if (value === undefined) {
+          throw new Error(
+            `Плейсхолдеру $${index} не соответствует значение (передано значений: ${values.length})`,
+          );
+        }
+        maxPlaceholderIndex = Math.max(maxPlaceholderIndex, index);
+        adaptedValues.push(value);
+        return "?";
+      },
+      STRING_LITERAL_PATTERN,
+    );
     if (maxPlaceholderIndex !== values.length) {
       throw new Error(
         `Число значений (${values.length}) не совпадает с плейсхолдерами SQL (максимальный $${maxPlaceholderIndex})`,

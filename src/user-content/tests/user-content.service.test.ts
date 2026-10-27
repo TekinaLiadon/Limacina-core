@@ -3,14 +3,17 @@ import { setupTestEnv } from "../../utils/tests/test-env";
 setupTestEnv();
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { buildTestPng } from "../../utils/tests/test-png";
-import { chmodSync, existsSync, statSync, unlinkSync } from "node:fs";
+import { deflateSync } from "node:zlib";
+import { buildTestPng, pngChunk, TEST_PNG_SIGNATURE } from "../../utils/tests/test-png";
+import { chmodSync, existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { BadRequestException } from "@nestjs/common";
 import { UserContentService } from "../user-content.service";
 import {
   UserContentMapStore,
   type ContentDeletionResult,
   type ContentType,
+  type UserContentItem,
 } from "../user_content_store";
 import { YggdrasilMapStore } from "../../yggdrasil/service/yggdrasil_store";
 import { MemoryDb } from "../../memory/memory-db";
@@ -526,6 +529,118 @@ describe("UserContentService — удаление скинов и активно
   });
 });
 
+describe("UserContentService — гонка удаления и активного скина", (): void => {
+  let config: AppConfigType;
+  let profileStore: YggdrasilMapStore;
+  let staleSnapshotStore: StaleSnapshotStore;
+  let gatedStore: GatedDeleteStore;
+  let staleSnapshotService: UserContentService;
+  let gatedService: UserContentService;
+  const writtenFiles: string[] = [];
+
+  beforeAll(() => {
+    config = GlobalConfig.parseEnvOrExit({
+      ...process.env,
+      MAX_SKINS_PER_USER: "2",
+    });
+    profileStore = new YggdrasilMapStore();
+    staleSnapshotStore = new StaleSnapshotStore();
+    gatedStore = new GatedDeleteStore();
+    staleSnapshotService = new UserContentService(staleSnapshotStore, config, profileStore);
+    gatedService = new UserContentService(gatedStore, config, profileStore);
+  });
+
+  afterAll(() => {
+    for (const filePath of writtenFiles) {
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+
+  const trackFile = (filePath: string): void => {
+    if (!writtenFiles.includes(filePath)) writtenFiles.push(filePath);
+  };
+
+  const localPathOf = (url: string): string => `public/${url.replace(`${config.BASE_URL}/`, "")}`;
+
+  const flush = async (): Promise<void> => {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
+  };
+
+  it("активация удаляемого скина во время паузы удаления не оставляет skinUrl на удалённом скине", async () => {
+    const userUuid = "race-del-0001";
+    const username = "racedel";
+    const first = await staleSnapshotService.uploadSkin(userUuid, username, pngBytes(111));
+    const second = await staleSnapshotService.uploadSkin(userUuid, username, pngBytes(112));
+    for (const upload of [first, second]) trackFile(localPathOf(upload.url));
+    await profileStore.saveProfile({ uuid: userUuid, userId: userUuid, username });
+    await staleSnapshotService.setActiveSkin(userUuid, first.id);
+
+    const started = deferred();
+    const gate = deferred();
+    staleSnapshotStore.onAfterFindById = async () => {
+      started.resolve();
+      await gate.promise;
+    };
+
+    const pendingDelete = staleSnapshotService.delete(userUuid, second.id, "skin");
+    await started.promise;
+    staleSnapshotStore.onAfterFindById = undefined;
+
+    try {
+      await staleSnapshotService.setActiveSkin(userUuid, second.id);
+    } finally {
+      gate.resolve();
+      await pendingDelete;
+    }
+
+    const skins = await staleSnapshotStore.findByUserUuid(userUuid, "skin");
+    expect(skins.map((item) => item.id)).toEqual([first.id]);
+    expect(skins.filter((item) => item.active).map((item) => item.id)).toEqual([first.id]);
+    expect((await profileStore.findProfileByUuid(userUuid))?.skinUrl).toBe(first.url);
+    expect(existsSync(localPathOf(second.url))).toBe(false);
+
+    await staleSnapshotService.delete(userUuid, first.id, "skin");
+  });
+
+  it("смена активного скина ждёт завершения начавшейся мутации удаления", async () => {
+    const userUuid = "race-del-0002";
+    const username = "racedel2";
+    const first = await gatedService.uploadSkin(userUuid, username, pngBytes(113));
+    const second = await gatedService.uploadSkin(userUuid, username, pngBytes(114));
+    for (const upload of [first, second]) trackFile(localPathOf(upload.url));
+    await profileStore.saveProfile({ uuid: userUuid, userId: userUuid, username });
+    await gatedService.setActiveSkin(userUuid, second.id);
+
+    const started = deferred();
+    const gate = deferred();
+    gatedStore.onDelete = async () => {
+      started.resolve();
+      await gate.promise;
+    };
+
+    const pendingDelete = gatedService.delete(userUuid, second.id, "skin");
+    await started.promise;
+
+    const pendingActivation = gatedService.setActiveSkin(userUuid, first.id);
+    await flush();
+
+    try {
+      expect((await gatedStore.findById(first.id, "skin"))?.active).toBe(false);
+    } finally {
+      gate.resolve();
+      await pendingDelete;
+      await pendingActivation;
+    }
+
+    const skins = await gatedStore.findByUserUuid(userUuid, "skin");
+    expect(skins.map((item) => item.id)).toEqual([first.id]);
+    expect(skins.filter((item) => item.active).map((item) => item.id)).toEqual([first.id]);
+    expect((await profileStore.findProfileByUuid(userUuid))?.skinUrl).toBe(first.url);
+  });
+});
+
 describe("UserContentService — откат загрузки плаща при сбое синка профиля", (): void => {
   let store: UserContentMapStore;
   let config: AppConfigType;
@@ -670,6 +785,72 @@ describe("UserContentService — тексты ошибок удаления", ()
   });
 });
 
+describe("UserContentService — отклонение PNG, битого при пересохранении", (): void => {
+  let service: UserContentService;
+  let store: UserContentMapStore;
+
+  beforeAll(() => {
+    const config = GlobalConfig.parseEnvOrExit({
+      ...process.env,
+      MAX_SKINS_PER_USER: "2",
+    });
+    store = new UserContentMapStore();
+    service = new UserContentService(store, config);
+  });
+
+  afterAll(() => {
+    if (!existsSync("public/textures")) return;
+    for (const entry of readdirSync("public/textures")) {
+      if (entry.startsWith("bombuser-")) unlinkSync(join("public/textures", entry));
+    }
+  });
+
+  const brokenZlibPng = (): Buffer => {
+    const source = buildTestPng();
+    return Buffer.concat([
+      TEST_PNG_SIGNATURE,
+      pngChunk("IHDR", source.subarray(16, 29)),
+      pngChunk("tEXt", Buffer.from("Comment\x00junk")),
+      pngChunk("IDAT", Buffer.from([1, 2, 3, 4, 5, 6, 7, 8])),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+  };
+
+  const bombPng = (): Buffer => {
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(64, 0);
+    ihdr.writeUInt32BE(64, 4);
+    ihdr[8] = 8;
+    ihdr[9] = 6;
+    return Buffer.concat([
+      TEST_PNG_SIGNATURE,
+      pngChunk("IHDR", ihdr),
+      pngChunk("IDAT", deflateSync(Buffer.alloc(32 * 1024 * 1024, 0))),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+  };
+
+  it("битый zlib-поток при валидных CRC отдаёт 400, а не 500", async () => {
+    const userUuid = "zlib-user-0001";
+
+    await expect(
+      service.uploadSkin(userUuid, "zlibuser", new Uint8Array(brokenZlibPng())),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect((await store.findByUserUuid(userUuid, "skin")).length).toBe(0);
+  });
+
+  it("чистый IDAT-бомбовый файл отклоняется 400 и не сохраняется", async () => {
+    const userUuid = "bomb-user-0001";
+
+    await expect(
+      service.uploadSkin(userUuid, "bombuser", new Uint8Array(bombPng())),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect((await store.findByUserUuid(userUuid, "skin")).length).toBe(0);
+  });
+});
+
 class GatedTextureSyncStore extends YggdrasilMapStore {
   onSync: (() => Promise<void>) | undefined;
 
@@ -745,5 +926,15 @@ class GatedDeleteStore extends UserContentMapStore {
     const result = await super.deleteByIdAndCountRemaining(id, type);
     if (this.onDelete) await this.onDelete();
     return result;
+  }
+}
+
+class StaleSnapshotStore extends UserContentMapStore {
+  onAfterFindById: (() => Promise<void>) | undefined;
+
+  override async findById(id: number, type: ContentType): Promise<UserContentItem | undefined> {
+    const item = await super.findById(id, type);
+    if (this.onAfterFindById) await this.onAfterFindById();
+    return item;
   }
 }

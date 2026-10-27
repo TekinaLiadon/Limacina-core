@@ -75,6 +75,11 @@ export async function streamFileToReply(
       );
   };
 
+  if (reply.raw.destroyed || reply.raw.writableEnded) {
+    closeHandle();
+    return;
+  }
+
   reply.raw.once("close", closeHandle);
 
   try {
@@ -108,9 +113,12 @@ export async function streamFileToReply(
     }
 
     reply.header("Content-Length", String(size));
-    reply.send(toNodeStream(Bun.file(handle.fd).stream(), options.fileLabel));
+    reply.send(toNodeStream(Bun.file(handle.fd).slice(0, size).stream(), options.fileLabel));
   } catch (error) {
     closeHandle();
+    if (reply.raw.destroyed) {
+      return;
+    }
     throw error;
   }
 }

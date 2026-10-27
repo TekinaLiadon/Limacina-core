@@ -280,6 +280,84 @@ describe("validatePngStructure — поля IHDR и порядок чанков"
     expectRejects(grayscale, "PLTE not allowed for color type 0");
   });
 
+  it("отклоняет повторный tRNS", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ colorType: 0 })),
+      pngChunk("tRNS", Buffer.alloc(2)),
+      pngChunk("tRNS", Buffer.alloc(2)),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, "duplicate tRNS");
+  });
+
+  it("отклоняет tRNS неверной длины для colorType 0 и 2", (): void => {
+    const grayscale = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ colorType: 0 })),
+      pngChunk("tRNS", Buffer.alloc(3)),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(grayscale, "invalid tRNS length 3 for color type 0");
+
+    const truecolor = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ colorType: 2 })),
+      pngChunk("tRNS", Buffer.alloc(2)),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(truecolor, "invalid tRNS length 2 for color type 2");
+  });
+
+  it("отклоняет tRNS длиннее палитры для colorType 3", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ colorType: 3 })),
+      pngChunk("PLTE", Buffer.alloc(3)),
+      pngChunk("tRNS", Buffer.alloc(2)),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, "tRNS length 2 exceeds palette size 1");
+  });
+
+  it("отклоняет tRNS до PLTE для colorType 3", (): void => {
+    const file = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ colorType: 3 })),
+      pngChunk("tRNS", Buffer.alloc(1)),
+      pngChunk("PLTE", Buffer.alloc(3)),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expectRejects(file, "tRNS before PLTE");
+  });
+
+  it("пропускает tRNS допустимой длины для colorType", (): void => {
+    const grayscale = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ colorType: 0 })),
+      pngChunk("tRNS", Buffer.alloc(2)),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expect(() => validatePngStructure(grayscale)).not.toThrow();
+
+    const truecolor = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ colorType: 2 })),
+      pngChunk("tRNS", Buffer.alloc(6)),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expect(() => validatePngStructure(truecolor)).not.toThrow();
+
+    const indexed = buildFromChunks([
+      pngChunk("IHDR", ihdrData({ colorType: 3 })),
+      pngChunk("PLTE", Buffer.alloc(6)),
+      pngChunk("tRNS", Buffer.alloc(2)),
+      pngChunk("IDAT", Buffer.alloc(4)),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+    expect(() => validatePngStructure(indexed)).not.toThrow();
+  });
+
   it("readPngDimensions читает размеры валидного PNG", (): void => {
     const file = buildTestPng({ width: 64, height: 32 });
     expect(readPngDimensions(file)).toEqual({ width: 64, height: 32 });
@@ -326,6 +404,59 @@ describe("sanitizePng", (): void => {
       pngChunk("IEND", Buffer.alloc(0)),
     ]);
     expect(() => sanitizePng(file)).toThrow(PngStructureError);
+  });
+
+  const rgba64Ihdr = (): Buffer => {
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(64, 0);
+    ihdr.writeUInt32BE(64, 4);
+    ihdr[8] = 8;
+    ihdr[9] = 6;
+    return ihdr;
+  };
+
+  const withForeignChunk = (ihdr: Buffer, idat: Buffer): Buffer =>
+    Buffer.concat([
+      TEST_PNG_SIGNATURE,
+      pngChunk("IHDR", ihdr),
+      pngChunk("tEXt", Buffer.from("Comment\x00junk")),
+      pngChunk("IDAT", idat),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+
+  it("отклоняет IDAT, распаковывающийся больше заявленных размеров IHDR", (): void => {
+    const bomb = withForeignChunk(rgba64Ihdr(), deflateSync(Buffer.alloc(32 * 1024 * 1024, 0)));
+
+    expect(() => sanitizePng(bomb)).toThrow(PngStructureError);
+    expect(() => sanitizePng(bomb)).toThrow(/IDAT decompressed size exceeds image bounds/);
+  });
+
+  it("отклоняет чистый IDAT-бомбовый файл без посторонних чанков", (): void => {
+    const bomb = Buffer.concat([
+      TEST_PNG_SIGNATURE,
+      pngChunk("IHDR", rgba64Ihdr()),
+      pngChunk("IDAT", deflateSync(Buffer.alloc(32 * 1024 * 1024, 0))),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+
+    expect(() => sanitizePng(bomb)).toThrow(PngStructureError);
+    expect(() => sanitizePng(bomb)).toThrow(/IDAT decompressed size exceeds image bounds/);
+  });
+
+  it("пропускает IDAT, распаковывающийся ровно в заявленный размер", (): void => {
+    const rawImageData = Buffer.alloc(64 * (1 + 64 * 4));
+    const file = withForeignChunk(rgba64Ihdr(), deflateSync(rawImageData));
+
+    expect(() => sanitizePng(file)).not.toThrow();
+  });
+
+  it("пересохраняет interlaced PNG в пределах лимита IHDR", (): void => {
+    const ihdr = rgba64Ihdr();
+    ihdr[12] = 1;
+    const file = withForeignChunk(ihdr, deflateSync(Buffer.alloc(1 + 4)));
+
+    const sanitized = sanitizePng(file);
+    expect(() => validatePngStructure(sanitized)).not.toThrow();
   });
 
   it("уже чистый файл с одним IDAT сохраняется байт-в-байт", (): void => {

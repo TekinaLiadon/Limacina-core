@@ -5,6 +5,9 @@ setupTestEnv();
 import { afterAll, beforeAll, beforeEach, expect, it } from "bun:test";
 import { AuthMapStore, type IAuthStore, type StoredUser } from "../auth_store";
 import { AuthPostgresStore } from "../auth_postgres_store";
+import { parseInstallIdHistory, type InstallIdRecord } from "../../install-id";
+import { MemoryDb } from "../../../memory/memory-db";
+import { execute, selectQuery, TABLES } from "../../../utils/sql";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../../token.constants";
 import { generateUuid } from "../../../utils/uuid";
 import {
@@ -18,13 +21,20 @@ const HOUR_MS = 60 * 60 * 1000;
 const futureExpiry = (): Date => new Date(Date.now() + HOUR_MS);
 const pastExpiry = (): Date => new Date(Date.now() - HOUR_MS);
 
+interface InstallIdRow extends Record<string, unknown> {
+  install_id: string;
+  install_id_history: string;
+}
+
 interface AuthDriverContext {
   store: IAuthStore;
   makeUser: (overrides?: Partial<StoredUser>) => Promise<StoredUser>;
+  readInstallId: (uuid: string) => Promise<InstallIdRecord | undefined>;
 }
 
 const mapContext = (): AuthDriverContext => {
-  const store = new AuthMapStore();
+  const db = new MemoryDb();
+  const store = new AuthMapStore(db);
   const makeUser = async (overrides: Partial<StoredUser> = {}): Promise<StoredUser> => {
     const user: StoredUser = {
       uuid: generateUuid(),
@@ -38,11 +48,22 @@ const mapContext = (): AuthDriverContext => {
     expect(await store.saveUser(user)).toBe(true);
     return user;
   };
-  return { store, makeUser };
+  return { store, makeUser, readInstallId: (uuid) => Promise.resolve(db.installIds.get(uuid)) };
 };
 
 const postgresContext = (): AuthDriverContext => {
   const store = new AuthPostgresStore();
+  const readInstallId = async (uuid: string): Promise<InstallIdRecord | undefined> => {
+    const query = selectQuery("install_id", "install_id_history")
+      .from(TABLES.user_install_ids)
+      .where("user_uuid = $1", uuid)
+      .limit(1)
+      .build();
+    const { rows } = await execute<InstallIdRow>(query.sql, query.values);
+    const [row] = rows;
+    if (!row) return undefined;
+    return { current: row.install_id, history: parseInstallIdHistory(row.install_id_history) };
+  };
   const makeUser = async (overrides: Partial<StoredUser> = {}): Promise<StoredUser> => {
     const user: StoredUser = {
       uuid: generateUuid(),
@@ -57,7 +78,7 @@ const postgresContext = (): AuthDriverContext => {
     trackPostgresUser(user);
     return user;
   };
-  return { store, makeUser };
+  return { store, makeUser, readInstallId };
 };
 
 afterAll(cleanupTrackedUsers);
@@ -124,23 +145,23 @@ contractDescribeEach("контракт IAuthStore", (driver) => {
     const second = "v1-fedcba0987654321fedcba0987654321";
     const third = "v1-aaaa0000bbbb1111cccc2222dddd3333";
 
-    expect(await ctx.store.findInstallId(user.uuid)).toBeUndefined();
+    expect(await ctx.readInstallId(user.uuid)).toBeUndefined();
 
     await ctx.store.recordInstallId(user.uuid, first);
-    expect(await ctx.store.findInstallId(user.uuid)).toEqual({ current: first, history: [] });
+    expect(await ctx.readInstallId(user.uuid)).toEqual({ current: first, history: [] });
 
     await ctx.store.recordInstallId(user.uuid, first);
-    expect(await ctx.store.findInstallId(user.uuid)).toEqual({ current: first, history: [] });
+    expect(await ctx.readInstallId(user.uuid)).toEqual({ current: first, history: [] });
 
     await ctx.store.recordInstallId(user.uuid, second);
-    expect(await ctx.store.findInstallId(user.uuid)).toEqual({
+    expect(await ctx.readInstallId(user.uuid)).toEqual({
       current: second,
       history: [first],
     });
 
     await ctx.store.recordInstallId(user.uuid, third);
     await ctx.store.recordInstallId(user.uuid, first);
-    expect(await ctx.store.findInstallId(user.uuid)).toEqual({
+    expect(await ctx.readInstallId(user.uuid)).toEqual({
       current: first,
       history: [first, second, third],
     });
@@ -245,6 +266,50 @@ contractDescribeEach("контракт IAuthStore", (driver) => {
     expect(await ctx.store.findRefresh(keptJti)).toBeDefined();
     expect(await ctx.store.findRefresh(revokedJti)).toBeUndefined();
     expect((await ctx.store.findByUsername(user.username))?.passwordHash).toBe("kept-hash");
+  });
+
+  it("replacePassword с expectedRole отменяет смену при разошедшейся роли", async () => {
+    const user = await ctx.makeUser();
+    const jti = generateUuid();
+    await ctx.store.saveRefresh(
+      jti,
+      { userId: user.uuid, username: user.username },
+      futureExpiry(),
+    );
+
+    await ctx.store.updateRole(user.uuid, "admin");
+
+    expect(
+      await ctx.store.replacePassword(user.uuid, "raced-hash", new Date(), undefined, "user"),
+    ).toBe(false);
+    expect((await ctx.store.findByUsername(user.username))?.passwordHash).toBe("hash");
+    expect(await ctx.store.findRefresh(jti)).toBeDefined();
+
+    expect(
+      await ctx.store.replacePassword(user.uuid, "changed-hash", new Date(), undefined, "admin"),
+    ).toBe(true);
+    expect((await ctx.store.findByUsername(user.username))?.passwordHash).toBe("changed-hash");
+    expect(await ctx.store.findRefresh(jti)).toBeUndefined();
+  });
+
+  it("replacePassword с expectedRole и keepRefreshJti отзывает все токены кроме указанного", async () => {
+    const user = await ctx.makeUser();
+    const keptJti = generateUuid();
+    const revokedJti = generateUuid();
+    for (const jti of [keptJti, revokedJti]) {
+      await ctx.store.saveRefresh(
+        jti,
+        { userId: user.uuid, username: user.username },
+        futureExpiry(),
+      );
+    }
+
+    expect(
+      await ctx.store.replacePassword(user.uuid, "guarded-hash", new Date(), keptJti, "user"),
+    ).toBe(true);
+
+    expect(await ctx.store.findRefresh(keptJti)).toBeDefined();
+    expect(await ctx.store.findRefresh(revokedJti)).toBeUndefined();
   });
 
   it("claimRefresh атомарно забирает запись: повторный вызов пуст", async () => {

@@ -12,6 +12,8 @@ const PNG_COLOR_TYPE_BIT_DEPTHS: Record<number, number[]> = {
 };
 const PLTE_FORBIDDEN_COLOR_TYPES = [0, 4];
 const TRNS_ALLOWED_COLOR_TYPES = [0, 2, 3];
+const PNG_COLOR_TYPE_CHANNELS: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
+const TRNS_LENGTH_BY_COLOR_TYPE: Record<number, number> = { 0: 2, 2: 6 };
 
 export const MAX_PNG_DIMENSION = 1024;
 
@@ -101,6 +103,8 @@ export function validatePngStructure(
   let ihdrChecked = false;
   let idatFound = false;
   let plteSeen = false;
+  let plteLength = 0;
+  let trnsSeen = false;
 
   while (offset < file.length) {
     if (file.length - offset < PNG_CHUNK_HEADER_BYTES) {
@@ -144,6 +148,30 @@ export function validatePngStructure(
         throw new PngStructureError(`PLTE not allowed for color type ${colorType}`);
       }
       plteSeen = true;
+      plteLength = length;
+    }
+    if (type === "tRNS") {
+      if (trnsSeen) {
+        throw new PngStructureError("duplicate tRNS");
+      }
+      trnsSeen = true;
+      const trnsColorType = colorType!;
+      const requiredLength = TRNS_LENGTH_BY_COLOR_TYPE[trnsColorType];
+      if (requiredLength !== undefined && length !== requiredLength) {
+        throw new PngStructureError(
+          `invalid tRNS length ${length} for color type ${trnsColorType}`,
+        );
+      }
+      if (trnsColorType === 3) {
+        if (!plteSeen) {
+          throw new PngStructureError("tRNS before PLTE");
+        }
+        if (length > plteLength / 3) {
+          throw new PngStructureError(
+            `tRNS length ${length} exceeds palette size ${plteLength / 3}`,
+          );
+        }
+      }
     }
     if (type === "IDAT") {
       if (length === 0) {
@@ -204,6 +232,30 @@ function buildChunk(type: string, data: Uint8Array): Buffer {
   return chunk;
 }
 
+function pngImageDataLimit(ihdr: Uint8Array): number {
+  const width = readUint32(ihdr, 0);
+  const height = readUint32(ihdr, 4);
+  const channels = PNG_COLOR_TYPE_CHANNELS[ihdr[9]!] ?? 1;
+  const rowBytes = 1 + Math.ceil((width * channels * ihdr[8]!) / 8);
+  const rows = ihdr[12]! === 1 ? 2 * height + 7 : height;
+  return rows * rowBytes;
+}
+
+function isBufferTooLargeError(error: unknown): boolean {
+  return error instanceof RangeError && "code" in error && error.code === "ERR_BUFFER_TOO_LARGE";
+}
+
+function inflateIdat(idat: Uint8Array, ihdr: Uint8Array): Buffer {
+  try {
+    return inflateSync(idat, { maxOutputLength: pngImageDataLimit(ihdr) });
+  } catch (error) {
+    if (isBufferTooLargeError(error)) {
+      throw new PngStructureError("IDAT decompressed size exceeds image bounds");
+    }
+    throw new PngStructureError("corrupt IDAT stream");
+  }
+}
+
 export function sanitizePng(file: Uint8Array): Buffer {
   validatePngStructure(file);
 
@@ -211,6 +263,7 @@ export function sanitizePng(file: Uint8Array): Buffer {
   const ihdr = chunks.find((chunk) => chunk.type === "IHDR")!.data;
   const colorType = ihdr[9]!;
   const idatChunks = chunks.filter((chunk) => chunk.type === "IDAT");
+  const idat = Buffer.concat(idatChunks.map((chunk) => Buffer.from(chunk.data)));
   const trnsAllowed = TRNS_ALLOWED_COLOR_TYPES.includes(colorType);
   const hasForeignChunks = chunks.some(
     (chunk) =>
@@ -221,19 +274,13 @@ export function sanitizePng(file: Uint8Array): Buffer {
       !(chunk.type === "tRNS" && trnsAllowed),
   );
   if (!hasForeignChunks && idatChunks.length === 1) {
+    inflateIdat(idat, ihdr);
     return Buffer.from(file);
   }
 
   const plte = colorType === 3 ? chunks.find((chunk) => chunk.type === "PLTE")?.data : undefined;
   const trns = trnsAllowed ? chunks.find((chunk) => chunk.type === "tRNS")?.data : undefined;
-  const idat = Buffer.concat(idatChunks.map((chunk) => Buffer.from(chunk.data)));
-
-  let rawImageData: Buffer;
-  try {
-    rawImageData = inflateSync(idat);
-  } catch {
-    throw new PngStructureError("corrupt IDAT stream");
-  }
+  const rawImageData = inflateIdat(idat, ihdr);
 
   const parts = [
     Buffer.from(PNG_SIGNATURE),

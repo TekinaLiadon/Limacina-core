@@ -21,25 +21,31 @@ export interface AuthRateLimitOptions {
   store?: SlidingWindowStore;
 }
 
+function routePath(url: string): string {
+  return url.split("?")[0] ?? url;
+}
+
 export function isAuthLoginRoute(url: string): boolean {
-  const path = url.split("?")[0] ?? url;
-  return AUTH_LOGIN_ROUTES.has(path);
+  return AUTH_LOGIN_ROUTES.has(routePath(url));
+}
+
+export function isRegistrationRoute(url: string): boolean {
+  return routePath(url) === AUTH_REGISTRATION_ROUTE;
 }
 
 export function isSignoutRoute(url: string): boolean {
-  const path = url.split("?")[0] ?? url;
-  return path === SIGNOUT_ENDPOINT;
+  return routePath(url) === SIGNOUT_ENDPOINT;
 }
 
 export function isPasswordChangeRoute(url: string): boolean {
-  const path = url.split("?")[0] ?? url;
-  return path === PASSWORD_CHANGE_ROUTE;
+  return routePath(url) === PASSWORD_CHANGE_ROUTE;
 }
 
-function buildUsernameKey(request: FastifyRequest): string {
+function buildUsernameKey(request: FastifyRequest, isRegistration: boolean): string {
   const body = request.body as { username?: string } | undefined;
   const username = typeof body?.username === "string" ? body.username.toLowerCase() : "";
-  return `username:${username || "unknown"}`;
+  const scope = isRegistration ? "registration" : "login";
+  return `${scope}:username:${username || "unknown"}`;
 }
 
 function buildIpKey(request: FastifyRequest): string {
@@ -74,7 +80,8 @@ export async function registerAuthRateLimit(
     const url = request.raw.url ?? "";
 
     if (isAuthLoginRoute(url) || isSignoutRoute(url)) {
-      const usernameHit = await usernameLimiter.hit(buildUsernameKey(request));
+      const usernameKey = buildUsernameKey(request, isRegistrationRoute(url));
+      const usernameHit = await usernameLimiter.hit(usernameKey);
       const ipHit = await ipLimiter.hit(buildIpKey(request));
       const denied = usernameHit.allowed ? ipHit : usernameHit;
       if (!denied.allowed) {

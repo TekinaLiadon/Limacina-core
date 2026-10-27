@@ -49,12 +49,13 @@ class FlakyAuthStore extends AuthMapStore {
     passwordHash: string,
     changedAt: Date,
     keepRefreshJti?: string,
-  ): Promise<void> {
+    expectedRole?: string,
+  ): Promise<boolean> {
     if (this.failReplacePassword) {
       this.failReplacePassword = false;
       throw new Error("replacePassword недоступен");
     }
-    await super.replacePassword(uuid, passwordHash, changedAt, keepRefreshJti);
+    return super.replacePassword(uuid, passwordHash, changedAt, keepRefreshJti, expectedRole);
   }
 }
 
@@ -307,9 +308,11 @@ describe("AuthService — заголовок X-Launcher-Id при логине",
   const OTHER_INSTALL_ID = "v1-fedcba0987654321fedcba0987654321";
   let service: AuthService;
   let store: IAuthStore;
+  let installDb: MemoryDb;
   let userUuid: string;
 
   beforeAll(async () => {
+    installDb = new MemoryDb();
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [
         JwtModule.register({
@@ -320,6 +323,7 @@ describe("AuthService — заголовок X-Launcher-Id при логине",
       providers: [
         AuthService,
         { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
+        { provide: MemoryDb, useValue: installDb },
         { provide: AuthStoreToken, useClass: AuthMapStore },
       ],
     }).compile();
@@ -335,26 +339,26 @@ describe("AuthService — заголовок X-Launcher-Id при логине",
     const res = await service.login("headeruser", "user-pass-123", INSTALL_ID);
 
     expect(res.uuid).toBe(userUuid);
-    expect(await store.findInstallId(userUuid)).toEqual({ current: INSTALL_ID, history: [] });
+    expect(installDb.installIds.get(userUuid)).toEqual({ current: INSTALL_ID, history: [] });
   });
 
   it("логин без заголовка не меняет сохранённый ID", async () => {
     await service.login("headeruser", "user-pass-123");
 
-    expect(await store.findInstallId(userUuid)).toEqual({ current: INSTALL_ID, history: [] });
+    expect(installDb.installIds.get(userUuid)).toEqual({ current: INSTALL_ID, history: [] });
   });
 
   it("невалидный заголовок игнорируется, логин проходит", async () => {
     const res = await service.login("headeruser", "user-pass-123", "spoofed-value");
 
     expect(res.uuid).toBe(userUuid);
-    expect(await store.findInstallId(userUuid)).toEqual({ current: INSTALL_ID, history: [] });
+    expect(installDb.installIds.get(userUuid)).toEqual({ current: INSTALL_ID, history: [] });
   });
 
   it("смена ID сдвигает предыдущий в историю", async () => {
     await service.login("headeruser", "user-pass-123", OTHER_INSTALL_ID);
 
-    expect(await store.findInstallId(userUuid)).toEqual({
+    expect(installDb.installIds.get(userUuid)).toEqual({
       current: OTHER_INSTALL_ID,
       history: [INSTALL_ID],
     });
@@ -401,5 +405,50 @@ describe("AuthService — сбой записи X-Launcher-Id не ломает 
 
     expect(res.tokens.access_token).toBeDefined();
     expect(res.tokens.refresh_token).toBeDefined();
+  });
+});
+
+describe("AuthService — статусы аккаунта при логине", () => {
+  let service: AuthService;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [
+        JwtModule.register({
+          secret: "test-access-secret-0123456789abcdef0123",
+          signOptions: { expiresIn: 3600 },
+        }),
+      ],
+      providers: [
+        AuthService,
+        { provide: AppConfigToken, useFactory: () => GlobalConfig.parseEnvOrExit() },
+        { provide: AuthStoreToken, useClass: AuthMapStore },
+      ],
+    }).compile();
+
+    service = moduleFixture.get(AuthService);
+    const store = moduleFixture.get<IAuthStore>(AuthStoreToken);
+    await service.register("pendinglogin", "pass123");
+    const banned = await service.register("bannedlogin", "pass123");
+    await store.setApproved(banned.uuid, true);
+    await store.setBanned(banned.uuid, true);
+  });
+
+  it("логин неодобренного аккаунта с верным паролем объясняет ожидание одобрения", async () => {
+    await expect(service.login("pendinglogin", "pass123")).rejects.toThrow(
+      "Аккаунт ожидает одобрения администратором",
+    );
+  });
+
+  it("неверный пароль неодобренного аккаунта отвечает общим сообщением", async () => {
+    await expect(service.login("pendinglogin", "wrongpass")).rejects.toThrow(
+      "Неверное имя пользователя или пароль",
+    );
+  });
+
+  it("логин забаненного аккаунта с верным паролем отвечает общим сообщением", async () => {
+    await expect(service.login("bannedlogin", "pass123")).rejects.toThrow(
+      "Неверное имя пользователя или пароль",
+    );
   });
 });

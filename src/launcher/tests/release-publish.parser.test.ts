@@ -146,6 +146,26 @@ describe("parseLauncherReleaseRequest (стриминг артефактов и 
     await expect(parseLauncherReleaseRequest(request)).rejects.toThrow("Повторное поле подписи");
   });
 
+  it("отклоняет повторное поле version", async () => {
+    const request = buildFakeRequest([
+      { type: "field", fieldname: "version", value: "1.2.3" },
+      { type: "field", fieldname: "version", value: "9.9.9" },
+      filePart("windows-x86_64", "setup.exe", "bytes"),
+      filePart("windows-x86_64_sig", "setup.exe.sig", "sig"),
+    ]);
+
+    await expect(parseLauncherReleaseRequest(request)).rejects.toThrow("Повторное поле version");
+  });
+
+  it("отклоняет повторное поле version после пустого значения", async () => {
+    const request = buildFakeRequest([
+      { type: "field", fieldname: "version", value: "" },
+      { type: "field", fieldname: "version", value: "9.9.9" },
+    ]);
+
+    await expect(parseLauncherReleaseRequest(request)).rejects.toThrow("Повторное поле version");
+  });
+
   it("отклоняет подпись больше лимита", async () => {
     const oversized = "x".repeat(64 * 1024 + 1);
     const request = buildFakeRequest([

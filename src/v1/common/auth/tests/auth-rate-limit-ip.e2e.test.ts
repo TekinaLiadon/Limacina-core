@@ -19,7 +19,7 @@ import { AuthMapStore, AuthStoreToken, type StoredUser } from "../../../../auth/
 import GlobalConfig from "../../../../config/global-config";
 import { AppConfigToken } from "../../../../config/app-config.provider";
 import { registerAuthRateLimit } from "../../../../common/auth-rate-limit";
-import { Jwt_authGuard } from "../../../../common/jwt_auth.guard";
+import { JwtAuthGuard } from "../../../../common/jwt-auth.guard";
 import { RolesGuard } from "../../../../common/roles.guard";
 
 const BUCKET_MAX = 3;
@@ -82,7 +82,7 @@ describe("Auth rate limit: AND семантика username/token и IP-баке�
     app = moduleFixture.createNestApplication(new FastifyAdapter({ trustProxy: true }));
     app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
     const reflector = app.get(Reflector);
-    app.useGlobalGuards(new Jwt_authGuard(reflector), new RolesGuard(reflector));
+    app.useGlobalGuards(new JwtAuthGuard(reflector), new RolesGuard(reflector));
     const fastifyInstance = app.getHttpAdapter().getInstance() as FastifyInstance;
     await registerAuthRateLimit(fastifyInstance, {
       max: BUCKET_MAX,
@@ -128,6 +128,37 @@ describe("Auth rate limit: AND семантика username/token и IP-баке�
     it("другой IP не затронут чужим IP-бакетом", async (): Promise<void> => {
       const res = await loginAs("rluserc", "10.1.2.3", "userpass1").expect(201);
       expect(res.body.username).toBe("rluserc");
+    });
+  });
+
+  describe("Pre-auth DoS username-бакета: разделение login/signout и registration", (): void => {
+    const registerAs = (username: string, ip: string): supertest.Test =>
+      supertest(app.getHttpServer())
+        .post("/v1/common/auth/registration")
+        .set("X-Forwarded-For", ip)
+        .send({ username, password: "noisepass1" });
+
+    beforeAll(async (): Promise<void> => {
+      await seedUser(authStore, "rlvictim1", "rlvictim1-uuid", "victimpass1");
+      await seedUser(authStore, "rlvictim2", "rlvictim2-uuid", "victimpass2");
+    });
+
+    it("анонимный флуд регистрации с чужим username не закрывает логин жертве", async (): Promise<void> => {
+      for (let attempt = 0; attempt < BUCKET_MAX; attempt++) {
+        await registerAs("rlvictim1", `10.3.1.${attempt + 1}`).expect(409);
+      }
+      await registerAs("rlvictim1", "10.3.1.210").expect(429);
+
+      const res = await loginAs("rlvictim1", "10.3.1.220", "victimpass1").expect(201);
+      expect(res.body.username).toBe("rlvictim1");
+    });
+
+    it("анонимный флуд логина с чужим username не закрывает регистрацию ника", async (): Promise<void> => {
+      for (let attempt = 0; attempt < BUCKET_MAX; attempt++) {
+        await loginAs("rlvictim2", `10.3.2.${attempt + 1}`).expect(401);
+      }
+
+      await registerAs("rlvictim2", "10.3.2.220").expect(409);
     });
   });
 

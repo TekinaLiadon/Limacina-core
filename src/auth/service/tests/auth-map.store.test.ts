@@ -4,6 +4,7 @@ setupTestEnv();
 
 import { describe, expect, it } from "bun:test";
 import { AuthMapStore } from "../auth_store";
+import { MemoryDb } from "../../../memory/memory-db";
 import { MAX_REFRESH_TOKENS_PER_USER } from "../../token.constants";
 import { generateUuid } from "../../../utils/uuid";
 
@@ -133,39 +134,43 @@ describe("AuthMapStore — setApproved/setBanned", (): void => {
 
 describe("AuthMapStore — идентификаторы установки", (): void => {
   it("первая запись создаёт current с пустой историей", async (): Promise<void> => {
-    const store = new AuthMapStore();
+    const db = new MemoryDb();
+    const store = new AuthMapStore(db);
     const uuid = await seedUser(store, "installfirst");
 
     await store.recordInstallId(uuid, "v1-aaaa");
 
-    expect(await store.findInstallId(uuid)).toEqual({ current: "v1-aaaa", history: [] });
+    expect(db.installIds.get(uuid)).toEqual({ current: "v1-aaaa", history: [] });
   });
 
   it("повтор того же ID не меняет запись", async (): Promise<void> => {
-    const store = new AuthMapStore();
+    const db = new MemoryDb();
+    const store = new AuthMapStore(db);
     const uuid = await seedUser(store, "installsame");
 
     await store.recordInstallId(uuid, "v1-aaaa");
     await store.recordInstallId(uuid, "v1-aaaa");
 
-    expect(await store.findInstallId(uuid)).toEqual({ current: "v1-aaaa", history: [] });
+    expect(db.installIds.get(uuid)).toEqual({ current: "v1-aaaa", history: [] });
   });
 
   it("новый ID сдвигает предыдущий в историю", async (): Promise<void> => {
-    const store = new AuthMapStore();
+    const db = new MemoryDb();
+    const store = new AuthMapStore(db);
     const uuid = await seedUser(store, "installshift");
 
     await store.recordInstallId(uuid, "v1-aaaa");
     await store.recordInstallId(uuid, "v1-bbbb");
 
-    expect(await store.findInstallId(uuid)).toEqual({
+    expect(db.installIds.get(uuid)).toEqual({
       current: "v1-bbbb",
       history: ["v1-aaaa"],
     });
   });
 
   it("ротация и возврат к историческому ID не создают дублей в истории", async (): Promise<void> => {
-    const store = new AuthMapStore();
+    const db = new MemoryDb();
+    const store = new AuthMapStore(db);
     const uuid = await seedUser(store, "installrotate");
 
     await store.recordInstallId(uuid, "v1-aaaa");
@@ -173,27 +178,22 @@ describe("AuthMapStore — идентификаторы установки", ():
     await store.recordInstallId(uuid, "v1-cccc");
     await store.recordInstallId(uuid, "v1-aaaa");
 
-    expect(await store.findInstallId(uuid)).toEqual({
+    expect(db.installIds.get(uuid)).toEqual({
       current: "v1-aaaa",
       history: ["v1-aaaa", "v1-bbbb", "v1-cccc"],
     });
   });
 
   it("записи разных пользователей не смешиваются", async (): Promise<void> => {
-    const store = new AuthMapStore();
+    const db = new MemoryDb();
+    const store = new AuthMapStore(db);
     const first = await seedUser(store, "installmulti1");
     const second = await seedUser(store, "installmulti2");
 
     await store.recordInstallId(first, "v1-aaaa");
     await store.recordInstallId(second, "v1-bbbb");
 
-    expect(await store.findInstallId(first)).toEqual({ current: "v1-aaaa", history: [] });
-    expect(await store.findInstallId(second)).toEqual({ current: "v1-bbbb", history: [] });
-  });
-
-  it("неизвестный пользователь отвечает undefined", async (): Promise<void> => {
-    const store = new AuthMapStore();
-
-    expect(await store.findInstallId("missing-uuid")).toBeUndefined();
+    expect(db.installIds.get(first)).toEqual({ current: "v1-aaaa", history: [] });
+    expect(db.installIds.get(second)).toEqual({ current: "v1-bbbb", history: [] });
   });
 });

@@ -29,7 +29,7 @@ function captureStdout(): { lines: () => string; restore: () => void } {
 
 describe("TechnicalBootstrapService", (): void => {
   describe("initOwner", () => {
-    it("первый старт без владельца создаёт токен-файл и выводит токен в stdout", async () => {
+    it("первый старт без владельца создаёт токен-файл и выводит подсказку с путём, не печатая сам токен", async () => {
       const dir = mkdtempSync(join(tmpdir(), "limacina-bootstrap-"));
       const adminStore = new AdminMapStore();
       const authStore = new AuthMapStore();
@@ -41,7 +41,9 @@ describe("TechnicalBootstrapService", (): void => {
 
         const token = (await Bun.file(tokenPath).text()).trim();
         expect(token).toMatch(/^[0-9a-f]{64}$/);
-        expect(stdout.lines()).toContain(token);
+        expect(stdout.lines()).toContain(tokenPath);
+        expect(stdout.lines()).toContain(`cat ${tokenPath}`);
+        expect(stdout.lines()).not.toContain(token);
       } finally {
         stdout.restore();
         rmSync(dir, { recursive: true, force: true });

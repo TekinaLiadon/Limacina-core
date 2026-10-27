@@ -7,6 +7,26 @@ import {
 } from "../utils/redis-lifecycle";
 import type { SlidingWindowResult, SlidingWindowStore } from "./sliding-window-rate-limiter";
 
+const SLIDING_WINDOW_SCRIPT = `
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local windowMs = tonumber(ARGV[2])
+local max = tonumber(ARGV[3])
+local member = ARGV[4]
+redis.call('ZADD', key, now, member)
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - windowMs)
+local count = redis.call('ZCARD', key)
+redis.call('PEXPIRE', key, windowMs)
+local oldestAt = -1
+if count > max then
+  local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+  if oldest[2] then
+    oldestAt = tonumber(oldest[2])
+  end
+end
+return {count, oldestAt}
+`;
+
 export interface RateLimitRedisClientLike extends RedisLifecycleClient {
   send(command: string, args: string[]): Promise<unknown>;
 }
@@ -45,38 +65,33 @@ export class RedisRateLimitStore implements SlidingWindowStore {
   ): Promise<SlidingWindowResult> {
     const zsetKey = `${this.keyPrefix}${key}`;
     try {
-      await this.lifecycle.withTimeout(
-        this.client.send("ZADD", [zsetKey, String(nowMs), `${nowMs}:${randomUUID()}`]),
-        "ZADD",
-      );
-      await this.lifecycle.withTimeout(
-        this.client.send("ZREMRANGEBYSCORE", [zsetKey, "-inf", String(nowMs - windowMs)]),
-        "ZREMRANGEBYSCORE",
-      );
-      const count = Number(
-        await this.lifecycle.withTimeout(this.client.send("ZCARD", [zsetKey]), "ZCARD"),
-      );
-      await this.lifecycle.withTimeout(
-        this.client.send("PEXPIRE", [zsetKey, String(windowMs)]),
-        "PEXPIRE",
+      const reply = await this.lifecycle.withTimeout(
+        this.client.send("EVAL", [
+          SLIDING_WINDOW_SCRIPT,
+          "1",
+          zsetKey,
+          String(nowMs),
+          String(windowMs),
+          String(max),
+          `${nowMs}:${randomUUID()}`,
+        ]),
+        "EVAL",
       );
       this.lifecycle.reportSuccess();
-
-      const oldestAt = count > max ? await this.oldestAt(zsetKey) : null;
-      return { count, oldestAt };
+      return parseSlidingWindowReply(reply);
     } catch (error) {
       this.lifecycle.reportFailure(error, { key: zsetKey });
       return { count: 0, oldestAt: null };
     }
   }
+}
 
-  private async oldestAt(zsetKey: string): Promise<number | null> {
-    const range = (await this.lifecycle.withTimeout(
-      this.client.send("ZRANGE", [zsetKey, "0", "0", "WITHSCORES"]),
-      "ZRANGE",
-    )) as unknown;
-    if (!Array.isArray(range) || range.length < 2) return null;
-    const score = Number(range[1]);
-    return Number.isFinite(score) ? score : null;
+function parseSlidingWindowReply(reply: unknown): SlidingWindowResult {
+  if (!Array.isArray(reply) || reply.length !== 2) {
+    throw new Error("Неожиданный ответ Redis на EVAL sliding window");
   }
+
+  const count = Number(reply[0]);
+  const oldestScore = Number(reply[1]);
+  return { count, oldestAt: oldestScore >= 0 ? oldestScore : null };
 }

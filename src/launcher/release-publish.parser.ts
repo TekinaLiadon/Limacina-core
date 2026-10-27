@@ -23,6 +23,7 @@ export async function parseLauncherReleaseRequest(
   const staged: string[] = [];
   try {
     let version = "";
+    let versionSeen = false;
     const artifacts = new Map<
       string,
       { suffix: string; artifactTempPath?: string; signatureTempPath?: string }
@@ -34,6 +35,10 @@ export async function parseLauncherReleaseRequest(
         if (typeof part.value !== "string") {
           throw new BadRequestException("Поле version должно быть строкой");
         }
+        if (versionSeen) {
+          throw new BadRequestException("Повторное поле version");
+        }
+        versionSeen = true;
         version = part.value;
         continue;
       }

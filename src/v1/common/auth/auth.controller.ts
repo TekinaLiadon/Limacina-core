@@ -61,7 +61,8 @@ export class V1AuthController {
   })
   @ApiResponse({
     status: 401,
-    description: "Неверное имя пользователя или пароль",
+    description:
+      "Неверное имя пользователя или пароль; аккаунт ожидает одобрения администратором",
   })
   @ApiResponse({
     status: 400,

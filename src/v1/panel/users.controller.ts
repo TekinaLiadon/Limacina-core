@@ -25,7 +25,6 @@ import {
   UsersListResponseDto,
   UsersQueryDto,
   UsersSearchQueryDto,
-  V1DeletedUsersQueryDto,
 } from "../../admin/dto/dto";
 import { AdminService } from "../../admin/admin.service";
 import type { UsersFilter } from "../../admin/admin_store";
@@ -164,7 +163,7 @@ export class V1PanelUsersController {
   })
   @ApiResponse({ status: 403, description: "Доступно только владельцу" })
   async getDeletedUsers(
-    @Query() query: V1DeletedUsersQueryDto,
+    @Query() query: UsersSearchQueryDto,
   ): Promise<DeletedUsersListResponseDto> {
     const filter = this.buildUsersFilter(query);
     const { items, total } = await this.adminService.searchDeletedUsers(filter);

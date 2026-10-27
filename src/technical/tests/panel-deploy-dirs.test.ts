@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Logger } from "@nestjs/common";
 import {
   DEFAULT_PANEL_REPO_DIR,
@@ -178,6 +178,13 @@ describe("panel-deploy-dirs — resolvePanelRepoDir", (): void => {
 
   it("непустое значение используется как есть", (): void => {
     expect(resolvePanelRepoDir("/srv/panel-checkout")).toBe("/srv/panel-checkout");
+  });
+
+  it("относительное значение резолвится от текущего каталога процесса", (): void => {
+    expect(resolvePanelRepoDir("relative/checkout")).toBe(
+      resolve(process.cwd(), "relative/checkout"),
+    );
+    expect(resolvePanelRepoDir("  relative/dir  ")).toBe(resolve(process.cwd(), "relative/dir"));
   });
 });
 

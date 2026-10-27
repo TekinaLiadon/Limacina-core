@@ -10,6 +10,7 @@ import {
   RCON_AUTH_RESPONSE,
   RCON_EXECCOMMAND,
   RCON_RESPONSE_VALUE,
+  SENTINEL_PACKET_ID,
   SourceRconClient,
   type RconTarget,
 } from "../source-rcon-client";
@@ -28,7 +29,7 @@ import {
 
 const PASSWORD = "test-password";
 const WRONG_PASSWORD = "wrong-password";
-const FAST_TIMEOUTS = { connectTimeoutMs: 250, readTimeoutMs: 250, idleTimeoutMs: 250 };
+const FAST_TIMEOUTS = { connectTimeoutMs: 250, readTimeoutMs: 250 };
 
 function target(port: number, password = PASSWORD): RconTarget {
   return { host: "127.0.0.1", port, password };
@@ -135,7 +136,7 @@ describe("SourceRconClient — выполнение команд", () => {
     if (result.ok) expect(result.output).toBe(output);
   });
 
-  it("клиент шлёт один пакет на команду — склейка сегментов не случается", async () => {
+  it("команда и sentinel уходят разными сегментами — склейка не случается", async () => {
     let coalesced = 0;
     running = await startFakeRconServer(rconVanillaHandler("Segmented output"), {
       onCoalescedChunk: () => void coalesced++,
@@ -159,7 +160,7 @@ describe("SourceRconClient — выполнение команд", () => {
     if (result.ok) expect(result.output).toBe("There are 0 players");
   });
 
-  it("сервер молчит после ответа на команду — вывод по idle-таймауту", async () => {
+  it("сервер молчит после ответа на команду и не отвечает на sentinel — вывод собирается по таймауту чтения", async () => {
     running = await startFakeRconServer(rconIgnoreMarkerHandler("Idle gap output"));
     const client = new SourceRconClient(target(running.port), FAST_TIMEOUTS);
 
@@ -168,6 +169,68 @@ describe("SourceRconClient — выполнение команд", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.output).toBe("Idle gap output");
+    expect(Date.now() - started).toBeLessThan(3_000);
+  });
+
+  it("ответ на sentinel завершает сборку без лишнего ожидания", async () => {
+    running = await startFakeRconServer(rconExecHandler("Sentinel fast output"));
+    const client = new SourceRconClient(target(running.port), {
+      connectTimeoutMs: 250,
+      readTimeoutMs: 1000,
+    });
+
+    const started = Date.now();
+    const result = await client.executeCommand("list");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.output).toBe("Sentinel fast output");
+    expect(Date.now() - started).toBeLessThan(400);
+  });
+
+  it("пауза между пакетами длинного ответа не обрезает вывод", async () => {
+    const part1 = "a".repeat(1200);
+    const part2 = "b".repeat(800);
+    running = await startFakeRconServer((packet, socket) => {
+      if (packet.type === RCON_AUTH) {
+        rconRespond(socket, RCON_AUTH_RESPONSE, "", packet.id);
+        return;
+      }
+      if (packet.type === RCON_EXECCOMMAND) {
+        rconRespond(socket, RCON_RESPONSE_VALUE, part1, packet.id);
+        setTimeout(() => {
+          rconRespond(socket, RCON_RESPONSE_VALUE, part2, packet.id);
+          rconRespond(socket, RCON_RESPONSE_VALUE, "", SENTINEL_PACKET_ID);
+        }, 600);
+      }
+    });
+    const client = new SourceRconClient(target(running.port), {
+      connectTimeoutMs: 250,
+      readTimeoutMs: 2000,
+    });
+
+    const result = await client.executeCommand("long-command");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.output).toBe(part1 + part2);
+  });
+
+  it("ошибка записи команды завершает команду быстрой ошибкой", async () => {
+    running = await startFakeRconServer((packet, socket) => {
+      if (packet.type === RCON_AUTH) {
+        rconRespond(socket, RCON_AUTH_RESPONSE, "", packet.id);
+        socket.destroy();
+      }
+    });
+    const client = new SourceRconClient(target(running.port), {
+      connectTimeoutMs: 250,
+      readTimeoutMs: 1000,
+    });
+
+    const started = Date.now();
+    const result = await client.executeCommand("x".repeat(8_000_000));
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("Не удалось отправить команду RCON");
     expect(Date.now() - started).toBeLessThan(3_000);
   });
 

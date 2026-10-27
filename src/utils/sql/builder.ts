@@ -16,6 +16,14 @@ interface WithBuild {
   build: () => BuiltQuery;
 }
 
+const ORDER_DIRECTIONS = ["asc", "desc"] as const;
+
+function renderTableRef(table: TableName, alias?: string): string {
+  if (!alias) return table;
+  assertStaticFragment(alias);
+  return `${table} ${alias}`;
+}
+
 interface WithReturning {
   returning: (...ret: string[]) => WithBuild;
   build: () => BuiltQuery;
@@ -117,8 +125,7 @@ export function selectQuery(...columns: string[]): {
     from: (table: TableName, alias?: string) => {
       const state = createWhereState();
       const orderParts: string[] = [];
-      const tableRef = alias ? `${table} ${alias}` : table;
-      let fromClause = `SELECT ${cols} FROM ${tableRef}`;
+      let fromClause = `SELECT ${cols} FROM ${renderTableRef(table, alias)}`;
       let limitValue: number | undefined;
       let offsetValue: number | undefined;
       let forUpdateValue = false;
@@ -138,6 +145,7 @@ export function selectQuery(...columns: string[]): {
       const builder: SelectBuilder = {
         join: (type: string, joinTable: TableName, joinAlias: string, on: string) => {
           assertStaticFragment(type);
+          assertStaticFragment(joinAlias);
           assertStaticFragment(on);
           fromClause += ` ${type} ${joinTable} ${joinAlias} ON ${on}`;
           return builder;
@@ -156,6 +164,11 @@ export function selectQuery(...columns: string[]): {
         },
         orderBy: (column: string, direction: OrderDirection = "asc") => {
           assertStaticFragment(column);
+          if (!ORDER_DIRECTIONS.includes(direction)) {
+            throw new Error(
+              `orderBy: направление должно быть "asc" или "desc", получено ${String(direction)}`,
+            );
+          }
           orderParts.push(`${column} ${direction.toUpperCase()}`);
           return builder;
         },
@@ -240,7 +253,11 @@ export function updateQuery(): {
           set: addSet,
           where: (condition: string, ...args: SqlValue[]) => {
             const offset = values.length;
-            const renumbered = renumberSqlPlaceholders(condition, offset);
+            const renumbered = renumberSqlPlaceholders(
+              condition,
+              offset,
+              currentDialect().stringLiteralPattern,
+            );
             addWhere(whereState, renumbered, ...args);
 
             return {

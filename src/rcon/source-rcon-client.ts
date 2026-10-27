@@ -11,10 +11,10 @@ export const RCON_AUTH = 3;
 export const RCON_AUTH_RESPONSE = 2;
 export const RCON_EXECCOMMAND = 2;
 export const RCON_RESPONSE_VALUE = 0;
+export const SENTINEL_PACKET_ID = 2;
 
 const CONNECT_TIMEOUT_MS = 5_000;
 const READ_TIMEOUT_MS = 10_000;
-const IDLE_TIMEOUT_MS = 500;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_PACKET_SIZE = 4096;
 
@@ -27,7 +27,6 @@ export interface RconTarget {
 export interface RconTimeouts {
   connectTimeoutMs?: number;
   readTimeoutMs?: number;
-  idleTimeoutMs?: number;
 }
 
 export type RconResult = { ok: true; output: string } | { ok: false; error: string };
@@ -37,7 +36,6 @@ export class RconTransportError extends Error {}
 export class SourceRconClient {
   private readonly connectTimeoutMs: number;
   private readonly readTimeoutMs: number;
-  private readonly idleTimeoutMs: number;
 
   constructor(
     private readonly target: RconTarget,
@@ -45,7 +43,6 @@ export class SourceRconClient {
   ) {
     this.connectTimeoutMs = timeouts.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
     this.readTimeoutMs = timeouts.readTimeoutMs ?? READ_TIMEOUT_MS;
-    this.idleTimeoutMs = timeouts.idleTimeoutMs ?? IDLE_TIMEOUT_MS;
   }
 
   async checkAvailable(): Promise<boolean> {
@@ -70,7 +67,7 @@ export class SourceRconClient {
     action: (connection: RconConnection) => string | void | Promise<string | void>,
   ): Promise<string> {
     const socket = await connectRcon(this.target, this.connectTimeoutMs);
-    const connection = new RconConnection(socket, this.readTimeoutMs, this.idleTimeoutMs);
+    const connection = new RconConnection(socket, this.readTimeoutMs);
     try {
       await connection.authenticate(this.target.password);
       return ((await action(connection)) as string | undefined) ?? "";
@@ -107,18 +104,18 @@ const RCON_READ_TIMEOUT_MESSAGE = "Таймаут чтения ответа RCON
 const RCON_CLOSED_MESSAGE = "Соединение с RCON закрыто до получения ответа";
 const RCON_TOO_LARGE_MESSAGE = "Ответ RCON превышает допустимый размер";
 const RCON_AUTH_MESSAGE = "Неверный пароль RCON";
+const RCON_WRITE_MESSAGE = "Не удалось отправить команду RCON";
 
 class RconConnection {
   private readonly chunks: Uint8Array[] = [];
   private received = 0;
-  private settled = false;
+  private failure: Error | undefined;
   private waiter: ((result: RconPacket | Error) => void) | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly socket: Socket,
     private readonly readTimeoutMs: number,
-    private readonly idleTimeoutMs: number,
   ) {
     socket.on("data", (chunk: Buffer) => this.onData(chunk));
     socket.on("error", () => this.fail(new RconTransportError(RCON_CLOSED_MESSAGE)));
@@ -139,21 +136,21 @@ class RconConnection {
 
   async execute(command: string): Promise<string> {
     await this.writeDrained({ id: 1, type: RCON_EXECCOMMAND, body: command });
+    await this.waitForSegmentSend();
+    this.write({ id: SENTINEL_PACKET_ID, type: RCON_RESPONSE_VALUE, body: "" });
 
     const parts: string[] = [];
     let answered = false;
-    while (true) {
-      try {
-        const packet = await this.readPacket(answered ? this.idleTimeoutMs : this.readTimeoutMs);
+    try {
+      while (true) {
+        const packet = await this.readPacket();
         answered = true;
-        if (packet.body.length > MAX_PACKET_SIZE) {
-          throw new Error(RCON_TOO_LARGE_MESSAGE);
-        }
+        if (packet.id === SENTINEL_PACKET_ID) return parts.join("");
+        if (packet.body.length > MAX_PACKET_SIZE) throw new Error(RCON_TOO_LARGE_MESSAGE);
         parts.push(packet.body);
-      } catch (error) {
-        if (!answered || !(error instanceof RconTransportError)) throw error;
-        break;
       }
+    } catch (error) {
+      if (!answered || !(error instanceof RconTransportError)) throw error;
     }
     return parts.join("");
   }
@@ -175,19 +172,44 @@ class RconConnection {
   }
 
   private writeDrained(packet: RconPacket): Promise<void> {
-    return new Promise<void>((resolve) => {
-      this.socket.write(encodeRconPacket(packet), () => resolve());
+    if (this.socket.destroyed) {
+      return Promise.reject(new RconTransportError(RCON_WRITE_MESSAGE));
+    }
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const settle = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        this.socket.off("error", onSocketFailure);
+        this.socket.off("close", onSocketFailure);
+        if (error) {
+          reject(new RconTransportError(RCON_WRITE_MESSAGE));
+          return;
+        }
+        resolve();
+      };
+      const onSocketFailure = () => settle(new Error());
+      this.socket.on("error", onSocketFailure);
+      this.socket.on("close", onSocketFailure);
+      this.socket.write(encodeRconPacket(packet), (error) => settle(error ?? undefined));
     });
   }
 
-  private async readPacket(timeoutMs: number = this.readTimeoutMs): Promise<RconPacket> {
+  private waitForSegmentSend(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  }
+
+  private readPacket(): Promise<RconPacket> {
     const buffered = this.takeBufferedPacket();
-    if (buffered) return buffered;
+    if (buffered) return Promise.resolve(buffered);
+    if (this.failure) return Promise.reject(this.failure);
 
     return new Promise<RconPacket>((resolve, reject) => {
       this.timer = setTimeout(() => {
         this.fail(new RconTransportError(RCON_READ_TIMEOUT_MESSAGE));
-      }, timeoutMs);
+      }, this.readTimeoutMs);
       this.waiter = (result) => {
         this.clearTimer();
         this.waiter = undefined;
@@ -222,17 +244,14 @@ class RconConnection {
     this.chunks.push(new Uint8Array(chunk));
     this.received += chunk.length;
 
+    if (!this.waiter) return;
     const packet = this.takeBufferedPacket();
-    if (packet) this.deliver(packet);
-  }
-
-  private deliver(packet: RconPacket): void {
-    if (this.waiter) this.waiter(packet);
+    if (packet) this.waiter(packet);
   }
 
   private fail(error: Error): void {
-    if (this.settled) return;
-    this.settled = true;
+    if (this.failure) return;
+    this.failure = error;
     if (this.waiter) this.waiter(error);
   }
 }
