@@ -8,6 +8,7 @@ import {
   statSync,
   type Stats,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import { Logger } from "@nestjs/common";
 import { PUBLIC_DIR } from "../launcher/launcher-files";
@@ -17,6 +18,11 @@ export const PANEL_DIR_NAME = "panel";
 export const PANEL_PUBLIC_DIR = join(PUBLIC_DIR, PANEL_DIR_NAME);
 export const DEFAULT_PANEL_BRANCH = "main";
 export const PANEL_REPO_URL = "https://github.com/TekinaLiadon/Limacina-admin.git";
+export const PANEL_SERVICE_DIR_STALE_MS = 30 * 60_000;
+
+export interface PanelBackupSweepOptions {
+  freshWindowMs?: number;
+}
 
 const MODULE_PROJECT_ROOT = resolve(import.meta.dir, "../..");
 
@@ -56,18 +62,43 @@ export function isPanelBackupEntry(entry: string): boolean {
   return entry.startsWith(PANEL_BACKUP_PREFIX);
 }
 
-export function recoverPanelBackups(publicRoot: string, logger: Logger): void {
+const PANEL_MOVE_STAGING_PREFIX = ".panel.move-";
+
+export function buildPanelMoveStagingName(uuid: string): string {
+  return `${PANEL_MOVE_STAGING_PREFIX}${uuid}`;
+}
+
+export function isPanelMoveStagingEntry(entry: string): boolean {
+  return entry.startsWith(PANEL_MOVE_STAGING_PREFIX);
+}
+
+export function isPanelServiceEntry(entry: string): boolean {
+  return isPanelBackupEntry(entry) || isPanelMoveStagingEntry(entry);
+}
+
+export function recoverPanelBackups(
+  publicRoot: string,
+  logger: Logger,
+  options: PanelBackupSweepOptions = {},
+): void {
   const panelDir = join(publicRoot, PANEL_DIR_NAME);
   if (existsSync(panelDir)) return;
 
-  const entry = newestPanelBackupEntry(publicRoot);
-  if (!entry) return;
+  const newest = newestPanelBackup(publicRoot);
+  if (!newest) return;
+  if (isFreshMtime(newest.mtimeMs, options.freshWindowMs)) {
+    logger.warn(
+      { backup: newest.entry },
+      "Восстановление каталога панели отложено: резервная копия создана недавно — возможно, выполняется деплой",
+    );
+    return;
+  }
 
-  const backupPath = join(publicRoot, entry);
+  const backupPath = join(publicRoot, newest.entry);
   try {
     renameSync(backupPath, panelDir);
     logger.warn(
-      { backup: entry, restored: panelDir },
+      { backup: newest.entry, restored: panelDir },
       "Каталог панели восстановлен из резервной копии после сбоя деплоя",
     );
   } catch (error) {
@@ -78,7 +109,7 @@ export function recoverPanelBackups(publicRoot: string, logger: Logger): void {
   }
 }
 
-function newestPanelBackupEntry(publicRoot: string): string | undefined {
+function newestPanelBackup(publicRoot: string): { entry: string; mtimeMs: number } | undefined {
   let newest: { entry: string; mtimeMs: number } | undefined;
   for (const entry of listDirEntriesQuietly(publicRoot)) {
     if (!isPanelBackupEntry(entry)) continue;
@@ -92,25 +123,43 @@ function newestPanelBackupEntry(publicRoot: string): string | undefined {
       newest = { entry, mtimeMs: stat.mtimeMs };
     }
   }
-  return newest?.entry;
+  return newest;
 }
 
-export function cleanupPanelBackups(publicRoot: string, logger: Logger): void {
+export function cleanupPanelBackups(
+  publicRoot: string,
+  logger: Logger,
+  options: PanelBackupSweepOptions = {},
+): void {
   if (!existsSync(join(publicRoot, PANEL_DIR_NAME))) return;
 
   for (const entry of listDirEntriesQuietly(publicRoot)) {
-    if (!isPanelBackupEntry(entry)) continue;
+    if (!isPanelServiceEntry(entry)) continue;
 
-    const backupPath = join(publicRoot, entry);
+    const servicePath = join(publicRoot, entry);
+    if (isEntryFresh(servicePath, options.freshWindowMs)) continue;
+
     try {
-      rmSync(backupPath, { recursive: true, force: true });
+      rmSync(servicePath, { recursive: true, force: true });
       logger.warn({ dir: entry }, "Удалён служебный каталог деплоя панели");
     } catch (error) {
       logger.error(
-        { err: error, dir: backupPath },
+        { err: error, dir: servicePath },
         "Не удалось удалить служебный каталог деплоя панели",
       );
     }
+  }
+}
+
+function isFreshMtime(mtimeMs: number, freshWindowMs: number | undefined): boolean {
+  return freshWindowMs !== undefined && Date.now() - mtimeMs < freshWindowMs;
+}
+
+function isEntryFresh(fullPath: string, freshWindowMs: number | undefined): boolean {
+  try {
+    return isFreshMtime(statSync(fullPath).mtimeMs, freshWindowMs);
+  } catch {
+    return false;
   }
 }
 
@@ -121,7 +170,14 @@ export function moveDirectory(source: string, target: string): void {
   } catch (error) {
     if (!isCrossDeviceError(error)) throw error;
   }
-  copyDirectorySync(source, target);
+  const stagingPath = join(dirname(target), buildPanelMoveStagingName(randomUUID()));
+  try {
+    copyDirectorySync(source, stagingPath);
+    renameSync(stagingPath, target);
+  } catch (error) {
+    rmSync(stagingPath, { recursive: true, force: true });
+    throw error;
+  }
   rmSync(source, { recursive: true, force: true });
 }
 

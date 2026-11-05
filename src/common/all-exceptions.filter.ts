@@ -21,6 +21,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (exception instanceof HttpException) {
       if (exception.getStatus() >= 500) {
+        attachErrorToResponse(exception, response);
         this.logger.error(
           { err: exception, statusCode: exception.getStatus() },
           "Ошибка сервера в обработчике запроса",
@@ -33,6 +34,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const statusCode = extractErrorStatusCode(exception);
     if (statusCode !== undefined) {
       if (statusCode >= 500) {
+        attachErrorToResponse(exception, response);
         this.logger.error({ err: exception, statusCode }, "Ошибка сервера в обработчике запроса");
       }
       const message =
@@ -43,9 +45,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return;
     }
 
+    attachErrorToResponse(exception, response);
     this.logger.error({ err: exception }, "Необработанная ошибка запроса");
     response.status(500).send({ statusCode: 500, message: "Internal Server Error" });
   }
+}
+
+function attachErrorToResponse(exception: unknown, response: FastifyReply): void {
+  if (!(exception instanceof Error)) return;
+  (response.raw as { err?: Error }).err = exception;
 }
 
 const TRUSTED_MULTIPART_ERROR_CODES = new Set([

@@ -80,6 +80,20 @@ describe("StartupSweepService — свип служебных файлов пр�
     }
   });
 
+  it("не трогает свежий бэкап деплоя панели — его может держать активный деплой", (): void => {
+    const backupName = `.panel.old-sweep-${suffix}`;
+    mkdirSync(join("public", backupName), { recursive: true });
+    writeFileSync(join("public", backupName, "index.html"), "panel-fresh-backup");
+
+    try {
+      service.onApplicationBootstrap();
+
+      expect(existsSync(join("public", backupName))).toBe(true);
+    } finally {
+      rmSync(join("public", backupName), { recursive: true, force: true });
+    }
+  });
+
   it("переживает отсутствие каталогов", (): void => {
     expect(() => service.onApplicationBootstrap()).not.toThrow();
   });

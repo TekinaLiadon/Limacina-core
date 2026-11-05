@@ -3,7 +3,11 @@ import { join } from "node:path";
 import { Injectable, Logger, type OnApplicationBootstrap } from "@nestjs/common";
 import { PUBLIC_DIR, RELEASES_DIR, UPLOAD_TMP_DIR } from "../launcher/launcher-files";
 import { cleanupReleaseServiceDirs, recoverReleaseBackups } from "../launcher/release-service-dirs";
-import { cleanupPanelBackups, recoverPanelBackups } from "../technical/panel-deploy-dirs";
+import {
+  PANEL_SERVICE_DIR_STALE_MS,
+  cleanupPanelBackups,
+  recoverPanelBackups,
+} from "../technical/panel-deploy-dirs";
 
 @Injectable()
 export class StartupSweepService implements OnApplicationBootstrap {
@@ -41,7 +45,8 @@ export class StartupSweepService implements OnApplicationBootstrap {
   }
 
   private sweepPanelDeployBackups(): void {
-    recoverPanelBackups(PUBLIC_DIR, this.logger);
-    cleanupPanelBackups(PUBLIC_DIR, this.logger);
+    const sweepOptions = { freshWindowMs: PANEL_SERVICE_DIR_STALE_MS };
+    recoverPanelBackups(PUBLIC_DIR, this.logger, sweepOptions);
+    cleanupPanelBackups(PUBLIC_DIR, this.logger, sweepOptions);
   }
 }
