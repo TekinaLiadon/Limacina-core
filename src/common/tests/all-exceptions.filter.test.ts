@@ -15,9 +15,15 @@ interface ReplyState {
   body: unknown;
 }
 
+interface RawState {
+  headersSent: boolean;
+  err: Error | undefined;
+}
+
 function createReplyMock(initial: Partial<ReplyState> = {}): {
   reply: FastifyReply;
   state: ReplyState;
+  raw: RawState;
 } {
   const state: ReplyState = {
     headersSent: false,
@@ -26,8 +32,10 @@ function createReplyMock(initial: Partial<ReplyState> = {}): {
     ...initial,
   };
 
+  const raw: RawState = { headersSent: state.headersSent, err: undefined };
+
   const reply = {
-    raw: { headersSent: state.headersSent },
+    raw,
     status(code: number) {
       state.statusCode = code;
       return reply;
@@ -38,7 +46,7 @@ function createReplyMock(initial: Partial<ReplyState> = {}): {
     },
   };
 
-  return { reply: reply as unknown as FastifyReply, state };
+  return { reply: reply as unknown as FastifyReply, state, raw };
 }
 
 function createHostMock(reply: FastifyReply): ArgumentsHost {
@@ -182,6 +190,58 @@ describe("AllExceptionsFilter", () => {
 
     expect(state.statusCode).toBeUndefined();
     expect(state.body).toBeUndefined();
+  });
+
+  it("прикладывает HttpException 5xx к raw.err для строки запроса pino-http", () => {
+    const { reply, raw } = createReplyMock();
+    const exception = new InternalServerErrorException("db exploded");
+
+    filter.catch(exception, createHostMock(reply));
+
+    expect(raw.err).toBe(exception);
+  });
+
+  it("не прикладывает 4xx HttpException к raw.err", () => {
+    const { reply, raw } = createReplyMock();
+
+    filter.catch(new BadRequestException("невалидный запрос"), createHostMock(reply));
+
+    expect(raw.err).toBeUndefined();
+  });
+
+  it("прикладывает не-Http 5xx ошибку к raw.err", () => {
+    const { reply, raw } = createReplyMock();
+    const exception = Object.assign(new Error("driver internal details"), { statusCode: 503 });
+
+    filter.catch(exception, createHostMock(reply));
+
+    expect(raw.err).toBe(exception);
+  });
+
+  it("не прикладывает не-Error исключение к raw.err", () => {
+    const { reply, raw } = createReplyMock();
+
+    filter.catch({ statusCode: 503, message: "teapot internals" }, createHostMock(reply));
+
+    expect(raw.err).toBeUndefined();
+  });
+
+  it("прикладывает неизвестную Error к raw.err на ветке 500", () => {
+    const { reply, state, raw } = createReplyMock();
+    const exception = new Error("boom with secret stack");
+
+    filter.catch(exception, createHostMock(reply));
+
+    expect(state.statusCode).toBe(500);
+    expect(raw.err).toBe(exception);
+  });
+
+  it("не прикладывает ошибку к raw.err, если заголовки уже отправлены", () => {
+    const { reply, raw } = createReplyMock({ headersSent: true });
+
+    filter.catch(new Error("late failure"), createHostMock(reply));
+
+    expect(raw.err).toBeUndefined();
   });
 
   it("логирует HttpException со статусом 5xx и отдаёт её клиенту", () => {

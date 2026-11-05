@@ -4,6 +4,7 @@ setupTestEnv();
 
 import { afterAll, describe, expect, it } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -15,17 +16,33 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Logger } from "@nestjs/common";
 import {
   DEFAULT_PANEL_REPO_DIR,
   PANEL_DIR_NAME,
+  PANEL_SERVICE_DIR_STALE_MS,
   buildPanelBackupName,
+  buildPanelMoveStagingName,
   cleanupPanelBackups,
+  isPanelMoveStagingEntry,
   moveDirectory,
   recoverPanelBackups,
   resolvePanelRepoDir,
 } from "../panel-deploy-dirs";
+
+function canTestPermissions(): boolean {
+  return process.platform !== "win32" && process.getuid !== undefined && process.getuid() !== 0;
+}
+
+function canTestExdev(): boolean {
+  const shmRoot = "/dev/shm";
+  return existsSync(shmRoot) && statSync(shmRoot).dev !== statSync(tmpdir()).dev;
+}
+
+function stagingEntries(dir: string): string[] {
+  return readdirSync(dir).filter(isPanelMoveStagingEntry);
+}
 
 describe("panel-deploy-dirs — свип резервных копий панели", (): void => {
   const logger = new Logger("panel-deploy-dirs");
@@ -121,6 +138,66 @@ describe("panel-deploy-dirs — свип резервных копий пане�
   it("cleanupPanelBackups переживает отсутствие каталога public", (): void => {
     expect(() => cleanupPanelBackups(join(makeWorkDir(), "absent"), logger)).not.toThrow();
   });
+
+  it("recover при активном окне деплоя не трогает свежий бэкап и восстанавливает его после устаревания", (): void => {
+    const publicDir = makeWorkDir();
+    const backupPath = makeBackup(publicDir, "panel-fresh");
+
+    recoverPanelBackups(publicDir, logger, { freshWindowMs: PANEL_SERVICE_DIR_STALE_MS });
+
+    expect(existsSync(join(publicDir, PANEL_DIR_NAME))).toBe(false);
+    expect(existsSync(backupPath)).toBe(true);
+
+    const past = new Date(Date.now() - PANEL_SERVICE_DIR_STALE_MS - 60_000);
+    utimesSync(backupPath, past, past);
+    recoverPanelBackups(publicDir, logger, { freshWindowMs: PANEL_SERVICE_DIR_STALE_MS });
+
+    expect(readPanelIndex(join(publicDir, PANEL_DIR_NAME))).toBe("panel-fresh");
+    expect(existsSync(backupPath)).toBe(false);
+  });
+
+  it("recover без окна свежести восстанавливает даже свежий бэкап — деплой держит лок", (): void => {
+    const publicDir = makeWorkDir();
+    makeBackup(publicDir, "panel-crashed");
+
+    recoverPanelBackups(publicDir, logger);
+
+    expect(readPanelIndex(join(publicDir, PANEL_DIR_NAME))).toBe("panel-crashed");
+  });
+
+  it("cleanup при активном окне деплоя оставляет свежие бэкапы и удаляет протухшие", (): void => {
+    const publicDir = makeWorkDir();
+    mkdirSync(join(publicDir, PANEL_DIR_NAME), { recursive: true });
+    writeFileSync(join(publicDir, PANEL_DIR_NAME, "index.html"), "panel-live");
+    const freshPath = makeBackup(publicDir, "panel-live-deploy");
+    const stalePath = makeBackup(publicDir, "panel-old-crash");
+    const past = new Date(Date.now() - PANEL_SERVICE_DIR_STALE_MS - 60_000);
+    utimesSync(stalePath, past, past);
+
+    cleanupPanelBackups(publicDir, logger, { freshWindowMs: PANEL_SERVICE_DIR_STALE_MS });
+
+    expect(readPanelIndex(join(publicDir, PANEL_DIR_NAME))).toBe("panel-live");
+    expect(existsSync(freshPath)).toBe(true);
+    expect(existsSync(stalePath)).toBe(false);
+  });
+
+  it("cleanup удаляет протухший staging прерванной EXDEV-копии и не трогает свежий", (): void => {
+    const publicDir = makeWorkDir();
+    mkdirSync(join(publicDir, PANEL_DIR_NAME), { recursive: true });
+    writeFileSync(join(publicDir, PANEL_DIR_NAME, "index.html"), "panel-live");
+    const freshStaging = join(publicDir, buildPanelMoveStagingName("fresh-move"));
+    mkdirSync(freshStaging, { recursive: true });
+    const staleStaging = join(publicDir, buildPanelMoveStagingName("stale-move"));
+    mkdirSync(staleStaging, { recursive: true });
+    const past = new Date(Date.now() - PANEL_SERVICE_DIR_STALE_MS - 60_000);
+    utimesSync(staleStaging, past, past);
+
+    cleanupPanelBackups(publicDir, logger, { freshWindowMs: PANEL_SERVICE_DIR_STALE_MS });
+
+    expect(existsSync(freshStaging)).toBe(true);
+    expect(existsSync(staleStaging)).toBe(false);
+    expect(readPanelIndex(join(publicDir, PANEL_DIR_NAME))).toBe("panel-live");
+  });
 });
 
 describe("panel-deploy-dirs — moveDirectory", (): void => {
@@ -146,11 +223,12 @@ describe("panel-deploy-dirs — moveDirectory", (): void => {
     expect(readFileSync(join(target, "index.html"), "utf-8")).toBe(content);
     expect(readFileSync(join(target, "assets", "app.js"), "utf-8")).toBe("js");
     expect(existsSync(source)).toBe(false);
+    expect(stagingEntries(dirname(target))).toHaveLength(0);
   });
 
   it("переносит каталог на другую файловую систему через копирование (EXDEV)", (): void => {
+    if (!canTestExdev()) return;
     const shmRoot = "/dev/shm";
-    if (!existsSync(shmRoot) || statSync(shmRoot).dev === statSync(tmpdir()).dev) return;
     const { source, content } = makeSource(shmRoot);
     const target = makeTarget();
 
@@ -159,6 +237,52 @@ describe("panel-deploy-dirs — moveDirectory", (): void => {
     expect(readFileSync(join(target, "index.html"), "utf-8")).toBe(content);
     expect(readFileSync(join(target, "assets", "app.js"), "utf-8")).toBe("js");
     expect(existsSync(source)).toBe(false);
+    expect(stagingEntries(dirname(target))).toHaveLength(0);
+  });
+
+  it("сбой EXDEV-копии не оставляет частичный целевой каталог и подчищает staging", (): void => {
+    if (!canTestPermissions() || !canTestExdev()) return;
+    const shmRoot = "/dev/shm";
+    const source = mkdtempSync(join(shmRoot, "limacina-move-fail-"));
+    const target = makeTarget();
+    mkdirSync(join(source, "assets"), { recursive: true });
+    writeFileSync(join(source, "index.html"), "panel-move");
+    writeFileSync(join(source, "assets", "app.js"), "js");
+    const unreadable = join(source, "assets", "secret.js");
+    writeFileSync(unreadable, "secret");
+    chmodSync(unreadable, 0o000);
+
+    try {
+      expect(() => moveDirectory(source, target)).toThrow();
+
+      expect(existsSync(target)).toBe(false);
+      expect(stagingEntries(dirname(target))).toHaveLength(0);
+      expect(existsSync(source)).toBe(true);
+    } finally {
+      chmodSync(unreadable, 0o644);
+      rmSync(source, { recursive: true, force: true });
+    }
+  });
+
+  it("сбой финального rename при EXDEV оставляет существующий целевой каталог нетронутым", (): void => {
+    if (!canTestExdev()) return;
+    const shmRoot = "/dev/shm";
+    const { source, content } = makeSource(shmRoot);
+    const holder = mkdtempSync(join(tmpdir(), "limacina-move-target-"));
+    const target = join(holder, "panel");
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, "index.html"), "panel-existing");
+
+    try {
+      expect(() => moveDirectory(source, target)).toThrow();
+
+      expect(readFileSync(join(target, "index.html"), "utf-8")).toBe("panel-existing");
+      expect(stagingEntries(holder)).toHaveLength(0);
+      expect(existsSync(source)).toBe(true);
+      expect(readFileSync(join(source, "index.html"), "utf-8")).toBe(content);
+    } finally {
+      rmSync(source, { recursive: true, force: true });
+    }
   });
 
   it("пробрасывает ошибку, не связанную с EXDEV", (): void => {

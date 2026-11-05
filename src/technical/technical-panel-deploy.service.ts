@@ -249,8 +249,16 @@ export function swapPanelDirectory(
   }
 }
 
-function restorePanelBackup(logger: Logger, backupPath: string, panelDir: string): void {
+export function restorePanelBackup(logger: Logger, backupPath: string, panelDir: string): void {
   try {
+    if (!existsSync(backupPath)) {
+      logger.error(
+        { backup: backupPath, panelDir },
+        "Резервная копия панели отсутствует — каталог панели оставлен без изменений",
+      );
+      return;
+    }
+    rmSync(panelDir, { recursive: true, force: true });
     renameSync(backupPath, panelDir);
     logger.error(
       { backup: backupPath, panelDir },

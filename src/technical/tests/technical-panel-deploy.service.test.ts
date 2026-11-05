@@ -26,6 +26,7 @@ import {
   releasePanelDeployLock,
   resolveDefaultBranch,
   resolveDeployRevision,
+  restorePanelBackup,
   runPanelStep,
   swapPanelDirectory,
   TechnicalPanelDeployService,
@@ -405,6 +406,58 @@ describe("TechnicalPanelDeployService — деплой админ-панели",
       expect(panelContent(publicDir)).toBe("panel-new");
       expect(backupEntries(publicDir)).toHaveLength(0);
       expect(existsSync(buildOutputDir)).toBe(false);
+    });
+  });
+
+  describe("restorePanelBackup", (): void => {
+    function makePanelDir(publicDir: string, content: string, partialAssets: boolean): string {
+      const panelDir = join(publicDir, PANEL_DIR_NAME);
+      mkdirSync(join(panelDir, "assets"), { recursive: true });
+      writeFileSync(join(panelDir, "index.html"), content);
+      if (partialAssets) {
+        writeFileSync(join(panelDir, "assets", "broken.js"), "half-copied");
+      }
+      return panelDir;
+    }
+
+    function makeRestoreBackup(publicDir: string, content: string): string {
+      const backupPath = join(publicDir, buildPanelBackupName("restore-check"));
+      mkdirSync(backupPath, { recursive: true });
+      writeFileSync(join(backupPath, "index.html"), content);
+      return backupPath;
+    }
+
+    it("затирает частичный каталог панели перед восстановлением из бэкапа", (): void => {
+      const publicDir = makeWorkDir();
+      const panelDir = makePanelDir(publicDir, "half-copied", true);
+      const backupPath = makeRestoreBackup(publicDir, "panel-old");
+
+      restorePanelBackup(logger, backupPath, panelDir);
+
+      expect(panelContent(publicDir)).toBe("panel-old");
+      expect(existsSync(join(panelDir, "assets", "broken.js"))).toBe(false);
+      expect(existsSync(backupPath)).toBe(false);
+    });
+
+    it("оставляет каталог панели нетронутым, если бэкап уже потреблён", (): void => {
+      const publicDir = makeWorkDir();
+      const panelDir = makePanelDir(publicDir, "panel-restored", false);
+      const missingBackup = join(publicDir, buildPanelBackupName("consumed"));
+
+      restorePanelBackup(logger, missingBackup, panelDir);
+
+      expect(panelContent(publicDir)).toBe("panel-restored");
+    });
+
+    it("восстанавливает бэкап при отсутствующем каталоге панели", (): void => {
+      const publicDir = makeWorkDir();
+      const panelDir = join(publicDir, PANEL_DIR_NAME);
+      const backupPath = makeRestoreBackup(publicDir, "panel-old");
+
+      restorePanelBackup(logger, backupPath, panelDir);
+
+      expect(panelContent(publicDir)).toBe("panel-old");
+      expect(existsSync(backupPath)).toBe(false);
     });
   });
 
